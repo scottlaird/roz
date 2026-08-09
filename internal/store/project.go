@@ -63,6 +63,7 @@ func (p *Project) subjectID() string   { return p.ID }
 // It allocates nothing and touches no database. Fill in the authored fields,
 // then call Store.AllocateProject — in that order, so that rejecting bad
 // input costs no identifier.
+
 func NewProject(title string) *Project {
 	return &Project{
 		Title:      title,

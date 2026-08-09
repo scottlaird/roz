@@ -217,13 +217,26 @@ func (t *Tx) checkInsertPermission(r Record, fields []field) error {
 		if err != nil {
 			return fmt.Errorf("%s.%s: %w", r.table(), f.column, err)
 		}
-		if text == "" {
-			continue // left unset, so nothing was claimed
+		if isUnset(f, text) {
+			continue // nothing was claimed
 		}
 		return fmt.Errorf("%s may not set %s.%s at creation: it is %s, and %s writes only %s fields",
 			t.actor, r.table(), f.column, f.kind, t.actor, allowed)
 	}
 	return nil
+}
+
+// isUnset reports whether a column carries no information, so that having a
+// value there is not a claim about anything.
+//
+// Empty is empty whether it is spelled "", {} or []. Without this, the empty
+// containers a constructor supplies for JSON columns would read as a human
+// asserting observed facts, and tracking a pull request would be refused.
+func isUnset(f field, text string) bool {
+	if text == "" {
+		return true
+	}
+	return f.format == formatJSON && (text == "{}" || text == "[]")
 }
 
 func (t *Tx) checkPermission(r Record, changes []Change) error {

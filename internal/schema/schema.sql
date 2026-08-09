@@ -1,6 +1,13 @@
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
+-- The design sketch opens with three pragmas: journal_mode = WAL,
+-- foreign_keys = ON and busy_timeout = 5000. They are not here because they
+-- are connection settings rather than schema: foreign_keys and busy_timeout
+-- reset on every new connection, and database/sql pools them, so setting
+-- either from this file would leave most connections without it. The store
+-- package applies all three as DSN parameters instead. journal_mode is
+-- persistent and only needs setting once, but is asserted the same way.
+--
+-- Everything below is applied once, inside a transaction, and stamped into
+-- PRAGMA user_version. See store.schemaVersion before changing it.
 
 -- ── identity ─────────────────────────────────────────────────────────
 CREATE TABLE sequence (

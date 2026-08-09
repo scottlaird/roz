@@ -7,7 +7,8 @@ package schema
 
 import _ "embed"
 
-// SQL is the complete schema: pragmas, tables, and indexes.
+// SQL is the schema: tables and indexes, with no pragmas. It is written to be
+// executed as a single multi-statement Exec inside one transaction.
 //
 //go:embed schema.sql
 var SQL string

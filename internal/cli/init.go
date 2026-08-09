@@ -1,18 +1,42 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/spf13/cobra"
+
+	"github.com/scottlaird/todo/internal/store"
+)
 
 // newInitCmd is not in the design sketch's verb list, but the database has to
 // come from somewhere.
 func newInitCmd() *cobra.Command {
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "init",
 		Short: "Create the database and apply the schema",
-		Long: "Applies internal/schema/schema.sql to a new database and seeds the\n" +
-			"sequence and actionverb vocabulary tables.",
+		Long: "Creates the database and its parent directory, then applies the schema.\n" +
+			"Safe to re-run: an existing database is left exactly as it is.",
 		Args: cobra.NoArgs,
-		Run:  stub,
+		RunE: runInit,
 	}
-	cmd.Flags().Bool("force", false, "recreate the schema even if the file exists")
-	return cmd
+}
+
+func runInit(cmd *cobra.Command, _ []string) error {
+	if dbPath == "" {
+		return errors.New("no database path: pass --db or set TODO_DB")
+	}
+
+	created, err := store.Init(dbPath)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if created {
+		fmt.Fprintf(out, "initialised %s\n", dbPath)
+	} else {
+		fmt.Fprintf(out, "%s is already initialised\n", dbPath)
+	}
+	return nil
 }

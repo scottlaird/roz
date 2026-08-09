@@ -1,0 +1,159 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"reflect"
+	"strconv"
+)
+
+// FieldKind says who may write a column and whether changing it is logged.
+// It is the schema sketch's authored/observed split, made enforceable: it is
+// declared once per column in a struct tag and checked in one place, rather
+// than remembered at each call site.
+//
+// The values are the strings used in the kind struct tag.
+type FieldKind string
+
+const (
+	// Authored is written by a human or an agent. Sync must never touch it.
+	Authored FieldKind = "authored"
+	// Observed is written only by sync, from an external system.
+	Observed FieldKind = "observed"
+	// Derived is computed by the database. Never written, never diffed.
+	Derived FieldKind = "derived"
+	// Identity is supplied by the caller at insert. Changing it is an error.
+	Identity FieldKind = "identity"
+	// Created is stamped by the store at insert, and immutable after.
+	Created FieldKind = "created"
+	// Auto is maintained by the store on every write, and not worth logging
+	// because it changes whenever anything else does.
+	Auto FieldKind = "auto"
+)
+
+const (
+	columnTag = "db"
+	kindTag   = "kind"
+)
+
+var fieldKinds = map[string]FieldKind{
+	string(Authored): Authored,
+	string(Observed): Observed,
+	string(Derived):  Derived,
+	string(Identity): Identity,
+	string(Created):  Created,
+	string(Auto):     Auto,
+}
+
+// field is one column of a record.
+type field struct {
+	column string
+	kind   FieldKind
+	index  int
+}
+
+// fieldsOf reads the column metadata off a record's struct tags. Struct
+// fields without a db tag are ignored; a field with no kind tag is Authored,
+// since that is the common case and the safer default.
+//
+// r must be a pointer to a struct.
+func fieldsOf(r Record) ([]field, error) {
+	return fieldsOfStruct(r)
+}
+
+// fieldsOfStruct is fieldsOf without the Record constraint, so the reflection
+// rules can be tested against shapes that are not valid records.
+func fieldsOfStruct(r any) ([]field, error) {
+	v := reflect.ValueOf(r)
+	if v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Struct {
+		return nil, fmt.Errorf("%T is not a pointer to a struct", r)
+	}
+
+	t := v.Elem().Type()
+	fields := make([]field, 0, t.NumField())
+	for i := range t.NumField() {
+		structField := t.Field(i)
+		column, ok := structField.Tag.Lookup(columnTag)
+		if !ok || column == "" {
+			continue
+		}
+		kind, err := kindOf(structField.Tag.Get(kindTag))
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s: %w", t.Name(), structField.Name, err)
+		}
+		fields = append(fields, field{column: column, kind: kind, index: i})
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("%T has no %q-tagged fields", r, columnTag)
+	}
+	return fields, nil
+}
+
+func kindOf(tag string) (FieldKind, error) {
+	if tag == "" {
+		return Authored, nil
+	}
+	kind, ok := fieldKinds[tag]
+	if !ok {
+		return "", fmt.Errorf("unknown field kind %q", tag)
+	}
+	return kind, nil
+}
+
+// value returns the field's current value as an any, suitable for passing to
+// database/sql as a query argument.
+func (f field) value(r Record) any {
+	return reflect.ValueOf(r).Elem().Field(f.index).Interface()
+}
+
+// pointer returns a pointer to the field, for Scan to write through.
+func (f field) pointer(r Record) any {
+	return reflect.ValueOf(r).Elem().Field(f.index).Addr().Interface()
+}
+
+// renderValue converts a column value to the text stored in event.old_value
+// and event.new_value.
+//
+// NULL renders as the empty string, and so does an empty string: the event
+// columns are TEXT NOT NULL, so the log cannot distinguish the two. That is
+// lossy by design rather than by accident — it keeps every log query a plain
+// string comparison.
+//
+// Unsupported types are an error rather than a best-effort stringification,
+// so a new column type fails loudly the first time it is written.
+func renderValue(v any) (string, error) {
+	switch x := v.(type) {
+	case string:
+		return x, nil
+	case int64:
+		return strconv.FormatInt(x, 10), nil
+	case bool:
+		return boolText(x), nil
+	case sql.NullString:
+		if !x.Valid {
+			return "", nil
+		}
+		return x.String, nil
+	case sql.NullInt64:
+		if !x.Valid {
+			return "", nil
+		}
+		return strconv.FormatInt(x.Int64, 10), nil
+	case sql.NullBool:
+		if !x.Valid {
+			return "", nil
+		}
+		return boolText(x.Bool), nil
+	default:
+		return "", fmt.Errorf("no text rendering for %T", v)
+	}
+}
+
+// boolText matches SQLite's integer booleans, which the schema's CHECK
+// constraints spell as 0 and 1.
+func boolText(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
+}

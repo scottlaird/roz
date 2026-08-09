@@ -27,15 +27,6 @@ const (
 	defaultInterval = time.Second
 )
 
-// sinceLayouts are the timestamp forms --since accepts. A bare date is the
-// common case; the full form is what the log itself stores.
-var sinceLayouts = []string{
-	"2006-01-02",
-	"2006-01-02T15:04:05.000Z",
-	"2006-01-02T15:04:05Z",
-	time.RFC3339,
-}
-
 func newWatchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
@@ -126,7 +117,7 @@ func watchOptionsFrom(cmd *cobra.Command) (watchOptions, error) {
 	if since, err := f.GetString(flagSince); err != nil {
 		return watchOptions{}, err
 	} else if since != "" {
-		normalised, err := normaliseSince(since)
+		normalised, err := validateTimestamp(flagSince, since)
 		if err != nil {
 			return watchOptions{}, err
 		}
@@ -162,20 +153,6 @@ func validateSeverity(severity string) error {
 		return fmt.Errorf("--severity %q is not recognised: use %s, %s or %s",
 			severity, store.SeverityInfo, store.SeverityNotice, store.SeverityException)
 	}
-}
-
-// normaliseSince checks the value is a timestamp rather than something like
-// "yesterday", which would otherwise compare as text and match nothing.
-//
-// The value is returned unchanged: the log stores ISO-8601, which compares
-// correctly as text, and a bare date sorts before any timestamp on that day.
-func normaliseSince(value string) (string, error) {
-	for _, layout := range sinceLayouts {
-		if _, err := time.Parse(layout, value); err == nil {
-			return value, nil
-		}
-	}
-	return "", fmt.Errorf("--since %q is not a date or timestamp: use 2006-01-02 or 2006-01-02T15:04:05Z", value)
 }
 
 // watchEvents prints the selected backlog and then polls for more until the

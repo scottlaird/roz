@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -39,6 +40,32 @@ func actorFrom(cmd *cobra.Command) (store.Actor, error) {
 	default:
 		return "", fmt.Errorf("--actor %q is not recognised: use human or agent:<name>", value)
 	}
+}
+
+// timestampLayouts are the forms a date or timestamp flag accepts. A bare
+// date is the common case; the full form is what the log itself stores.
+var timestampLayouts = []string{
+	"2006-01-02",
+	"2006-01-02T15:04:05.000Z",
+	"2006-01-02T15:04:05Z",
+	time.RFC3339,
+}
+
+// validateTimestamp checks a flag value is a real date rather than something
+// like "next week", which would otherwise compare as text and quietly match
+// nothing. The value is returned unchanged, because ISO-8601 compares
+// correctly as text.
+//
+// The sketch is emphatic about this one: a snooze date "must be a real
+// timestamp — 'next week' is not one, and that is the point".
+func validateTimestamp(flag, value string) (string, error) {
+	for _, layout := range timestampLayouts {
+		if _, err := time.Parse(layout, value); err == nil {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("--%s %q is not a date or timestamp: use 2006-01-02 or 2006-01-02T15:04:05Z",
+		flag, value)
 }
 
 // Output formats for read commands.

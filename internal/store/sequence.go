@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -105,6 +106,52 @@ func seedSequences(tx *sql.Tx, prefixes map[Entity]string) error {
 		}
 	}
 	return nil
+}
+
+// SplitIdent separates an identifier into its prefix and number.
+//
+// It works because prefixes are letters only and the number is all digits, so
+// the boundary is unambiguous — that restriction in ValidatePrefix is what
+// buys this, and the same rule is applied here.
+//
+// Anything not of that shape is rejected rather than split on a best guess.
+// That matters because subject_id in the log is heterogeneous by design: it
+// holds SL1 or myrepo#4174, and only the first is a sequence identifier.
+func SplitIdent(id string) (prefix string, n int64, ok bool) {
+	split := strings.LastIndexFunc(id, func(r rune) bool {
+		return r < '0' || r > '9'
+	}) + 1
+	if split == 0 || split == len(id) {
+		return "", 0, false
+	}
+
+	prefix = id[:split]
+	if err := ValidatePrefix(prefix); err != nil {
+		return "", 0, false
+	}
+	n, err := strconv.ParseInt(id[split:], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return prefix, n, true
+}
+
+// EntityForID reports which entity an identifier belongs to, by looking its
+// prefix up in the registry seeded at init.
+//
+// This is why the prefixes are stored rather than hardcoded: the mapping from
+// SL to project is the user's, made once, and read back here.
+func (s *Store) EntityForID(id string) (Entity, bool) {
+	prefix, _, ok := SplitIdent(id)
+	if !ok {
+		return "", false
+	}
+	for entity, entityPrefix := range s.prefixes {
+		if entityPrefix == prefix {
+			return entity, true
+		}
+	}
+	return "", false
 }
 
 // FormatPrefixes renders prefixes for display, ordered by entity name.

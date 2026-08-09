@@ -5,29 +5,25 @@ are ordered roughly by what blocks what, not by importance.
 
 ## Where things stand
 
-Built: the schema and its migration machinery, the diff-and-emit layer, and
-three entities — `project`, `pr` and `github_repo`. `todo watch` tails the log.
-Eleven commands are still stubs that exit 1.
+Built: the schema and its migration machinery, the diff-and-emit layer, three
+entities — `project`, `pr` and `github_repo` — and GitHub sync, both one-shot
+and as a polling loop. `todo watch` tails the log. Ten commands are still
+stubs that exit 1, and all ten are `action`, `render` or `verify`.
 
-The sketch's core claim — that the queue is mechanical — is not testable yet,
-because `action` does not exist.
+The sketch's core claim — that the queue is mechanical — is still not
+testable, because `action` does not exist. Everything below it now does.
 
 ## The critical path
 
-Everything below is in dependency order. Nothing later can be finished first.
+In dependency order. Nothing later can be finished first.
 
-- [ ] **GitHub sync.** `todo sync github`, shelling out to `gh api graphql`,
-      writing observed columns as `sync:github`. The schema was written against
-      GraphQL's vocabulary (`APPROVED`, `CLEAN | BLOCKED | BEHIND`), not REST's.
-      Needs: which pull requests to poll (see open questions), the `checks`
-      JSON shape, and `stacked_on` computed from `base_ref` against
-      `github_repo.default_branch`.
-- [ ] **Predicate registry.** `predicate_key` → `func(pr) bool` in code. The
-      sketch is explicit that a key with no registered function must fail
-      loudly at startup rather than silently at 3am.
-- [ ] **Seed `actionverb`.** The vocabulary table. Cannot be seeded before the
-      registry exists, or the `CHECK` tying `closes = 'predicate'` to a
-      `predicate_key` points at nothing.
+- [ ] **Predicate registry.** `predicate_key` → `func(pr) bool` in code. Every
+      predicate but one reads a `pr` column that sync now populates, so this is
+      unblocked. The sketch is explicit that a key with no registered function
+      must fail loudly at startup rather than silently at 3am.
+- [ ] **Seed `actionverb`.** Cannot be seeded before the registry exists, or
+      the `CHECK` tying `closes = 'predicate'` to a `predicate_key` points at
+      nothing.
 - [ ] **`action`.** Blocked on the above: `action.verb` is a foreign key into
       `actionverb`, so with foreign keys on, not one action can be inserted
       until the vocabulary is seeded.
@@ -39,6 +35,10 @@ Everything below is in dependency order. Nothing later can be finished first.
       whose pull request is still open.
 - [ ] **`todo render`.** Templates, and the status page the whole thing exists
       to regenerate.
+- [ ] **A web server for the rendered page**, at which point `todo serve`
+      running sync, watch and the server together is the natural shape.
+      `internal/service` exists for this: `service.Run(ctx, syncer, server,
+      tailer)`, first failure cancels the rest.
 
 ## Entities the sketch specifies but nothing uses
 
@@ -61,40 +61,37 @@ them.
 - [ ] Action sort order — `rank_class`, then `unblocks_count`, then `effort`,
       with `rank_pin` as the override. Needs the dependency graph.
 - [ ] The root `README.md` is two lines.
-- [ ] Nothing consumes `todo watch` yet. The sketch assumes a monitor tailing
-      the log surfaces exceptions; today a human has to be looking.
+- [ ] Nothing consumes `todo watch` yet. Sync raises a `pr_unresolvable`
+      exception when a tracked pull request goes invisible, and today only a
+      human watching would see it.
+- [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
+      per-repository "poll everything of mine" would want a `search` query and
+      a rule for when a pull request stops being tracked.
+- [ ] Tracking a pull request assigned to us, rather than authored by us, has
+      nowhere to record *why* it is tracked. That is a schema change.
 
 ## Open questions
-
-**`todo verify` writes an observed column.** It stamps `last_verified_at`, so a
-human running it is exactly what `Tx.Update` refuses. The sketch files `verify`
-under *observe — the only writers of observed fields*, treating verification as
-an observation. Options: a narrow `Tx.Verify` that is exempt by construction,
-or retag the column as authored. Deferred until sync exists and observed fields
-start moving for real.
-
-**Which pull requests does sync poll?** `todo pr track` names them one at a
-time, which does not scale. The alternative is discovery per tracked
-repository — "my open pull requests in these repos" — which changes what
-`github_repo` is for and needs a rule for when a pull request stops being
-tracked.
-
-**`send_for_review` cannot auto-close without Slack.** Its predicate is
-`announced_at IS NOT NULL`, and the sketch calls the Slack announcement the one
-input GitHub cannot supply. With Slack out of scope, that verb is human-closed
-in practice, and the sketch's showcase flow stalls at step 5.
 
 **What does `review_policy = none` change?** Closing a `write` action is
 supposed to instantiate `send_for_review → wait_review → merge`. For a
 repository needing no review that pipeline is wrong, but the replacement is
-undecided — probably just `merge`, possibly `undraft → merge`. This is the
-question `github_repo` was added to make answerable, and it wants settling
-before the cascade is written.
+undecided — probably just `merge`, possibly `undraft → merge`. This is now
+directly in the way: the predicate registry is the next thing to build, and
+the cascade is where this gets encoded.
 
-**Sync cadence versus event fidelity.** The sketch's own open question. Polling
-gives current state and loses transitions between polls. Minute-by-minute is
-probably enough *provided the log records observed transitions rather than poll
-results*, or a monitor sees noise on every cycle.
+**`todo verify` writes an observed column.** It stamps `last_verified_at`, so
+a human running it is exactly what `Tx.Update` refuses. The sketch files
+`verify` under *observe — the only writers of observed fields*. `todo pr
+announce` has since set a precedent for this shape of problem: a named verb
+that picks its own sync actor, rather than an `--actor` override. The same
+approach would work here, with an actor saying a person asserted it.
+
+**Sync cadence versus event fidelity.** The sketch's own open question, now
+half-answered. Polling loses transitions between polls, but the log records
+observed transitions rather than poll results — a quiet poll writes nothing,
+and `last_synced_at` moves without being logged. What remains open is whether
+a minute is often enough to catch states that do not persist, `UNSTABLE` and
+`BEHIND` in particular.
 
 **`--json` can reach columns that have a dedicated verb.** `project set --json
 '{"superseded_by":"SL94"}'` skips the target-existence check that `project
@@ -113,6 +110,17 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - `set`, not `edit` — `edit` reads as interactive.
 - No `DELETE` guard on `sequence`. If someone really wants to edit the
   database, they are going to edit the database.
+- GitHub is read through `gh api graphql`, batched with aliases. Measured: 100
+  pull requests cost 4 points of 5000 an hour, and beyond about 150 the API
+  returns an opaque 502. REST is not an option — `reviewDecision` and
+  `mergeStateStatus` exist only in GraphQL.
+- `last_synced_at` is `auto`: written when something else changes, never
+  logged. Logging it would bury real transitions under one event per pull
+  request per poll.
+- Absence is not a fact. Where GitHub reports nothing, sync leaves the stored
+  value alone rather than clearing it.
+- Hand-entered observations get their own actor — `sync:slack-manual` — so the
+  log never claims an integration reported something typed in.
 
 ## Deliberately out of scope
 
@@ -130,5 +138,7 @@ From the sketch, and still true:
   distinguishing field is `resolved_by: discussion` — which is also the test
   for whether it belongs.
 
-Jira and Slack sync are out for now as a scheduling matter rather than a design
-one; GitHub is in.
+Jira and Slack sync remain out for scheduling reasons rather than design ones.
+`todo pr announce` covers the one Slack signal anything depends on, by hand.
+Without it, `send_for_review` cannot close on its own — that verb is the only
+predicate GitHub cannot satisfy.

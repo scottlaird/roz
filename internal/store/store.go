@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -11,41 +12,30 @@ import (
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
-
-	"github.com/scottlaird/todo/internal/schema"
 )
-
-// schemaVersion is stamped into PRAGMA user_version when the schema is
-// applied, and checked on every Init.
-//
-// Schema changes: there is no migration machinery, and none is needed while
-// there is only one version. When the DDL first changes, this constant is the
-// hook — bump it, and have Init step a database forward from whatever version
-// it holds. Until then Init refuses any version it does not recognise rather
-// than guessing, so an older binary cannot quietly write to a newer database.
-const schemaVersion = 1
 
 // dirPerm applies to the directory Init creates. The database holds work
 // notes, so it is not world-readable.
 const dirPerm = 0o700
 
 // Init prepares the database at path, creating its parent directory if
-// needed, and seeds one sequence row per entity using the requested
-// identifier prefixes.
+// needed, migrating it to the current schema, and seeding one sequence row
+// per entity using the requested identifier prefixes.
 //
-// It is safe to re-run. An already-initialised database is left untouched and
-// Init returns created false; nothing is dropped, overwritten or migrated. A
-// database stamped with an unrecognised schema version is an error, not
-// something to repair.
+// It is safe to re-run. An already-initialised database keeps its data and
+// its prefixes; nothing is dropped or overwritten. A database ahead of this
+// build is an error rather than something to guess at.
 //
-// The returned prefixes are the ones now in force, which for an existing
-// database are the stored ones rather than the requested ones — prefixes are
-// write-once, so requesting different ones does not change anything. Callers
-// that care about the difference should compare the two.
+// created reports whether the sequences were seeded here, which is the real
+// signal that the database is new. The returned prefixes are the ones now in
+// force: for an existing database the stored ones, not the requested ones,
+// since prefixes are write-once.
 //
-// Applying the schema and seeding happen in one transaction: on failure the
-// file is left without a user_version, so a later Init retries from the start.
+// Seeding is separate from migrating, so a run that migrates but fails to
+// seed leaves a valid schema and seeds on the next attempt.
 func Init(path string, requested map[Entity]string) (created bool, effective map[Entity]string, err error) {
+	ctx := context.Background()
+
 	if err := validatePrefixes(requested); err != nil {
 		return false, nil, err
 	}
@@ -59,27 +49,47 @@ func Init(path string, requested map[Entity]string) (created bool, effective map
 	}
 	defer db.Close()
 
-	version, err := userVersion(db)
+	if _, _, err := migrate(ctx, db); err != nil {
+		return false, nil, err
+	}
+
+	seeded, err := sequencesSeeded(db)
 	if err != nil {
 		return false, nil, err
 	}
-	switch version {
-	case schemaVersion:
+	if seeded {
 		stored, err := LoadPrefixes(db)
 		if err != nil {
 			return false, nil, err
 		}
 		return false, stored, nil
-	case 0:
-		if err := applySchema(db, requested); err != nil {
-			return false, nil, err
-		}
-		return true, requested, nil
-	default:
-		return false, nil, fmt.Errorf(
-			"database %s has schema version %d, this build understands %d",
-			path, version, schemaVersion)
 	}
+
+	if err := seedInTransaction(ctx, db, requested); err != nil {
+		return false, nil, err
+	}
+	return true, requested, nil
+}
+
+func sequencesSeeded(db *sql.DB) (bool, error) {
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM sequence").Scan(&count); err != nil {
+		return false, fmt.Errorf("reading the sequence table: %w", err)
+	}
+	return count > 0, nil
+}
+
+func seedInTransaction(ctx context.Context, db *sql.DB, prefixes map[Entity]string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("seeding sequences: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := seedSequences(tx, prefixes); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ErrNotInitialised means the database has not been through Init. Callers
@@ -112,14 +122,23 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	latest, err := LatestSchemaVersion()
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	switch {
 	case version == 0:
 		db.Close()
 		return nil, fmt.Errorf("%s: %w", path, ErrNotInitialised)
-	case version != schemaVersion:
+	case version < latest:
 		db.Close()
-		return nil, fmt.Errorf("database %s has schema version %d, this build understands %d",
-			path, version, schemaVersion)
+		return nil, fmt.Errorf("database %s is at schema version %d and this build expects %d; run `todo init` to migrate",
+			path, version, latest)
+	case version > latest:
+		db.Close()
+		return nil, fmt.Errorf("database %s is at schema version %d, ahead of this build's %d",
+			path, version, latest)
 	}
 
 	st, err := New(db)
@@ -167,24 +186,4 @@ func userVersion(db *sql.DB) (int, error) {
 		return 0, fmt.Errorf("reading schema version: %w", err)
 	}
 	return version, nil
-}
-
-func applySchema(db *sql.DB, prefixes map[Entity]string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("applying schema: %w", err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(schema.SQL); err != nil {
-		return fmt.Errorf("applying schema: %w", err)
-	}
-	if err := seedSequences(tx, prefixes); err != nil {
-		return err
-	}
-	// PRAGMA does not take bind parameters; schemaVersion is a constant.
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-		return fmt.Errorf("stamping schema version: %w", err)
-	}
-	return tx.Commit()
 }

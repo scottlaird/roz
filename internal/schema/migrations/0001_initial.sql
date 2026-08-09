@@ -1,18 +1,10 @@
--- The design sketch opens with three pragmas: journal_mode = WAL,
--- foreign_keys = ON and busy_timeout = 5000. They are not here because they
--- are connection settings rather than schema: foreign_keys and busy_timeout
--- reset on every new connection, and database/sql pools them, so setting
--- either from this file would leave most connections without it. The store
--- package applies all three as DSN parameters instead. journal_mode is
--- persistent and only needs setting once, but is asserted the same way.
+-- The schema as first shipped. Never edit this file: a database that has
+-- already run it would not pick the change up, and would silently differ from
+-- a fresh one. Add a migration instead.
 --
--- This file is documentation, not the thing that runs. The database is built
--- by the numbered files in migrations/, and TestSchemaMatchesMigrations
--- compares the two, so they cannot drift.
---
--- Editing it means writing a matching migration. Append new columns at the
--- end of their table, which is where ALTER TABLE ADD COLUMN puts them, so the
--- two stay textually comparable.
+-- Pragmas are absent on purpose; they are connection settings rather than
+-- schema, and the store applies them as DSN parameters. See schema.sql for
+-- the reasoning.
 
 -- ── identity ─────────────────────────────────────────────────────────
 -- The registry of identifier namespaces as well as the counter. `entity` is

@@ -36,8 +36,12 @@ func TestInitCreatesDatabase(t *testing.T) {
 	}
 	defer db.Close()
 
-	if got, want := userVersionOf(t, db), schemaVersion; got != want {
-		t.Errorf("user_version = %d, want %d", got, want)
+	latest, err := LatestSchemaVersion()
+	if err != nil {
+		t.Fatalf("LatestSchemaVersion() returned error: %v", err)
+	}
+	if got := userVersionOf(t, db); got != latest {
+		t.Errorf("user_version = %d, want the latest migration %d", got, latest)
 	}
 	for _, table := range []string{"project", "action", "pr", "event", "sequence", "actionverb"} {
 		if !tableExists(t, db, table) {
@@ -76,7 +80,11 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 	if _, _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
-	setUserVersion(t, path, schemaVersion+1)
+	latest, err := LatestSchemaVersion()
+	if err != nil {
+		t.Fatalf("LatestSchemaVersion() returned error: %v", err)
+	}
+	setUserVersion(t, path, latest+1)
 
 	if _, _, err := Init(path, testPrefixes()); err == nil {
 		t.Error("Init() on a newer schema version returned nil, want an error")

@@ -1,0 +1,328 @@
+package ghsync
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/scottlaird/todo/internal/github"
+	"github.com/scottlaird/todo/internal/store"
+)
+
+// fakeFetcher returns a fixed answer and records what it was asked for.
+type fakeFetcher struct {
+	result github.Result
+	err    error
+	asked  []string
+}
+
+func (f *fakeFetcher) Fetch(_ context.Context, keys []string) (github.Result, error) {
+	f.asked = append(f.asked, keys...)
+	if f.err != nil {
+		return github.Result{}, f.err
+	}
+	return f.result, nil
+}
+
+// newStore returns a Store over a fresh database with one tracked repository
+// and one tracked pull request in it.
+func newStore(t *testing.T) (*store.Store, string) {
+	t.Helper()
+	ctx := context.Background()
+
+	path := filepath.Join(t.TempDir(), "todo.db")
+	if _, _, err := store.Init(path, map[store.Entity]string{
+		store.EntityProject: "SL", store.EntityAction: "NA",
+	}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	st, err := store.New(db)
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.Insert(ctx, store.NewGitHubRepo("owner", "repo")); err != nil {
+		t.Fatalf("tracking the repository: %v", err)
+	}
+	if err := tx.Insert(ctx, store.NewPR("owner/repo", 1)); err != nil {
+		t.Fatalf("tracking the pull request: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return st, "owner/repo#1"
+}
+
+func loadPR(t *testing.T, st *store.Store, key string) *store.PR {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	pr, err := tx.LoadPR(ctx, key)
+	if err != nil {
+		t.Fatalf("LoadPR() returned error: %v", err)
+	}
+	return pr
+}
+
+func observed(key string) github.PullRequest {
+	return github.PullRequest{
+		Key: key, Repo: "owner/repo", Number: 1,
+		Title: "a title", Author: "someone", URL: "https://example/1",
+		State: "OPEN", IsDraft: true, BaseRef: "main", HeadSHA: "abc123",
+		ReviewDecision: "REVIEW_REQUIRED", MergeStateStatus: "BLOCKED",
+		ChecksState:   "SUCCESS",
+		Checks:        map[string]string{"build": "SUCCESS"},
+		ReviewerTeams: []string{"platform"},
+	}
+}
+
+func TestSyncWritesObservedState(t *testing.T) {
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{observed(key)},
+	}}
+
+	result, err := Sync(context.Background(), st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if result.Polled != 1 || result.ChangedCount() != 1 {
+		t.Errorf("result = polled %d, changed %d, want 1 and 1", result.Polled, result.ChangedCount())
+	}
+
+	pr := loadPR(t, st, key)
+	if pr.State.String != "OPEN" || !pr.IsDraft.Bool {
+		t.Errorf("state = %+v / draft %+v", pr.State, pr.IsDraft)
+	}
+	if pr.ReviewDecision.String != "REVIEW_REQUIRED" || pr.MergeStateStatus.String != "BLOCKED" {
+		t.Errorf("review = %v, merge = %v", pr.ReviewDecision, pr.MergeStateStatus)
+	}
+	if pr.Checks != `{"build":"SUCCESS"}` {
+		t.Errorf("checks = %q", pr.Checks)
+	}
+	if pr.ReviewerTeams != `["platform"]` {
+		t.Errorf("reviewer_teams = %q", pr.ReviewerTeams)
+	}
+}
+
+// TestSecondSyncIsQuiet is the property that keeps the log readable: polling
+// again with the same answer must write nothing at all.
+func TestSecondSyncIsQuiet(t *testing.T) {
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{observed(key)},
+	}}
+	ctx := context.Background()
+
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("first Sync() returned error: %v", err)
+	}
+	before := loadPR(t, st, key)
+
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("second Sync() returned error: %v", err)
+	}
+	if result.ChangedCount() != 0 {
+		t.Errorf("second sync reported %d changed, want 0: %v", result.ChangedCount(), result.Changed)
+	}
+
+	after := loadPR(t, st, key)
+	if after.LastSyncedAt != before.LastSyncedAt {
+		t.Errorf("last_synced_at moved on a no-op sync: %v → %v", before.LastSyncedAt, after.LastSyncedAt)
+	}
+}
+
+// TestLastSyncedAtTracksChanges pins the choice made about that column: it
+// moves when the stored state moves, and is not logged.
+func TestLastSyncedAtTracksChanges(t *testing.T) {
+	st, key := newStore(t)
+	ctx := context.Background()
+
+	if got := loadPR(t, st, key).LastSyncedAt; got.Valid {
+		t.Errorf("last_synced_at = %v on a freshly tracked pull request, want NULL", got)
+	}
+
+	client := &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{observed(key)},
+	}}
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	pr := loadPR(t, st, key)
+	if !pr.LastSyncedAt.Valid {
+		t.Fatal("last_synced_at is still NULL after a sync that changed things")
+	}
+
+	// It is auto, so it is not in the log.
+	for _, change := range changesFor(t, st, key) {
+		if change == "last_synced_at" {
+			t.Error("last_synced_at was logged, want it kept out of the log")
+		}
+	}
+}
+
+// changesFor lists the columns the log records as having changed.
+func changesFor(t *testing.T, st *store.Store, key string) []string {
+	t.Helper()
+	events, err := st.Events(context.Background(), store.EventQuery{})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	var columns []string
+	for _, e := range events {
+		if e.SubjectID == key && e.Field != "" {
+			columns = append(columns, e.Field)
+		}
+	}
+	return columns
+}
+
+// TestAbsenceIsNotAFact covers the merge rule: GitHub saying nothing must not
+// erase something already known.
+func TestAbsenceIsNotAFact(t *testing.T) {
+	st, key := newStore(t)
+	ctx := context.Background()
+
+	full := observed(key)
+	if _, err := Sync(ctx, st, &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{full},
+	}}); err != nil {
+		t.Fatalf("first Sync() returned error: %v", err)
+	}
+
+	// A later poll where GitHub reports no merge state — a merged pull
+	// request, or one still being computed.
+	quiet := full
+	quiet.MergeStateStatus = ""
+	quiet.ReviewDecision = ""
+	if _, err := Sync(ctx, st, &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{quiet},
+	}}); err != nil {
+		t.Fatalf("second Sync() returned error: %v", err)
+	}
+
+	pr := loadPR(t, st, key)
+	if pr.MergeStateStatus.String != "BLOCKED" {
+		t.Errorf("merge_state_status = %v, want the earlier value kept", pr.MergeStateStatus)
+	}
+	if pr.ReviewDecision.String != "REVIEW_REQUIRED" {
+		t.Errorf("review_decision = %v, want the earlier value kept", pr.ReviewDecision)
+	}
+}
+
+// TestSyncCannotWriteAuthoredColumns is the actor rule reaching sync. The
+// only authored thing about a pull request is that it is tracked, so there is
+// nothing for sync to break — but the guard should still be in force.
+func TestSyncRunsAsSyncGitHub(t *testing.T) {
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{observed(key)},
+	}}
+	if _, err := Sync(context.Background(), st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	events, err := st.Events(context.Background(), store.EventQuery{Kind: "changed"})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("no change events were logged")
+	}
+	for _, e := range events {
+		if e.Actor != string(store.ActorSyncGitHub) {
+			t.Errorf("event actor = %q, want %q", e.Actor, store.ActorSyncGitHub)
+		}
+	}
+}
+
+// TestMissingRaisesAnException covers a tracked pull request GitHub will no
+// longer show us: it is not an error, but a person should hear about it.
+func TestMissingRaisesAnException(t *testing.T) {
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{
+		Missing: map[string]string{key: "is not a pull request GitHub will show us"},
+	}}
+
+	result, err := Sync(context.Background(), st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(result.Missing) != 1 {
+		t.Fatalf("missing = %v, want one entry", result.Missing)
+	}
+
+	events, err := st.Events(context.Background(), store.EventQuery{Severity: store.SeverityException})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	if len(events) != 1 || events[0].SubjectID != key {
+		t.Errorf("exception events = %v, want one against %s", events, key)
+	}
+}
+
+func TestSyncWithNothingTracked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "todo.db")
+	if _, _, err := store.Init(path, map[store.Entity]string{
+		store.EntityProject: "SL", store.EntityAction: "NA",
+	}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer db.Close()
+	st, err := store.New(db)
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+
+	client := &fakeFetcher{}
+	result, err := Sync(context.Background(), st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if result.Polled != 0 || len(client.asked) != 0 {
+		t.Errorf("polled %d and asked for %v, want neither", result.Polled, client.asked)
+	}
+}
+
+func TestChecksEncodeStably(t *testing.T) {
+	// Map iteration order must not leak into the stored value, or every poll
+	// would look like a change.
+	first, err := encodeChecks(map[string]string{"b": "SUCCESS", "a": "FAILURE", "c": "PENDING"})
+	if err != nil {
+		t.Fatalf("encodeChecks() returned error: %v", err)
+	}
+	for range 20 {
+		again, err := encodeChecks(map[string]string{"c": "PENDING", "a": "FAILURE", "b": "SUCCESS"})
+		if err != nil {
+			t.Fatalf("encodeChecks() returned error: %v", err)
+		}
+		if again != first {
+			t.Fatalf("encoding is not stable: %q then %q", first, again)
+		}
+	}
+	if want := `{"a":"FAILURE","b":"SUCCESS","c":"PENDING"}`; first != want {
+		t.Errorf("encodeChecks() = %q, want %q", first, want)
+	}
+}

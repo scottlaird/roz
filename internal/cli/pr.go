@@ -19,6 +19,7 @@ func newPRCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newPRTrackCmd(),
+		newPRAnnounceCmd(),
 		newPRShowCmd(),
 		newPRListCmd(),
 	)

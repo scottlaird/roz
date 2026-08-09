@@ -46,6 +46,7 @@ func NewRootCmd() *cobra.Command {
 		newNoteCmd(),
 		newExceptionCmd(),
 		newRenderCmd(),
+		newWatchCmd(),
 	)
 	return root
 }

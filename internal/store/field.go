@@ -118,11 +118,22 @@ func kindOf(tag string) (FieldKind, error) {
 // value returns the field's current value as an any, suitable for passing to
 // database/sql as a query argument.
 func (f field) value(r Record) any {
+	return f.valueOf(r)
+}
+
+// valueOf is value without the Record constraint, for rows that have no
+// entity behind them.
+func (f field) valueOf(r any) any {
 	return reflect.ValueOf(r).Elem().Field(f.index).Interface()
 }
 
 // pointer returns a pointer to the field, for Scan to write through.
 func (f field) pointer(r Record) any {
+	return f.pointerOf(r)
+}
+
+// pointerOf is pointer without the Record constraint.
+func (f field) pointerOf(r any) any {
 	return reflect.ValueOf(r).Elem().Field(f.index).Addr().Interface()
 }
 

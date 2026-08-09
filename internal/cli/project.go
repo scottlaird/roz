@@ -24,6 +24,7 @@ func newProjectCmd() *cobra.Command {
 	cmd.AddCommand(
 		newProjectAddCmd(),
 		newProjectShowCmd(),
+		newProjectSetCmd(),
 		newProjectSnoozeCmd(),
 		newProjectWakeCmd(),
 		newProjectSupersedeCmd(),
@@ -59,8 +60,24 @@ func newProjectAddCmd() *cobra.Command {
 		RunE: runProjectAdd,
 	}
 
+	addProjectFieldFlags(cmd)
+	_ = cmd.MarkFlagRequired(flagTitle)
+	addActorFlag(cmd)
+
+	return cmd
+}
+
+// projectFieldFlags are the authored columns settable from the command line,
+// in help order. superseded_by is absent on purpose: `project supersede`
+// records it with the checks that belong to it.
+var projectFieldFlags = []string{
+	flagTitle, flagSummary, flagStatus, flagPriority, flagEffort,
+	flagSnoozeUntil, flagSnoozeReason, flagDesignRef, flagJiraKey,
+}
+
+func addProjectFieldFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
-	f.String(flagTitle, "", "what the project is (required)")
+	f.String(flagTitle, "", "what the project is")
 	f.String(flagSummary, "", "how it relates to other items; not a design note")
 	f.String(flagStatus, "", "active, blocked, snoozed, done, retired or superseded")
 	f.Int(flagPriority, 0, "1 to 4")
@@ -69,11 +86,19 @@ func newProjectAddCmd() *cobra.Command {
 	f.String(flagSnoozeReason, "", "why it is deferred")
 	f.StringArray(flagDesignRef, nil, "path to a design note; repeatable")
 	f.String(flagJiraKey, "", "e.g. CDSS-1744")
-	f.String(flagJSON, "", "remaining authored columns as a JSON object, keyed by column name")
-	_ = cmd.MarkFlagRequired(flagTitle)
-	addActorFlag(cmd)
+	f.String(flagJSON, "", "authored columns as a JSON object, keyed by column name")
+}
 
-	return cmd
+// anyProjectFieldGiven reports whether the invocation asked for any change at
+// all, so `project set` with no flags can say so rather than silently doing
+// nothing.
+func anyProjectFieldGiven(cmd *cobra.Command) bool {
+	for _, flag := range append(projectFieldFlags, flagJSON) {
+		if cmd.Flags().Changed(flag) {
+			return true
+		}
+	}
+	return false
 }
 
 func runProjectAdd(cmd *cobra.Command, _ []string) error {
@@ -137,6 +162,13 @@ func applyProjectJSON(cmd *cobra.Command, p *store.Project) error {
 func applyProjectFlags(cmd *cobra.Command, p *store.Project) error {
 	f := cmd.Flags()
 
+	if f.Changed(flagTitle) {
+		v, err := f.GetString(flagTitle)
+		if err != nil {
+			return err
+		}
+		p.Title = v
+	}
 	if f.Changed(flagSummary) {
 		v, err := f.GetString(flagSummary)
 		if err != nil {
@@ -163,14 +195,14 @@ func applyProjectFlags(cmd *cobra.Command, p *store.Project) error {
 		if err != nil {
 			return err
 		}
-		p.Effort = sql.NullString{String: v, Valid: true}
+		p.Effort = nullString(v)
 	}
 	if f.Changed(flagSnoozeUntil) {
 		v, err := f.GetString(flagSnoozeUntil)
 		if err != nil {
 			return err
 		}
-		p.SnoozeUntil = sql.NullString{String: v, Valid: true}
+		p.SnoozeUntil = nullString(v)
 	}
 	if f.Changed(flagSnoozeReason) {
 		v, err := f.GetString(flagSnoozeReason)
@@ -184,7 +216,7 @@ func applyProjectFlags(cmd *cobra.Command, p *store.Project) error {
 		if err != nil {
 			return err
 		}
-		p.JiraKey = sql.NullString{String: v, Valid: true}
+		p.JiraKey = nullString(v)
 	}
 	if f.Changed(flagDesignRef) {
 		refs, err := f.GetStringArray(flagDesignRef)
@@ -198,6 +230,16 @@ func applyProjectFlags(cmd *cobra.Command, p *store.Project) error {
 		p.DesignRefs = string(encoded)
 	}
 	return nil
+}
+
+// nullString maps an empty flag value to NULL rather than to an empty
+// string. The two are indistinguishable in the event log, and NULL is the
+// honest representation of absent — so `--jira-key ""` clears the column.
+func nullString(v string) sql.NullString {
+	if v == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: v, Valid: true}
 }
 
 func newProjectShowCmd() *cobra.Command {
@@ -290,6 +332,63 @@ func detailValue(raw json.RawMessage) string {
 		return strconv.FormatFloat(x, 'f', -1, 64)
 	default:
 		return string(raw)
+	}
+}
+
+func newProjectSetCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "set <project>",
+		Short: "Change authored columns on an existing project",
+		Long: "Takes the same flags as add, plus --json. Only the columns given are\n" +
+			"touched, and one event is logged per column that actually moved — so\n" +
+			"setting a value it already has writes nothing.\n\n" +
+			"An empty value clears a nullable column: --jira-key \"\" removes it. To\n" +
+			"clear a number, use --json '{\"priority\":null}'.\n\n" +
+			"Observed columns cannot be set here; they are sync's to write. Use\n" +
+			"`project snooze` and `project supersede` for the pairs those verbs\n" +
+			"keep consistent.",
+		Args: cobra.ExactArgs(1),
+		RunE: runProjectSet,
+	}
+	addProjectFieldFlags(cmd)
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runProjectSet(cmd *cobra.Command, args []string) error {
+	if !anyProjectFieldGiven(cmd) {
+		return fmt.Errorf("nothing to set: pass a column flag or --%s", flagJSON)
+	}
+
+	return updateProject(cmd, args[0], func(_ context.Context, _ *store.Tx, p *store.Project) error {
+		if err := applyProjectJSON(cmd, p); err != nil {
+			return err
+		}
+		if err := applyProjectFlags(cmd, p); err != nil {
+			return err
+		}
+		return checkSnoozeConsistency(p)
+	})
+}
+
+// checkSnoozeConsistency reports the schema's status/snooze_until coupling as
+// advice rather than as a CHECK violation.
+//
+// The database enforces this either way; catching it here is only so the
+// message names the verb that moves both.
+func checkSnoozeConsistency(p *store.Project) error {
+	snoozed := p.Status == store.ProjectSnoozed
+	dated := p.SnoozeUntil.Valid
+
+	switch {
+	case snoozed && !dated:
+		return fmt.Errorf("status %s needs a date: use `project snooze %s --%s <date>`",
+			store.ProjectSnoozed, p.ID, flagSnoozeUntil)
+	case dated && !snoozed:
+		return fmt.Errorf("a snooze date needs status %s: use `project snooze %s --%s <date>`",
+			store.ProjectSnoozed, p.ID, flagSnoozeUntil)
+	default:
+		return nil
 	}
 }
 

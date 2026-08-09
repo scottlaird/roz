@@ -4,6 +4,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -80,6 +81,57 @@ func Init(path string, requested map[Entity]string) (created bool, effective map
 			path, version, schemaVersion)
 	}
 }
+
+// ErrNotInitialised means the database has not been through Init. Callers
+// should test for it with errors.Is and point the user at `todo init` rather
+// than reporting a missing table.
+var ErrNotInitialised = errors.New("database is not initialised")
+
+// OpenStore opens an initialised database and returns a Store over it.
+//
+// Unlike Open it never creates a file: a missing or unstamped database is
+// ErrNotInitialised, so a mistyped --db path reports that rather than
+// silently creating an empty database and failing later.
+//
+// The caller must Close the result.
+func OpenStore(path string) (*Store, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%s: %w", path, ErrNotInitialised)
+		}
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	version, err := userVersion(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	switch {
+	case version == 0:
+		db.Close()
+		return nil, fmt.Errorf("%s: %w", path, ErrNotInitialised)
+	case version != schemaVersion:
+		db.Close()
+		return nil, fmt.Errorf("database %s has schema version %d, this build understands %d",
+			path, version, schemaVersion)
+	}
+
+	st, err := New(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return st, nil
+}
+
+// Close releases the underlying database.
+func (s *Store) Close() error { return s.db.Close() }
 
 // Open opens the database at path, creating an empty file if it does not
 // exist. It does not apply or check the schema; use Init for that.

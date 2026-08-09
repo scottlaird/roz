@@ -1,0 +1,182 @@
+package cli
+
+import (
+	"bytes"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// runCLI executes the command tree with args and returns everything it wrote.
+func runCLI(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs(args)
+
+	err := root.Execute()
+	return out.String(), err
+}
+
+// initDB returns the path of a freshly initialised database.
+func initDB(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "todo.db")
+	if _, err := runCLI(t, "init", "--db", path); err != nil {
+		t.Fatalf("init returned error: %v", err)
+	}
+	return path
+}
+
+func TestProjectAddPrintsID(t *testing.T) {
+	db := initDB(t)
+
+	out, err := runCLI(t, "project", "add", "--db", db, "--title", "first")
+	if err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), "SL1"; got != want {
+		t.Errorf("project add printed %q, want %q", got, want)
+	}
+}
+
+func TestProjectAddThenList(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "project", "add", "--db", db,
+		"--title", "Split the nodepool", "--priority", "1", "--effort", "weeks"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "project", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("project list returned error: %v", err)
+	}
+	for _, want := range []string{"SL1", "active", "weeks", "Split the nodepool"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("project list output does not contain %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestProjectListEmpty(t *testing.T) {
+	db := initDB(t)
+
+	out, err := runCLI(t, "project", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("project list returned error: %v", err)
+	}
+	if !strings.Contains(out, "no projects") {
+		t.Errorf("project list on an empty database printed %q", out)
+	}
+}
+
+// TestFlagOverridesJSON pins the documented precedence: --json is the base an
+// agent generates, and an explicit flag wins over it.
+func TestFlagOverridesJSON(t *testing.T) {
+	db := initDB(t)
+
+	_, err := runCLI(t, "project", "add", "--db", db, "--title", "t",
+		"--json", `{"priority":4,"effort":"days"}`, "--priority", "2")
+	if err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "project", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("project list returned error: %v", err)
+	}
+	// The flag wins on priority; the JSON still supplies effort.
+	if !strings.Contains(out, "2") || !strings.Contains(out, "days") {
+		t.Errorf("want priority 2 from the flag and effort days from --json:\n%s", out)
+	}
+}
+
+func TestProjectAddRejections(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "sync actor",
+			args:    []string{"--actor", "sync:github"},
+			wantErr: "not allowed",
+		},
+		{
+			name:    "unrecognised actor",
+			args:    []string{"--actor", "robot"},
+			wantErr: "not recognised",
+		},
+		{
+			name:    "observed column via json",
+			args:    []string{"--json", `{"jira_status":"Done"}`},
+			wantErr: "observed",
+		},
+		{
+			name:    "unknown column via json",
+			args:    []string{"--json", `{"titel":"typo"}`},
+			wantErr: `no column "titel"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := initDB(t)
+			args := append([]string{"project", "add", "--db", db, "--title", "t"}, tt.args...)
+
+			_, err := runCLI(t, args...)
+			if err == nil {
+				t.Fatalf("project add %v returned nil, want an error", tt.args)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAgentActorIsAccepted(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "project", "add", "--db", db,
+		"--title", "by an agent", "--actor", "agent:claude"); err != nil {
+		t.Errorf("project add --actor agent:claude returned error: %v", err)
+	}
+}
+
+// TestUninitialisedDatabaseAdvises checks the error points somewhere useful
+// rather than reporting a missing table.
+func TestUninitialisedDatabaseAdvises(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nothing-here.db")
+
+	_, err := runCLI(t, "project", "list", "--db", missing)
+	if err == nil {
+		t.Fatal("project list on a missing database returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "todo init") {
+		t.Errorf("error = %v, want it to suggest `todo init`", err)
+	}
+}
+
+// TestRejectedInputConsumesNoIdentifier checks that validation happens before
+// allocation. Gaps are acceptable, but a typo should not cost a number.
+func TestRejectedInputConsumesNoIdentifier(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "project", "add", "--db", db,
+		"--title", "t", "--json", `{"titel":"typo"}`); err == nil {
+		t.Fatal("project add with a bad column returned nil, want an error")
+	}
+
+	out, err := runCLI(t, "project", "add", "--db", db, "--title", "first real one")
+	if err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), "SL1"; got != want {
+		t.Errorf("first successful add produced %q, want %q", got, want)
+	}
+}

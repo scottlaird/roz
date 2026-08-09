@@ -127,6 +127,9 @@ func (t *Tx) Insert(ctx context.Context, r Record) error {
 	if err != nil {
 		return err
 	}
+	if err := t.checkInsertPermission(r, fields); err != nil {
+		return err
+	}
 	t.stamp(r, fields, Created, Auto)
 
 	var columns []string
@@ -196,6 +199,31 @@ func (t *Tx) Update(ctx context.Context, before, after Record) ([]Change, error)
 		}
 	}
 	return changes, nil
+}
+
+// checkInsertPermission applies the actor rule to a new record. Update sees a
+// before image and can diff; Insert has none, so the test is whether a column
+// the actor may not write has been given a value at all.
+func (t *Tx) checkInsertPermission(r Record, fields []field) error {
+	allowed := t.actor.writes()
+	for _, f := range fields {
+		if f.kind != Authored && f.kind != Observed {
+			continue // the store's own columns
+		}
+		if f.kind == allowed {
+			continue
+		}
+		text, err := renderValue(f.value(r))
+		if err != nil {
+			return fmt.Errorf("%s.%s: %w", r.table(), f.column, err)
+		}
+		if text == "" {
+			continue // left unset, so nothing was claimed
+		}
+		return fmt.Errorf("%s may not set %s.%s at creation: it is %s, and %s writes only %s fields",
+			t.actor, r.table(), f.column, f.kind, t.actor, allowed)
+	}
+	return nil
 }
 
 func (t *Tx) checkPermission(r Record, changes []Change) error {

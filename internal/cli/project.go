@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -19,6 +23,9 @@ func newProjectCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newProjectAddCmd(),
+		newProjectShowCmd(),
+		newProjectSnoozeCmd(),
+		newProjectWakeCmd(),
 		newProjectSupersedeCmd(),
 		newProjectListCmd(),
 	)
@@ -193,6 +200,173 @@ func applyProjectFlags(cmd *cobra.Command, p *store.Project) error {
 	return nil
 }
 
+func newProjectShowCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <project>",
+		Short: "Print one project in full",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runProjectShow,
+	}
+	addOutputFlag(cmd)
+	return cmd
+}
+
+func runProjectShow(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+
+	format, err := outputFrom(cmd)
+	if err != nil {
+		return err
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	p, err := tx.LoadProject(ctx, args[0])
+	if err != nil {
+		return notFoundOr(err, args[0])
+	}
+
+	if format == outputJSON {
+		encoded, err := store.MarshalRecord(p)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
+		return err
+	}
+	return writeRecordDetail(cmd.OutOrStdout(), p)
+}
+
+// writeRecordDetail prints every column, one per line. The columns come from
+// the record's own metadata, so a new one appears here without being added.
+func writeRecordDetail(out io.Writer, r any) error {
+	encoded, err := store.MarshalRecord(r)
+	if err != nil {
+		return err
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		return err
+	}
+
+	columns := make([]string, 0, len(object))
+	for column := range object {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	for _, column := range columns {
+		fmt.Fprintf(w, "%s\t%s\n", column, detailValue(object[column]))
+	}
+	return w.Flush()
+}
+
+// detailValue renders one column's JSON for a human: absent as a dash,
+// strings unquoted, and arrays or objects left in their JSON form.
+func detailValue(raw json.RawMessage) string {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return string(raw)
+	}
+	switch x := value.(type) {
+	case nil:
+		return "-"
+	case string:
+		if x == "" {
+			return "-"
+		}
+		return x
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	default:
+		return string(raw)
+	}
+}
+
+func newProjectSnoozeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "snooze <project>",
+		Short: "Defer a project to a real date",
+		Long: "--until must be a date or timestamp. \"Next week\" is not one, and that\n" +
+			"is the point: a snooze nobody can act on is how work goes quiet.\n\n" +
+			"Status and date move together, because the schema couples them.",
+		Args: cobra.ExactArgs(1),
+		RunE: runProjectSnooze,
+	}
+	f := cmd.Flags()
+	f.String(flagSnoozeUntil, "", "ISO-8601 date or timestamp (required)")
+	f.String(flagSnoozeReason, "", "why it is deferred")
+	_ = cmd.MarkFlagRequired(flagSnoozeUntil)
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runProjectSnooze(cmd *cobra.Command, args []string) error {
+	f := cmd.Flags()
+
+	until, err := f.GetString(flagSnoozeUntil)
+	if err != nil {
+		return err
+	}
+	if until, err = validateTimestamp(flagSnoozeUntil, until); err != nil {
+		return err
+	}
+	reason, err := f.GetString(flagSnoozeReason)
+	if err != nil {
+		return err
+	}
+
+	return updateProject(cmd, args[0], func(_ context.Context, _ *store.Tx, p *store.Project) error {
+		p.Status = store.ProjectSnoozed
+		p.SnoozeUntil = sql.NullString{String: until, Valid: true}
+		p.SnoozeReason = reason
+		return nil
+	})
+}
+
+func newProjectWakeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "wake <project>",
+		Short: "Clear a snooze",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runProjectWake,
+	}
+	cmd.Flags().String(flagStatus, store.ProjectActive, "status to wake into")
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runProjectWake(cmd *cobra.Command, args []string) error {
+	status, err := cmd.Flags().GetString(flagStatus)
+	if err != nil {
+		return err
+	}
+	if status == store.ProjectSnoozed {
+		return fmt.Errorf("--%s %s would not wake anything; use `project snooze` to change the date",
+			flagStatus, status)
+	}
+
+	return updateProject(cmd, args[0], func(_ context.Context, _ *store.Tx, p *store.Project) error {
+		if p.Status != store.ProjectSnoozed {
+			return fmt.Errorf("%s is %s, not snoozed", p.ID, p.Status)
+		}
+		p.Status = status
+		p.SnoozeUntil = sql.NullString{}
+		p.SnoozeReason = ""
+		return nil
+	})
+}
+
 func newProjectSupersedeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "supersede",
@@ -200,7 +374,7 @@ func newProjectSupersedeCmd() *cobra.Command {
 		Long: "The superseded project keeps its identifier and stops rendering; the\n" +
 			"edge survives so old references still resolve.",
 		Args: cobra.NoArgs,
-		Run:  stub,
+		RunE: runProjectSupersede,
 	}
 	f := cmd.Flags()
 	f.String("from", "", "project being superseded, e.g. SL32 (required)")
@@ -209,6 +383,95 @@ func newProjectSupersedeCmd() *cobra.Command {
 	_ = cmd.MarkFlagRequired("into")
 	addActorFlag(cmd)
 	return cmd
+}
+
+func runProjectSupersede(cmd *cobra.Command, _ []string) error {
+	f := cmd.Flags()
+
+	from, err := f.GetString("from")
+	if err != nil {
+		return err
+	}
+	into, err := f.GetString("into")
+	if err != nil {
+		return err
+	}
+	if from == into {
+		return fmt.Errorf("%s cannot supersede itself", from)
+	}
+
+	return updateProject(cmd, from, func(ctx context.Context, tx *store.Tx, p *store.Project) error {
+		// Check the target before writing, so a typo reports the identifier
+		// rather than a foreign key violation.
+		if _, err := tx.LoadProject(ctx, into); err != nil {
+			return notFoundOr(err, into)
+		}
+		p.Status = store.ProjectSuperseded
+		p.SupersededBy = sql.NullString{String: into, Valid: true}
+		return nil
+	})
+}
+
+// updateProject is the read-modify-write every project verb performs: load,
+// apply the change to a clone, and let Tx.Update work out what moved.
+//
+// Nothing is written when the change is a no-op, and the actor rule is
+// applied by Update rather than here.
+func updateProject(cmd *cobra.Command, id string, change func(context.Context, *store.Tx, *store.Project) error) error {
+	ctx := cmd.Context()
+
+	actor, err := actorFrom(cmd)
+	if err != nil {
+		return err
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	tx, err := st.Begin(ctx, actor)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadProject(ctx, id)
+	if err != nil {
+		return notFoundOr(err, id)
+	}
+
+	after := before.Clone()
+	if err := change(ctx, tx, after); err != nil {
+		return err
+	}
+
+	changes, err := tx.Update(ctx, before, after)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if len(changes) == 0 {
+		fmt.Fprintf(out, "%s unchanged\n", id)
+		return nil
+	}
+	for _, change := range changes {
+		fmt.Fprintf(out, "%s %s\n", id, change)
+	}
+	return nil
+}
+
+// notFoundOr turns a missing row into a message naming the identifier, since
+// sql.ErrNoRows on its own says nothing about what was being looked for.
+func notFoundOr(err error, id string) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("no such item: %s", id)
+	}
+	return err
 }
 
 func newProjectListCmd() *cobra.Command {

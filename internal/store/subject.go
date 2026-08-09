@@ -22,13 +22,17 @@ func (t *Tx) LoadSubject(ctx context.Context, s *Store, id string) (Record, erro
 		}
 	}
 
-	// Pull requests keep their natural key, so they have no prefix to look
-	// up. This is the heterogeneous subject_id the log is designed around.
+	// Pull requests and repositories keep their natural keys, so they have no
+	// prefix to look up. This is the heterogeneous subject_id the log is
+	// designed around.
 	if _, _, err := ParsePRKey(id); err == nil {
 		return t.LoadPR(ctx, id)
 	}
+	if _, _, err := ParseRepoID(id); err == nil {
+		return t.LoadGitHubRepo(ctx, id)
+	}
 
 	return nil, fmt.Errorf(
-		"%q is neither an identifier this database issues (prefixes are %s) nor a pull request key like repo%s123",
+		"%q is not an identifier this database issues (prefixes are %s), a pull request key like owner/repo%s123, or a repository like owner/repo",
 		id, FormatPrefixes(s.prefixes), prSeparator)
 }

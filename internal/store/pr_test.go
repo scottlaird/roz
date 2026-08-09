@@ -13,19 +13,23 @@ func TestParsePRKey(t *testing.T) {
 		wantNumber int64
 		wantErr    bool
 	}{
-		{key: "myrepo#812", wantRepo: "myrepo", wantNumber: 812},
-		{key: "saas-infra-plane#4174", wantRepo: "saas-infra-plane", wantNumber: 4174},
-		{key: "owner/repo#1", wantRepo: "owner/repo", wantNumber: 1},
+		{key: "owner/myrepo#812", wantRepo: "owner/myrepo", wantNumber: 812},
+		{key: "scottlaird/todo#11", wantRepo: "scottlaird/todo", wantNumber: 11},
 		{key: "", wantErr: true},
-		{key: "myrepo", wantErr: true},
+		// A bare repository name is no longer enough: pr.repo is a foreign key
+		// into github_repo, which is keyed owner/name.
+		{key: "saas-infra-plane#4174", wantErr: true},
+		{key: "myrepo#812", wantErr: true},
+		{key: "owner/repo", wantErr: true},
 		{key: "#812", wantErr: true},
-		{key: "myrepo#", wantErr: true},
-		{key: "myrepo#abc", wantErr: true},
-		{key: "myrepo#0", wantErr: true},
-		{key: "myrepo#-1", wantErr: true},
+		{key: "owner/repo#", wantErr: true},
+		{key: "owner/repo#abc", wantErr: true},
+		{key: "owner/repo#0", wantErr: true},
+		{key: "owner/repo#-1", wantErr: true},
 		// A second separator would make the key not round-trip through the
 		// schema's CHECK (id = repo || '#' || number).
-		{key: "my#repo#812", wantErr: true},
+		{key: "owner/my#repo#812", wantErr: true},
+		{key: "a/b/c#1", wantErr: true},
 		// A sequence identifier is not a pull request key.
 		{key: "SL200", wantErr: true},
 	}
@@ -50,10 +54,43 @@ func TestParsePRKey(t *testing.T) {
 	}
 }
 
-// trackPR records and commits a tracking decision.
+// trackRepo records a repository, which a pull request in it needs first.
+func trackRepo(t *testing.T, st *Store, id string) *GitHubRepo {
+	t.Helper()
+	ctx := context.Background()
+
+	owner, name, err := ParseRepoID(id)
+	if err != nil {
+		t.Fatalf("ParseRepoID(%q) returned error: %v", id, err)
+	}
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	if existing, err := tx.LoadGitHubRepo(ctx, id); err == nil {
+		return existing
+	}
+
+	r := NewGitHubRepo(owner, name)
+	if err := tx.Insert(ctx, r); err != nil {
+		t.Fatalf("Insert() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return r
+}
+
+// trackPR records and commits a tracking decision, tracking the repository
+// first because pr.repo is a foreign key into github_repo.
 func trackPR(t *testing.T, st *Store, repo string, number int64) *PR {
 	t.Helper()
 	ctx := context.Background()
+
+	trackRepo(t, st, repo)
 
 	p := NewPR(repo, number)
 	tx, err := st.Begin(ctx, ActorHuman)
@@ -76,10 +113,10 @@ func trackPR(t *testing.T, st *Store, repo string, number int64) *PR {
 // new one holds are not observations.
 func TestHumanMayTrackAPR(t *testing.T) {
 	st := newStore(t)
-	p := trackPR(t, st, "myrepo", 812)
+	p := trackPR(t, st, "owner/myrepo", 812)
 
-	if p.ID != "myrepo#812" {
-		t.Errorf("id = %q, want myrepo#812", p.ID)
+	if p.ID != "owner/myrepo#812" {
+		t.Errorf("id = %q, want owner/myrepo#812", p.ID)
 	}
 	if p.TrackedSince == "" {
 		t.Error("tracked_since is empty after Insert()")
@@ -89,7 +126,7 @@ func TestHumanMayTrackAPR(t *testing.T) {
 func TestPRRoundTrips(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	p := trackPR(t, st, "myrepo", 812)
+	p := trackPR(t, st, "owner/myrepo", 812)
 
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {
@@ -109,7 +146,7 @@ func TestPRRoundTrips(t *testing.T) {
 func TestHumanMayNotWriteObservedPRColumns(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	p := trackPR(t, st, "myrepo", 812)
+	p := trackPR(t, st, "owner/myrepo", 812)
 
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {
@@ -130,7 +167,7 @@ func TestHumanMayNotWriteObservedPRColumns(t *testing.T) {
 func TestSyncWritesObservedPRColumns(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	p := trackPR(t, st, "myrepo", 812)
+	p := trackPR(t, st, "owner/myrepo", 812)
 
 	tx, err := st.Begin(ctx, ActorSyncGitHub)
 	if err != nil {
@@ -160,7 +197,7 @@ func TestSyncWritesObservedPRColumns(t *testing.T) {
 func TestFrozenIsComputedByTheDatabase(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	p := trackPR(t, st, "myrepo", 812)
+	p := trackPR(t, st, "owner/myrepo", 812)
 
 	if p.Frozen {
 		t.Error("a newly tracked pull request is frozen, want not frozen")
@@ -199,7 +236,7 @@ func TestFrozenIsComputedByTheDatabase(t *testing.T) {
 func TestSettingFrozenIsNotAChange(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	p := trackPR(t, st, "myrepo", 812)
+	p := trackPR(t, st, "owner/myrepo", 812)
 
 	tx, err := st.Begin(ctx, ActorSyncGitHub)
 	if err != nil {
@@ -223,9 +260,9 @@ func TestListPRs(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	base := trackPR(t, st, "myrepo", 100)
-	stacked := trackPR(t, st, "myrepo", 101)
-	trackPR(t, st, "otherrepo", 5)
+	base := trackPR(t, st, "owner/myrepo", 100)
+	stacked := trackPR(t, st, "owner/myrepo", 101)
+	trackPR(t, st, "owner/otherrepo", 5)
 
 	tx, err := st.Begin(ctx, ActorSyncGitHub)
 	if err != nil {
@@ -247,9 +284,9 @@ func TestListPRs(t *testing.T) {
 		want   []string
 	}{
 		{name: "all, ordered by repo then number", filter: PRFilter{},
-			want: []string{"myrepo#100", "myrepo#101", "otherrepo#5"}},
-		{name: "stacked", filter: PRFilter{Stacked: true}, want: []string{"myrepo#101"}},
-		{name: "by state", filter: PRFilter{State: PRStateOpen}, want: []string{"myrepo#101"}},
+			want: []string{"owner/myrepo#100", "owner/myrepo#101", "owner/otherrepo#5"}},
+		{name: "stacked", filter: PRFilter{Stacked: true}, want: []string{"owner/myrepo#101"}},
+		{name: "by state", filter: PRFilter{State: PRStateOpen}, want: []string{"owner/myrepo#101"}},
 		{name: "frozen", filter: PRFilter{Frozen: true}, want: nil},
 	}
 
@@ -273,7 +310,7 @@ func TestListPRs(t *testing.T) {
 func TestLoadSubjectResolvesPRKeys(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	p := trackPR(t, st, "myrepo", 812)
+	p := trackPR(t, st, "owner/myrepo", 812)
 
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {

@@ -63,6 +63,16 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 	}
 	defer tx.Rollback()
 
+	// The repository has to be tracked first: its review policy decides which
+	// actions a pull request against it will want, so tracking one without
+	// having said anything about the repository would start from a guess.
+	switch _, err := tx.LoadGitHubRepo(ctx, repo); {
+	case errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("%s is not tracked; run `todo repo track %s` first", repo, repo)
+	case err != nil:
+		return err
+	}
+
 	p := store.NewPR(repo, number)
 
 	// Check first rather than interpreting a constraint failure. The unique

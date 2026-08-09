@@ -44,11 +44,17 @@ var (
 	spaceAround = regexp.MustCompile(`\s*([(),])\s*`)
 )
 
-// normaliseSQL strips what does not change meaning: comments, line breaks and
-// spacing around punctuation. What survives is close enough to compare, and
-// still catches a differing CHECK constraint or default.
+// normaliseSQL strips what does not change meaning: comments, line breaks,
+// spacing around punctuation, and identifier quoting. What survives is close
+// enough to compare, and still catches a differing CHECK or default.
+//
+// Quotes have to go because ALTER TABLE ... RENAME TO writes the new name
+// quoted, so a rebuilt table is stored as CREATE TABLE "pr" while schema.sql
+// says CREATE TABLE pr. Double quotes only ever delimit identifiers here;
+// string literals in this schema use single quotes.
 func normaliseSQL(ddl string) string {
 	ddl = lineComment.ReplaceAllString(ddl, " ")
+	ddl = strings.ReplaceAll(ddl, `"`, "")
 	ddl = runOfSpace.ReplaceAllString(ddl, " ")
 	ddl = spaceAround.ReplaceAllString(ddl, "$1")
 	return strings.TrimSpace(ddl)
@@ -251,6 +257,124 @@ func TestFailedMigrationLeavesVersionAlone(t *testing.T) {
 	}
 	if _, err := db.Exec("SELECT scratch FROM project"); err == nil {
 		t.Error("the first statement survived a failed migration, want the whole thing rolled back")
+	}
+}
+
+// TestRebuildMigrationPreservesData runs the first real table rebuild against
+// a database that already holds pull requests.
+//
+// Rebuilding is SQLite's only way to add a foreign key, and it is the step
+// most likely to lose rows quietly, so this stops at version 1, puts data in,
+// and then migrates the rest of the way.
+func TestRebuildMigrationPreservesData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "todo.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer db.Close()
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations() returned error: %v", err)
+	}
+	if len(migrations) < 2 {
+		t.Skip("no rebuild migration yet")
+	}
+	if err := applyMigration(ctx, db, migrations[0]); err != nil {
+		t.Fatalf("applying %s: %v", migrations[0].Name, err)
+	}
+
+	// A base pull request and one stacked on it, so the self-reference is
+	// exercised as well as the row copy.
+	const at = "2026-08-09T12:00:00.000Z"
+	for _, insert := range []string{
+		`INSERT INTO pr (id, repo, number, title, tracked_since)
+		 VALUES ('owner/repo#1', 'owner/repo', 1, 'base', '` + at + `')`,
+		`INSERT INTO pr (id, repo, number, title, stacked_on, tracked_since)
+		 VALUES ('owner/repo#2', 'owner/repo', 2, 'stacked', 'owner/repo#1', '` + at + `')`,
+	} {
+		if _, err := db.Exec(insert); err != nil {
+			t.Fatalf("seeding a pull request: %v", err)
+		}
+	}
+
+	if _, _, err := migrate(ctx, db); err != nil {
+		t.Fatalf("migrate() returned error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM pr").Scan(&count); err != nil {
+		t.Fatalf("counting pull requests: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("%d pull requests survived the rebuild, want 2", count)
+	}
+
+	var stackedOn, title string
+	err = db.QueryRow("SELECT stacked_on, title FROM pr WHERE id = 'owner/repo#2'").Scan(&stackedOn, &title)
+	if err != nil {
+		t.Fatalf("reading the stacked pull request: %v", err)
+	}
+	if stackedOn != "owner/repo#1" || title != "stacked" {
+		t.Errorf("stacked pull request = %q / %q, want owner/repo#1 / stacked", stackedOn, title)
+	}
+
+	// The repository the pull requests named was backfilled, or the new
+	// foreign key would have had nothing to point at.
+	var owner, name string
+	if err := db.QueryRow("SELECT owner, name FROM github_repo WHERE id = 'owner/repo'").Scan(&owner, &name); err != nil {
+		t.Fatalf("the repository was not backfilled: %v", err)
+	}
+	if owner != "owner" || name != "repo" {
+		t.Errorf("backfilled repository = %q / %q, want owner / repo", owner, name)
+	}
+
+	// And the constraint is live afterwards.
+	_, err = db.Exec(`INSERT INTO pr (id, repo, number, tracked_since)
+	                  VALUES ('other/repo#1', 'other/repo', 1, '` + at + `')`)
+	if err == nil {
+		t.Error("a pull request in an untracked repository was accepted after the rebuild")
+	}
+}
+
+// TestRebuildMigrationRejectsUnsplittableRepo covers the case the backfill
+// deliberately does not guess at: a repository name with no owner cannot
+// become an owner/name key, so the migration fails rather than inventing one.
+func TestRebuildMigrationRejectsUnsplittableRepo(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "todo.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer db.Close()
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations() returned error: %v", err)
+	}
+	if len(migrations) < 2 {
+		t.Skip("no rebuild migration yet")
+	}
+	if err := applyMigration(ctx, db, migrations[0]); err != nil {
+		t.Fatalf("applying %s: %v", migrations[0].Name, err)
+	}
+
+	_, err = db.Exec(`INSERT INTO pr (id, repo, number, tracked_since)
+	                  VALUES ('bare#1', 'bare', 1, '2026-08-09T12:00:00.000Z')`)
+	if err != nil {
+		t.Fatalf("seeding a bare-named pull request: %v", err)
+	}
+
+	if err := applyMigration(ctx, db, migrations[1]); err == nil {
+		t.Fatal("the migration accepted a repository it could not split, want an error")
+	}
+
+	// And it left the database where it was rather than half rebuilt.
+	if got, _ := userVersion(db); got != migrations[0].Version {
+		t.Errorf("user_version = %d after a failed migration, want %d", got, migrations[0].Version)
 	}
 }
 

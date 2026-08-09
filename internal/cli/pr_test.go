@@ -6,14 +6,23 @@ import (
 	"testing"
 )
 
+// trackRepo records a repository, which pr track requires first.
+func trackRepo(t *testing.T, db, id string) {
+	t.Helper()
+	if _, err := runCLI(t, "repo", "track", "--db", db, id); err != nil {
+		t.Fatalf("repo track returned error: %v", err)
+	}
+}
+
 func TestPRTrackAndList(t *testing.T) {
 	db := initDB(t)
+	trackRepo(t, db, "owner/myrepo")
 
-	out, err := runCLI(t, "pr", "track", "--db", db, "myrepo#812")
+	out, err := runCLI(t, "pr", "track", "--db", db, "owner/myrepo#812")
 	if err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
-	if got := strings.TrimSpace(out); got != "myrepo#812" {
+	if got := strings.TrimSpace(out); got != "owner/myrepo#812" {
 		t.Errorf("pr track printed %q, want the key", got)
 	}
 
@@ -21,7 +30,7 @@ func TestPRTrackAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pr list returned error: %v", err)
 	}
-	if !strings.Contains(listed, "myrepo#812") {
+	if !strings.Contains(listed, "owner/myrepo#812") {
 		t.Errorf("pr list does not contain the tracked pull request:\n%s", listed)
 	}
 }
@@ -40,11 +49,12 @@ func TestPRListEmpty(t *testing.T) {
 
 func TestPRShowJSON(t *testing.T) {
 	db := initDB(t)
-	if _, err := runCLI(t, "pr", "track", "--db", db, "myrepo#812"); err != nil {
+	trackRepo(t, db, "owner/myrepo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/myrepo#812"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "pr", "show", "--db", db, "myrepo#812", "-o", "json")
+	out, err := runCLI(t, "pr", "show", "--db", db, "owner/myrepo#812", "-o", "json")
 	if err != nil {
 		t.Fatalf("pr show -o json returned error: %v", err)
 	}
@@ -53,7 +63,7 @@ func TestPRShowJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &object); err != nil {
 		t.Fatalf("output is not a JSON object: %v\n%s", err, out)
 	}
-	if object["id"] != "myrepo#812" || object["number"] != float64(812) {
+	if object["id"] != "owner/myrepo#812" || object["number"] != float64(812) {
 		t.Errorf("pull request = %#v, want myrepo#812", object)
 	}
 	// frozen is a generated column and false on a fresh row.
@@ -68,7 +78,8 @@ func TestPRShowJSON(t *testing.T) {
 
 func TestPRListJSONIsAnArray(t *testing.T) {
 	db := initDB(t)
-	if _, err := runCLI(t, "pr", "track", "--db", db, "myrepo#812"); err != nil {
+	trackRepo(t, db, "owner/myrepo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/myrepo#812"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
@@ -91,12 +102,14 @@ func TestPRRejections(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{name: "no number", args: []string{"pr", "track", "myrepo"}, wantErr: "not a pull request key"},
-		{name: "no repo", args: []string{"pr", "track", "#812"}, wantErr: "no repository"},
-		{name: "not a number", args: []string{"pr", "track", "myrepo#abc"}, wantErr: "no pull request number"},
-		{name: "two separators", args: []string{"pr", "track", "my#repo#812"}, wantErr: "more than one"},
-		{name: "show untracked", args: []string{"pr", "show", "myrepo#999"}, wantErr: "no such item"},
-		{name: "sync actor", args: []string{"pr", "track", "myrepo#1", "--actor", "sync:github"}, wantErr: "not allowed"},
+		{name: "no number", args: []string{"pr", "track", "owner/myrepo"}, wantErr: "not a pull request key"},
+		{name: "no owner", args: []string{"pr", "track", "myrepo#812"}, wantErr: "expected owner/name"},
+		{name: "no repo at all", args: []string{"pr", "track", "#812"}, wantErr: "not a repository"},
+		{name: "not a number", args: []string{"pr", "track", "owner/myrepo#abc"}, wantErr: "no pull request number"},
+		{name: "two separators", args: []string{"pr", "track", "owner/my#repo#812"}, wantErr: "more than one"},
+		{name: "untracked repository", args: []string{"pr", "track", "owner/unknown#1"}, wantErr: "run `todo repo track"},
+		{name: "show untracked", args: []string{"pr", "show", "owner/myrepo#999"}, wantErr: "no such item"},
+		{name: "sync actor", args: []string{"pr", "track", "owner/myrepo#1", "--actor", "sync:github"}, wantErr: "not allowed"},
 	}
 
 	for _, tt := range tests {
@@ -117,11 +130,12 @@ func TestPRRejections(t *testing.T) {
 
 func TestPRTrackIsNotIdempotent(t *testing.T) {
 	db := initDB(t)
+	trackRepo(t, db, "owner/myrepo")
 
-	if _, err := runCLI(t, "pr", "track", "--db", db, "myrepo#812"); err != nil {
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/myrepo#812"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
-	_, err := runCLI(t, "pr", "track", "--db", db, "myrepo#812")
+	_, err := runCLI(t, "pr", "track", "--db", db, "owner/myrepo#812")
 	if err == nil {
 		t.Fatal("tracking twice returned nil, want an error")
 	}
@@ -134,11 +148,12 @@ func TestPRTrackIsNotIdempotent(t *testing.T) {
 // the same command annotates SL1 and myrepo#812.
 func TestNoteOnAPullRequest(t *testing.T) {
 	db := initDB(t)
-	if _, err := runCLI(t, "pr", "track", "--db", db, "myrepo#812"); err != nil {
+	trackRepo(t, db, "owner/myrepo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/myrepo#812"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
-	if _, err := runCLI(t, "note", "--db", db, "myrepo#812", "stacked on 811"); err != nil {
+	if _, err := runCLI(t, "note", "--db", db, "owner/myrepo#812", "stacked on 811"); err != nil {
 		t.Fatalf("note on a pull request returned error: %v", err)
 	}
 
@@ -146,7 +161,7 @@ func TestNoteOnAPullRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("watch returned error: %v", err)
 	}
-	if !strings.Contains(out, "myrepo#812") || !strings.Contains(out, "stacked on 811") {
+	if !strings.Contains(out, "owner/myrepo#812") || !strings.Contains(out, "stacked on 811") {
 		t.Errorf("log does not contain the note against the pull request:\n%s", out)
 	}
 }

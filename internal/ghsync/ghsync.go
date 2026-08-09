@@ -33,6 +33,10 @@ type Result struct {
 	// event is logged for each, since a tracked pull request going invisible
 	// is something a person should hear about.
 	Missing map[string]string
+
+	// RateLimit is what GitHub last said about the budget, so a caller
+	// polling on a loop can pace itself.
+	RateLimit github.RateLimit
 }
 
 // ChangedCount is how many pull requests moved.
@@ -66,6 +70,7 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
+	result.RateLimit = fetched.RateLimit
 
 	for _, observed := range fetched.PullRequests {
 		changes, err := applyOne(ctx, st, observed)

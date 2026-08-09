@@ -55,7 +55,7 @@ func buildQuery(keys []string) (query string, aliases map[string]string, err err
 
 	aliases = make(map[string]string, len(keys))
 	var b strings.Builder
-	b.WriteString("query {\n  rateLimit { cost remaining }\n")
+	b.WriteString("query {\n  rateLimit { cost remaining limit resetAt }\n")
 
 	for i, key := range keys {
 		owner, name, number, err := splitKey(key)

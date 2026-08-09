@@ -17,6 +17,16 @@ const (
 	ActorSyncGitHub  Actor = "sync:github"
 	ActorSyncJira    Actor = "sync:jira"
 	ActorSyncSlack   Actor = "sync:slack"
+
+	// ActorSlackManual is a person entering by hand what Slack sync would
+	// have observed.
+	//
+	// It is a sync actor because what it writes are observed columns, and it
+	// is a distinct one because the log should not claim an integration
+	// reported something a person typed. The sketch's own cautionary tale is
+	// exactly this: a note claiming a broken integration had recovered,
+	// recorded as state rather than as an unverified report.
+	ActorSlackManual Actor = "sync:slack-manual"
 )
 
 // syncPrefix marks an actor as a sync. New sync sources are named

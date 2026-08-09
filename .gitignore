@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# `go build ./...` writes the module-named binary here
+/todo
+
 # Test binary, built with `go test -c`
 *.test
 

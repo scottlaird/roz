@@ -76,9 +76,15 @@ type PR struct {
 	// database, so it is observed and not derived.
 	StackedOn sql.NullString `db:"stacked_on" kind:"observed"`
 
-	Raw          string         `db:"raw" kind:"observed" format:"json"`
-	TrackedSince string         `db:"tracked_since" kind:"created"`
-	LastSyncedAt sql.NullString `db:"last_synced_at" kind:"observed"`
+	Raw          string `db:"raw" kind:"observed" format:"json"`
+	TrackedSince string `db:"tracked_since" kind:"created"`
+
+	// LastSyncedAt is auto rather than observed: sync touches it on every
+	// poll, and logging that would bury real transitions under one event per
+	// pull request per cycle. It moves only when something else does, so it
+	// means "when the stored state last changed", and stays NULL until the
+	// first sync that finds anything.
+	LastSyncedAt sql.NullString `db:"last_synced_at" kind:"auto"`
 }
 
 func (p *PR) table() string       { return "pr" }

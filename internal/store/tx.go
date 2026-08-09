@@ -130,7 +130,7 @@ func (t *Tx) Insert(ctx context.Context, r Record) error {
 	if err := t.checkInsertPermission(r, fields); err != nil {
 		return err
 	}
-	t.stamp(r, fields, Created, Auto)
+	t.stampNew(r, fields)
 
 	var columns []string
 	var placeholders []string
@@ -279,12 +279,44 @@ func (t *Tx) stamp(r Record, fields []field, kinds ...FieldKind) {
 		wanted[k] = true
 	}
 	for _, f := range fields {
-		if !wanted[f.kind] {
-			continue
-		}
-		target := reflect.ValueOf(r).Elem().Field(f.index)
-		if target.Kind() == reflect.String {
-			target.SetString(t.at)
+		if wanted[f.kind] {
+			t.setTimestamp(r, f)
 		}
 	}
+}
+
+// stampNew stamps a record being inserted.
+//
+// It differs from stamp in one way: a nullable auto column is left NULL.
+// Nullability is how such a column says "this has not happened yet" —
+// pr.last_synced_at on a pull request nobody has synced — and stamping it at
+// insert would claim something that is not true.
+func (t *Tx) stampNew(r Record, fields []field) {
+	for _, f := range fields {
+		switch {
+		case f.kind == Created:
+			t.setTimestamp(r, f)
+		case f.kind == Auto && !isNullable(r, f):
+			t.setTimestamp(r, f)
+		}
+	}
+}
+
+// setTimestamp writes the transaction's time into a column, whether it is a
+// plain string or a nullable one. Anything else is left alone: a timestamp
+// column is text in this schema, and silently doing nothing to an unexpected
+// type is better than guessing at it.
+func (t *Tx) setTimestamp(r Record, f field) {
+	target := reflect.ValueOf(r).Elem().Field(f.index)
+	switch target.Interface().(type) {
+	case string:
+		target.SetString(t.at)
+	case sql.NullString:
+		target.Set(reflect.ValueOf(sql.NullString{String: t.at, Valid: true}))
+	}
+}
+
+func isNullable(r Record, f field) bool {
+	_, nullable := reflect.ValueOf(r).Elem().Field(f.index).Interface().(sql.NullString)
+	return nullable
 }

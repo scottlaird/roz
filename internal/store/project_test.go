@@ -83,9 +83,9 @@ func insertProject(t *testing.T, st *Store, title string) *Project {
 	t.Helper()
 	ctx := context.Background()
 
-	p, err := st.NewProject(ctx, title)
-	if err != nil {
-		t.Fatalf("NewProject() returned error: %v", err)
+	p := NewProject(title)
+	if err := st.AllocateProject(ctx, p); err != nil {
+		t.Fatalf("AllocateProject() returned error: %v", err)
 	}
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {
@@ -144,9 +144,9 @@ func TestAllocateSurvivesRolledBackInsert(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	p, err := st.NewProject(ctx, "doomed")
-	if err != nil {
-		t.Fatalf("NewProject() returned error: %v", err)
+	p := NewProject("doomed")
+	if err := st.AllocateProject(ctx, p); err != nil {
+		t.Fatalf("AllocateProject() returned error: %v", err)
 	}
 	if p.ID != "SL1" {
 		t.Fatalf("first project id = %q, want SL1", p.ID)
@@ -163,9 +163,9 @@ func TestAllocateSurvivesRolledBackInsert(t *testing.T) {
 		t.Fatalf("Rollback() returned error: %v", err)
 	}
 
-	next, err := st.NewProject(ctx, "real")
-	if err != nil {
-		t.Fatalf("NewProject() returned error: %v", err)
+	next := NewProject("real")
+	if err := st.AllocateProject(ctx, next); err != nil {
+		t.Fatalf("AllocateProject() returned error: %v", err)
 	}
 	if want := "SL2"; next.ID != want {
 		t.Errorf("after a rolled back insert, next id = %q, want %q — the number must stay consumed", next.ID, want)

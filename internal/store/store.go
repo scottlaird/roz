@@ -29,40 +29,53 @@ const schemaVersion = 1
 const dirPerm = 0o700
 
 // Init prepares the database at path, creating its parent directory if
-// needed, and reports whether it created the schema.
+// needed, and seeds one sequence row per entity using the requested
+// identifier prefixes.
 //
 // It is safe to re-run. An already-initialised database is left untouched and
-// Init returns false; nothing is dropped, overwritten or migrated. A database
-// stamped with an unrecognised schema version is an error, not something to
-// repair.
+// Init returns created false; nothing is dropped, overwritten or migrated. A
+// database stamped with an unrecognised schema version is an error, not
+// something to repair.
 //
-// Applying the schema is atomic: on failure the file is left without a
-// user_version, so a later Init retries from the start.
-func Init(path string) (created bool, err error) {
+// The returned prefixes are the ones now in force, which for an existing
+// database are the stored ones rather than the requested ones — prefixes are
+// write-once, so requesting different ones does not change anything. Callers
+// that care about the difference should compare the two.
+//
+// Applying the schema and seeding happen in one transaction: on failure the
+// file is left without a user_version, so a later Init retries from the start.
+func Init(path string, requested map[Entity]string) (created bool, effective map[Entity]string, err error) {
+	if err := validatePrefixes(requested); err != nil {
+		return false, nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
-		return false, fmt.Errorf("creating database directory: %w", err)
+		return false, nil, fmt.Errorf("creating database directory: %w", err)
 	}
 
 	db, err := Open(path)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	defer db.Close()
 
 	version, err := userVersion(db)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	switch version {
 	case schemaVersion:
-		return false, nil
-	case 0:
-		if err := applySchema(db); err != nil {
-			return false, err
+		stored, err := LoadPrefixes(db)
+		if err != nil {
+			return false, nil, err
 		}
-		return true, nil
+		return false, stored, nil
+	case 0:
+		if err := applySchema(db, requested); err != nil {
+			return false, nil, err
+		}
+		return true, requested, nil
 	default:
-		return false, fmt.Errorf(
+		return false, nil, fmt.Errorf(
 			"database %s has schema version %d, this build understands %d",
 			path, version, schemaVersion)
 	}
@@ -104,7 +117,7 @@ func userVersion(db *sql.DB) (int, error) {
 	return version, nil
 }
 
-func applySchema(db *sql.DB) error {
+func applySchema(db *sql.DB, prefixes map[Entity]string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("applying schema: %w", err)
@@ -113,6 +126,9 @@ func applySchema(db *sql.DB) error {
 
 	if _, err := tx.Exec(schema.SQL); err != nil {
 		return fmt.Errorf("applying schema: %w", err)
+	}
+	if err := seedSequences(tx, prefixes); err != nil {
+		return err
 	}
 	// PRAGMA does not take bind parameters; schemaVersion is a constant.
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {

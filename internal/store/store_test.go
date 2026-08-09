@@ -19,7 +19,7 @@ func newDBPath(t *testing.T) string {
 func TestInitCreatesDatabase(t *testing.T) {
 	path := newDBPath(t)
 
-	created, err := Init(path)
+	created, _, err := Init(path, testPrefixes())
 	if err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
@@ -51,12 +51,12 @@ func TestInitCreatesDatabase(t *testing.T) {
 func TestInitPreservesExistingData(t *testing.T) {
 	path := newDBPath(t)
 
-	if _, err := Init(path); err != nil {
+	if _, _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("first Init() returned error: %v", err)
 	}
-	writeSequenceRow(t, path, "NA", 42)
+	setNextN(t, path, EntityAction, 42)
 
-	created, err := Init(path)
+	created, _, err := Init(path, testPrefixes())
 	if err != nil {
 		t.Fatalf("second Init() returned error: %v", err)
 	}
@@ -64,20 +64,21 @@ func TestInitPreservesExistingData(t *testing.T) {
 		t.Errorf("second Init() created = %v, want %v", created, want)
 	}
 
-	if got, want := readSequenceRow(t, path, "NA"), 42; got != want {
-		t.Errorf("sequence next_n for NA = %d, want %d", got, want)
+	// A reset counter would hand out an identifier that has already been used.
+	if got, want := nextN(t, path, EntityAction), 42; got != want {
+		t.Errorf("next_n for %s = %d, want %d", EntityAction, got, want)
 	}
 }
 
 func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 	path := newDBPath(t)
 
-	if _, err := Init(path); err != nil {
+	if _, _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	setUserVersion(t, path, schemaVersion+1)
 
-	if _, err := Init(path); err == nil {
+	if _, _, err := Init(path, testPrefixes()); err == nil {
 		t.Error("Init() on a newer schema version returned nil, want an error")
 	}
 }
@@ -85,7 +86,7 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 func TestInitCreatesParentDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a", "b", "c", "todo.db")
 
-	if _, err := Init(path); err != nil {
+	if _, _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Dir(path)); err != nil {
@@ -97,7 +98,7 @@ func TestInitCreatesParentDirectory(t *testing.T) {
 // than in schema.sql: they must hold on a connection Init did not open.
 func TestConnectionPragmas(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path); err != nil {
+	if _, _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -131,7 +132,7 @@ func TestConnectionPragmas(t *testing.T) {
 // TestForeignKeysEnforced checks the pragma has teeth, not just the value.
 func TestForeignKeysEnforced(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path); err != nil {
+	if _, _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -159,7 +160,7 @@ func TestOpenRejectsNonDatabase(t *testing.T) {
 		t.Fatalf("writing fixture: %v", err)
 	}
 
-	if _, err := Init(path); err == nil {
+	if _, _, err := Init(path, testPrefixes()); err == nil {
 		t.Error("Init() on a non-database file returned nil, want an error")
 	}
 }
@@ -184,7 +185,11 @@ func tableExists(t *testing.T, db *sql.DB, name string) bool {
 	return count == 1
 }
 
-func writeSequenceRow(t *testing.T, path, kind string, nextN int) {
+func testPrefixes() map[Entity]string {
+	return map[Entity]string{EntityProject: "SL", EntityAction: "NA"}
+}
+
+func setNextN(t *testing.T, path string, entity Entity, n int) {
 	t.Helper()
 	db, err := Open(path)
 	if err != nil {
@@ -192,12 +197,12 @@ func writeSequenceRow(t *testing.T, path, kind string, nextN int) {
 	}
 	defer db.Close()
 
-	if _, err := db.Exec("INSERT INTO sequence (kind, next_n) VALUES (?, ?)", kind, nextN); err != nil {
-		t.Fatalf("inserting sequence row: %v", err)
+	if _, err := db.Exec("UPDATE sequence SET next_n = ? WHERE entity = ?", n, string(entity)); err != nil {
+		t.Fatalf("updating next_n: %v", err)
 	}
 }
 
-func readSequenceRow(t *testing.T, path, kind string) int {
+func nextN(t *testing.T, path string, entity Entity) int {
 	t.Helper()
 	db, err := Open(path)
 	if err != nil {
@@ -205,11 +210,11 @@ func readSequenceRow(t *testing.T, path, kind string) int {
 	}
 	defer db.Close()
 
-	var nextN int
-	if err := db.QueryRow("SELECT next_n FROM sequence WHERE kind = ?", kind).Scan(&nextN); err != nil {
-		t.Fatalf("reading sequence row: %v", err)
+	var n int
+	if err := db.QueryRow("SELECT next_n FROM sequence WHERE entity = ?", string(entity)).Scan(&n); err != nil {
+		t.Fatalf("reading next_n: %v", err)
 	}
-	return nextN
+	return n
 }
 
 func setUserVersion(t *testing.T, path string, version int) {

@@ -10,10 +10,31 @@
 -- PRAGMA user_version. See store.schemaVersion before changing it.
 
 -- ── identity ─────────────────────────────────────────────────────────
+-- The registry of identifier namespaces as well as the counter. `entity` is
+-- ours and fixed; `kind` is the user's, chosen at init, and is the only place
+-- the prefix is written down.
+--
+-- next_n is the next number to hand out, so allocation returns the value from
+-- BEFORE the increment:
+--   UPDATE sequence SET next_n = next_n + 1 WHERE entity = ?
+--     RETURNING next_n - 1, kind;
 CREATE TABLE sequence (
-  kind    TEXT PRIMARY KEY,
-  next_n  INTEGER NOT NULL
+  entity  TEXT PRIMARY KEY CHECK (entity IN ('project','action')),
+  kind    TEXT NOT NULL UNIQUE,
+  next_n  INTEGER NOT NULL CHECK (next_n >= 1)
 ) STRICT;
+
+-- entity and kind are write-once. Changing a prefix would orphan every
+-- identifier already issued -- and those are cited in Jira tickets and in
+-- conversation, where nothing here can reach them.
+--
+-- BEFORE UPDATE OF fires only when a listed column appears in the SET clause,
+-- so the allocating UPDATE above is unaffected.
+CREATE TRIGGER sequence_identity_immutable
+BEFORE UPDATE OF entity, kind ON sequence
+BEGIN
+  SELECT RAISE(ABORT, 'sequence.entity and sequence.kind are write-once');
+END;
 
 -- ── vocabulary ───────────────────────────────────────────────────────
 CREATE TABLE actionverb (
@@ -34,8 +55,8 @@ CREATE TABLE actionverb (
 
 -- ── project ──────────────────────────────────────────────────────────
 CREATE TABLE project (
-  id               TEXT PRIMARY KEY,           -- 'SL106'
-  kind             TEXT NOT NULL DEFAULT 'SL',
+  id               TEXT PRIMARY KEY,           -- 'SL106' with the default prefix
+  kind             TEXT NOT NULL,              -- = sequence.kind for 'project'
   n                INTEGER NOT NULL,
   title            TEXT NOT NULL,
   summary          TEXT NOT NULL DEFAULT '',
@@ -63,8 +84,8 @@ CREATE TABLE project (
 
 -- ── action ───────────────────────────────────────────────────────────
 CREATE TABLE action (
-  id            TEXT PRIMARY KEY,              -- 'NA37'
-  kind          TEXT NOT NULL DEFAULT 'NA',
+  id            TEXT PRIMARY KEY,              -- 'NA37' with the default prefix
+  kind          TEXT NOT NULL,                 -- = sequence.kind for 'action'
   n             INTEGER NOT NULL,
   title         TEXT NOT NULL,
   verb          TEXT NOT NULL REFERENCES actionverb(verb),

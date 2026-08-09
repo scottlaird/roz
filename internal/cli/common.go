@@ -41,6 +41,37 @@ func actorFrom(cmd *cobra.Command) (store.Actor, error) {
 	}
 }
 
+// Output formats for read commands.
+const (
+	outputFlag  = "output"
+	outputTable = "table"
+	outputJSON  = "json"
+)
+
+// addOutputFlag registers -o on a command that reports.
+//
+// It is --output rather than --json because on write commands --json already
+// means the input object; one name cannot mean both. It also leaves room for
+// other formats without another boolean flag.
+func addOutputFlag(cmd *cobra.Command) {
+	cmd.Flags().StringP(outputFlag, "o", outputTable,
+		"output format: table or json")
+}
+
+func outputFrom(cmd *cobra.Command) (string, error) {
+	value, err := cmd.Flags().GetString(outputFlag)
+	if err != nil {
+		return "", err
+	}
+	switch value {
+	case outputTable, outputJSON:
+		return value, nil
+	default:
+		return "", fmt.Errorf("--output %q is not recognised: use %s or %s",
+			value, outputTable, outputJSON)
+	}
+}
+
 // openStore opens the database named by --db, translating an uninitialised
 // database into advice rather than a missing-table error.
 func openStore() (*store.Store, error) {

@@ -41,7 +41,7 @@ type Project struct {
 	SnoozeUntil  sql.NullString `db:"snooze_until"`
 	SnoozeReason string         `db:"snooze_reason"`
 	SupersededBy sql.NullString `db:"superseded_by"`
-	DesignRefs   string         `db:"design_refs"` // JSON array of file paths
+	DesignRefs   string         `db:"design_refs" format:"json"` // JSON array of file paths
 	JiraKey      sql.NullString `db:"jira_key"`
 
 	JiraStatus     sql.NullString `db:"jira_status" kind:"observed"`

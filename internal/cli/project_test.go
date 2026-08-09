@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -92,6 +93,68 @@ func TestFlagOverridesJSON(t *testing.T) {
 	// The flag wins on priority; the JSON still supplies effort.
 	if !strings.Contains(out, "2") || !strings.Contains(out, "days") {
 		t.Errorf("want priority 2 from the flag and effort days from --json:\n%s", out)
+	}
+}
+
+func TestProjectListJSON(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "project", "add", "--db", db,
+		"--title", "with refs", "--priority", "2",
+		"--design-ref", "docs/a.md", "--design-ref", "docs/b.md"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "project", "list", "--db", db, "--output", "json")
+	if err != nil {
+		t.Fatalf("project list --output json returned error: %v", err)
+	}
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d projects, want 1", len(got))
+	}
+
+	project := got[0]
+	if project["id"] != "SL1" || project["title"] != "with refs" {
+		t.Errorf("project = %#v, want SL1 / with refs", project)
+	}
+	if project["priority"] != float64(2) {
+		t.Errorf("priority = %#v, want 2", project["priority"])
+	}
+	if project["effort"] != nil {
+		t.Errorf("effort = %#v, want null", project["effort"])
+	}
+	refs, ok := project["design_refs"].([]any)
+	if !ok || len(refs) != 2 {
+		t.Errorf("design_refs = %#v, want an array of two paths", project["design_refs"])
+	}
+}
+
+func TestProjectListJSONEmpty(t *testing.T) {
+	db := initDB(t)
+
+	out, err := runCLI(t, "project", "list", "--db", db, "-o", "json")
+	if err != nil {
+		t.Fatalf("project list -o json returned error: %v", err)
+	}
+	if got := strings.TrimSpace(out); got != "[]" {
+		t.Errorf("empty list printed %q, want []", got)
+	}
+}
+
+func TestProjectListRejectsUnknownOutput(t *testing.T) {
+	db := initDB(t)
+
+	_, err := runCLI(t, "project", "list", "--db", db, "-o", "yaml")
+	if err == nil {
+		t.Fatal("project list -o yaml returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "not recognised") {
+		t.Errorf("error = %v, want it to reject the format", err)
 	}
 }
 

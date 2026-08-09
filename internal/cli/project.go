@@ -222,6 +222,7 @@ func newProjectListCmd() *cobra.Command {
 	f.Bool("orphaned", false, "no open action and no snooze — how live work goes quiet")
 	f.Bool("expired", false, "snoozed with a date that has passed")
 	f.String("status", "", "filter to one status")
+	addOutputFlag(cmd)
 	return cmd
 }
 
@@ -234,6 +235,10 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
+	format, err := outputFrom(cmd)
+	if err != nil {
+		return err
+	}
 	filter, err := projectFilterFrom(cmd)
 	if err != nil {
 		return err
@@ -242,7 +247,22 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+
+	if format == outputJSON {
+		return writeProjectJSON(cmd.OutOrStdout(), projects)
+	}
 	return writeProjectTable(cmd.OutOrStdout(), projects)
+}
+
+// writeProjectJSON emits an array, empty rather than null when there is
+// nothing, so a consumer can iterate without a nil check.
+func writeProjectJSON(out io.Writer, projects []*store.Project) error {
+	encoded, err := store.MarshalRecords(projects)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, string(encoded))
+	return err
 }
 
 func projectFilterFrom(cmd *cobra.Command) (store.ProjectFilter, error) {

@@ -52,7 +52,9 @@ func ApplyJSON(r Record, data []byte) error {
 	return nil
 }
 
-// MarshalRecord renders a record as a JSON object keyed by column name.
+// MarshalRecord renders any db-tagged struct as a JSON object keyed by column
+// name. It takes any rather than Record because the event log has rows but no
+// loadable entity behind them.
 //
 // Every column is included, observed and store-owned ones as well: this is
 // output, and the authored/observed split is about who may write.
@@ -61,7 +63,7 @@ func ApplyJSON(r Record, data []byte) error {
 // cannot tell them apart — and a format:"json" column becomes the structure
 // it holds rather than a quoted string. Keys are ordered by encoding/json,
 // which sorts map keys, so output is alphabetical and stable.
-func MarshalRecord(r Record) ([]byte, error) {
+func MarshalRecord(r any) ([]byte, error) {
 	object, err := recordObject(r)
 	if err != nil {
 		return nil, err
@@ -71,7 +73,7 @@ func MarshalRecord(r Record) ([]byte, error) {
 
 // MarshalRecords renders a slice of records as a JSON array. An empty slice
 // is [], never null, so a consumer can iterate without a nil check.
-func MarshalRecords[T Record](records []T) ([]byte, error) {
+func MarshalRecords[T any](records []T) ([]byte, error) {
 	objects := make([]map[string]any, 0, len(records))
 	for _, r := range records {
 		object, err := recordObject(r)
@@ -83,17 +85,17 @@ func MarshalRecords[T Record](records []T) ([]byte, error) {
 	return json.Marshal(objects)
 }
 
-func recordObject(r Record) (map[string]any, error) {
-	fields, err := fieldsOf(r)
+func recordObject(r any) (map[string]any, error) {
+	fields, err := fieldsOfStruct(r)
 	if err != nil {
 		return nil, err
 	}
 
 	object := make(map[string]any, len(fields))
 	for _, f := range fields {
-		value, err := jsonValue(f, f.value(r))
+		value, err := jsonValue(f, f.valueOf(r))
 		if err != nil {
-			return nil, fmt.Errorf("%s.%s: %w", r.table(), f.column, err)
+			return nil, fmt.Errorf("%T.%s: %w", r, f.column, err)
 		}
 		object[f.column] = value
 	}

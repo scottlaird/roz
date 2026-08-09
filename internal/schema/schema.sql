@@ -116,10 +116,38 @@ CREATE TABLE action (
   CHECK ((closed_at IS NOT NULL) = (state IN ('done','dropped')))
 ) STRICT;
 
+-- ── github_repo ──────────────────────────────────────────────────────
+-- A repository carries policy a pull request cannot: whether review is
+-- required at all, where its pull requests get announced, and which branch is
+-- the default -- the last of which is what stacked_on is defined against.
+CREATE TABLE github_repo (
+  id                TEXT PRIMARY KEY,        -- 'scottlaird/todo'
+  owner             TEXT NOT NULL,
+  name              TEXT NOT NULL,
+
+  -- authored. review_policy is a judgement, not an observation: reading
+  -- branch protection needs admin on the repository, so it is unavailable
+  -- exactly where the repository is not yours. NULL means unstated.
+  review_policy     TEXT CHECK (review_policy IN ('required','none')),
+  announce_channel  TEXT,                    -- Slack channel for its pull requests
+  disposition       TEXT NOT NULL DEFAULT '',
+
+  -- observed from here down
+  default_branch    TEXT,                    -- what base_ref is compared against
+  uses_merge_queue  INTEGER CHECK (uses_merge_queue IN (0,1)),
+  is_archived       INTEGER CHECK (is_archived IN (0,1)),
+  raw               TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(raw)),
+
+  tracked_since     TEXT NOT NULL,
+  last_synced_at    TEXT,
+  UNIQUE (owner, name),
+  CHECK (id = owner || '/' || name)
+) STRICT;
+
 -- ── pr ───────────────────────────────────────────────────────────────
 CREATE TABLE pr (
-  id                 TEXT PRIMARY KEY,         -- 'saas-infra-plane#4174'
-  repo               TEXT NOT NULL,
+  id                 TEXT PRIMARY KEY,         -- 'scottlaird/todo#11'
+  repo               TEXT NOT NULL REFERENCES github_repo(id),
   number             INTEGER NOT NULL,
   title              TEXT NOT NULL DEFAULT '',
   author             TEXT,

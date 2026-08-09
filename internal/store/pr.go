@@ -90,21 +90,21 @@ func PRKey(repo string, number int64) string {
 	return repo + prSeparator + strconv.FormatInt(number, 10)
 }
 
-// ParsePRKey splits an identifier of the form repo#number.
+// ParsePRKey splits an identifier of the form owner/repo#number.
 //
-// The repo may not itself contain a #, or the identifier would not split back
-// to what it was built from — the schema's CHECK cannot catch that, because
-// concatenation succeeds either way.
+// The repository half must be a full owner/name, matching GitHub's own
+// shorthand: a bare name is ambiguous across owners, and pr.repo is a foreign
+// key into github_repo, which is keyed that way.
 func ParsePRKey(key string) (repo string, number int64, err error) {
 	repo, digits, found := strings.Cut(key, prSeparator)
 	if !found {
-		return "", 0, fmt.Errorf("%q is not a pull request key: expected repo%snumber", key, prSeparator)
-	}
-	if repo == "" {
-		return "", 0, fmt.Errorf("%q has no repository", key)
+		return "", 0, fmt.Errorf("%q is not a pull request key: expected owner/repo%snumber", key, prSeparator)
 	}
 	if strings.Contains(digits, prSeparator) {
 		return "", 0, fmt.Errorf("%q has more than one %s", key, prSeparator)
+	}
+	if _, _, err := ParseRepoID(repo); err != nil {
+		return "", 0, fmt.Errorf("%q: %w", key, err)
 	}
 
 	number, err = strconv.ParseInt(digits, 10, 64)

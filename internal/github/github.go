@@ -15,10 +15,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// ErrRateLimited means GitHub refused the request because of a rate limit,
+// rather than because anything was wrong with it.
+//
+// It covers both shapes GitHub uses: a transport-level 429 or 403 for
+// secondary limits, and an HTTP 200 whose errors array says the primary
+// GraphQL budget is spent. A caller should wait rather than retry.
+var ErrRateLimited = errors.New("rate limited by GitHub")
 
 // BatchSize is how many pull requests go into one query.
 //
@@ -68,10 +78,28 @@ func runGH(ctx context.Context, query string) ([]byte, error) {
 		return stdout.Bytes(), nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gh api graphql: %w: %s", err, strings.TrimSpace(stderr.String()))
+		message := strings.TrimSpace(stderr.String())
+		if mentionsRateLimit(message) {
+			return nil, fmt.Errorf("%w: %s", ErrRateLimited, message)
+		}
+		return nil, fmt.Errorf("gh api graphql: %w: %s", err, message)
 	}
 	return nil, fmt.Errorf("gh api graphql returned nothing")
 }
+
+// RateLimit is what GitHub said about the budget on the last request.
+//
+// Remaining is the figure worth pacing against: the GraphQL budget is points
+// per hour, not requests, and Cost is what the last query spent.
+type RateLimit struct {
+	Cost      int
+	Remaining int
+	Limit     int
+	ResetAt   time.Time
+}
+
+// Known reports whether GitHub actually told us anything.
+func (r RateLimit) Known() bool { return r.Limit > 0 }
 
 // Result is what a Fetch produced: the pull requests that resolved, and the
 // keys that did not.
@@ -81,6 +109,10 @@ func runGH(ctx context.Context, query string) ([]byte, error) {
 type Result struct {
 	PullRequests []PullRequest
 	Missing      map[string]string // key → why
+
+	// RateLimit is from the last batch, which is the most recent reading and
+	// so the lowest Remaining.
+	RateLimit RateLimit
 }
 
 // Fetch reads the given pull requests, in batches.
@@ -121,6 +153,13 @@ type graphQLResponse struct {
 	Errors []graphQLError             `json:"errors"`
 }
 
+type wireRateLimit struct {
+	Cost      int    `json:"cost"`
+	Remaining int    `json:"remaining"`
+	Limit     int    `json:"limit"`
+	ResetAt   string `json:"resetAt"`
+}
+
 // decodeInto merges one response into result.
 func decodeInto(body []byte, aliases map[string]string, result *Result) error {
 	var response graphQLResponse
@@ -128,7 +167,15 @@ func decodeInto(body []byte, aliases map[string]string, result *Result) error {
 		return fmt.Errorf("parsing the GraphQL response: %w", err)
 	}
 	if response.Data == nil {
-		return fmt.Errorf("GraphQL returned no data: %s", summarise(response.Errors))
+		summary := summarise(response.Errors)
+		if mentionsRateLimit(summary) {
+			return fmt.Errorf("%w: %s", ErrRateLimited, summary)
+		}
+		return fmt.Errorf("GraphQL returned no data: %s", summary)
+	}
+
+	if raw, ok := response.Data["rateLimit"]; ok {
+		result.RateLimit = decodeRateLimit(raw)
 	}
 
 	for alias, key := range aliases {
@@ -145,6 +192,38 @@ func decodeInto(body []byte, aliases map[string]string, result *Result) error {
 		result.PullRequests = append(result.PullRequests, pr)
 	}
 	return nil
+}
+
+func decodeRateLimit(raw json.RawMessage) RateLimit {
+	var w wireRateLimit
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return RateLimit{}
+	}
+	limit := RateLimit{Cost: w.Cost, Remaining: w.Remaining, Limit: w.Limit}
+	if resetAt, err := time.Parse(time.RFC3339, w.ResetAt); err == nil {
+		limit.ResetAt = resetAt
+	}
+	return limit
+}
+
+// rateLimitSignals are how GitHub says "too fast" through gh's error output
+// or a GraphQL error message. Matching on text is unlovely, but gh reports
+// the status in prose and there is nothing more structured to key off.
+var rateLimitSignals = []string{
+	"http 429",
+	"rate limit",
+	"secondary rate",
+	"abuse detection",
+}
+
+func mentionsRateLimit(message string) bool {
+	lowered := strings.ToLower(message)
+	for _, signal := range rateLimitSignals {
+		if strings.Contains(lowered, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 func summarise(errs []graphQLError) string {

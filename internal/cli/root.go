@@ -43,6 +43,7 @@ func NewRootCmd() *cobra.Command {
 		newPRCmd(),
 		newRepoCmd(),
 		newSyncCmd(),
+		newSyncerCmd(),
 		newVerifyCmd(),
 		newNoteCmd(),
 		newExceptionCmd(),

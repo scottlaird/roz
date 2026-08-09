@@ -34,7 +34,17 @@ const (
 const (
 	columnTag = "db"
 	kindTag   = "kind"
+	formatTag = "format"
 )
+
+// formatJSON marks a TEXT column whose contents are themselves JSON — the
+// schema's json_valid() columns. It changes only how the value crosses the
+// JSON boundary: such a column is rendered as the structure it holds rather
+// than as a quoted string, and accepts one on the way in. In the database and
+// in the event log it stays text.
+const formatJSON = "json"
+
+var fieldFormats = map[string]bool{"": true, formatJSON: true}
 
 var fieldKinds = map[string]FieldKind{
 	string(Authored): Authored,
@@ -49,6 +59,7 @@ var fieldKinds = map[string]FieldKind{
 type field struct {
 	column string
 	kind   FieldKind
+	format string
 	index  int
 }
 
@@ -81,7 +92,11 @@ func fieldsOfStruct(r any) ([]field, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s.%s: %w", t.Name(), structField.Name, err)
 		}
-		fields = append(fields, field{column: column, kind: kind, index: i})
+		format := structField.Tag.Get(formatTag)
+		if !fieldFormats[format] {
+			return nil, fmt.Errorf("%s.%s: unknown field format %q", t.Name(), structField.Name, format)
+		}
+		fields = append(fields, field{column: column, kind: kind, format: format, index: i})
 	}
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("%T has no %q-tagged fields", r, columnTag)

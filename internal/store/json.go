@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -51,10 +52,114 @@ func ApplyJSON(r Record, data []byte) error {
 	return nil
 }
 
+// MarshalRecord renders a record as a JSON object keyed by column name.
+//
+// Every column is included, observed and store-owned ones as well: this is
+// output, and the authored/observed split is about who may write.
+//
+// NULL becomes null rather than an empty string — unlike the event log, which
+// cannot tell them apart — and a format:"json" column becomes the structure
+// it holds rather than a quoted string. Keys are ordered by encoding/json,
+// which sorts map keys, so output is alphabetical and stable.
+func MarshalRecord(r Record) ([]byte, error) {
+	object, err := recordObject(r)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(object)
+}
+
+// MarshalRecords renders a slice of records as a JSON array. An empty slice
+// is [], never null, so a consumer can iterate without a nil check.
+func MarshalRecords[T Record](records []T) ([]byte, error) {
+	objects := make([]map[string]any, 0, len(records))
+	for _, r := range records {
+		object, err := recordObject(r)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, object)
+	}
+	return json.Marshal(objects)
+}
+
+func recordObject(r Record) (map[string]any, error) {
+	fields, err := fieldsOf(r)
+	if err != nil {
+		return nil, err
+	}
+
+	object := make(map[string]any, len(fields))
+	for _, f := range fields {
+		value, err := jsonValue(f, f.value(r))
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s: %w", r.table(), f.column, err)
+		}
+		object[f.column] = value
+	}
+	return object, nil
+}
+
+// jsonValue converts a column value to something encoding/json renders the
+// way a consumer expects.
+func jsonValue(f field, v any) (any, error) {
+	if f.format == formatJSON {
+		return embeddedJSON(v)
+	}
+
+	switch x := v.(type) {
+	case string:
+		return x, nil
+	case int64:
+		return x, nil
+	case bool:
+		return x, nil
+	case sql.NullString:
+		if !x.Valid {
+			return nil, nil
+		}
+		return x.String, nil
+	case sql.NullInt64:
+		if !x.Valid {
+			return nil, nil
+		}
+		return x.Int64, nil
+	case sql.NullBool:
+		if !x.Valid {
+			return nil, nil
+		}
+		return x.Bool, nil
+	default:
+		return nil, fmt.Errorf("no JSON rendering for %T", v)
+	}
+}
+
+// embeddedJSON passes a JSON-valued text column through unquoted. The schema
+// guarantees validity with json_valid(), but a record built in memory and not
+// yet inserted has not been through that, so it is checked here rather than
+// producing malformed output.
+func embeddedJSON(v any) (any, error) {
+	text, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf(`format:"json" needs a string column, not %T`, v)
+	}
+	if text == "" {
+		return nil, nil
+	}
+	if !json.Valid([]byte(text)) {
+		return nil, fmt.Errorf("column holds invalid JSON: %q", text)
+	}
+	return json.RawMessage(text), nil
+}
+
 // setField decodes one JSON value into a column, rejecting types the store
 // has no rendering for rather than guessing.
 func setField(r Record, f field, raw json.RawMessage) error {
 	target := reflect.ValueOf(r).Elem().Field(f.index)
+
+	if f.format == formatJSON {
+		return setEmbeddedJSON(target, raw)
+	}
 
 	switch target.Interface().(type) {
 	case string:
@@ -92,6 +197,20 @@ func setField(r Record, f field, raw json.RawMessage) error {
 	default:
 		return fmt.Errorf("no JSON decoding for %s", target.Type())
 	}
+	return nil
+}
+
+// setEmbeddedJSON stores a JSON value as compact text. The value has already
+// been parsed by the enclosing Unmarshal, so it is known to be valid.
+func setEmbeddedJSON(target reflect.Value, raw json.RawMessage) error {
+	if target.Kind() != reflect.String {
+		return fmt.Errorf(`format:"json" needs a string column, not %s`, target.Type())
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		return err
+	}
+	target.SetString(compact.String())
 	return nil
 }
 

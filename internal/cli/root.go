@@ -10,6 +10,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/scottlaird/todo/internal/store"
 )
 
 // dbPath is the SQLite file every command will operate on.
@@ -48,11 +50,19 @@ func NewRootCmd() *cobra.Command {
 	return root
 }
 
+// defaultDBPath is the --db default: TODO_DB when set, otherwise the
+// user-level data location. A resolution failure yields an empty default
+// rather than an error, so --help still works on a machine with no usable
+// home directory; commands report the problem when they open the database.
 func defaultDBPath() string {
 	if p := os.Getenv("TODO_DB"); p != "" {
 		return p
 	}
-	return "todo.db"
+	p, err := store.DefaultDBPath()
+	if err != nil {
+		return ""
+	}
+	return p
 }
 
 // Execute runs the root command.

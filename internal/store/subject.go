@@ -32,6 +32,13 @@ func (t *Tx) LoadSubject(ctx context.Context, s *Store, id string) (Record, erro
 		return t.LoadGitHubRepo(ctx, id)
 	}
 
+	// A calendar window's identifier has no shape to recognise — it is
+	// whatever was typed — so it is the last thing tried rather than
+	// something matched.
+	if w, err := t.LoadCalendarWindow(ctx, id); err == nil {
+		return w, nil
+	}
+
 	return nil, fmt.Errorf(
 		"%q is not an identifier this database issues (prefixes are %s), a pull request key like owner/repo%s123, or a repository like owner/repo",
 		id, FormatPrefixes(s.prefixes), prSeparator)

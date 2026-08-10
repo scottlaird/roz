@@ -42,6 +42,7 @@ func NewRootCmd() *cobra.Command {
 		newActionCmd(),
 		newPRCmd(),
 		newRepoCmd(),
+		newCalendarCmd(),
 		newSyncCmd(),
 		newSyncerCmd(),
 		newVerifyCmd(),

@@ -1,21 +1,207 @@
 <!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>todo</title>
-<h1>todo</h1>
-<p>generated {{.GeneratedAt}}</p>
+{{/* One file, no assets: this is served from loopback and written to disk, and
+     either way a second request is a thing that can fail. Colours come from
+     the verb's rank class, so a class that was never styled is not
+     expressible -- which was a real defect in the page this replaces. */}}
+<style>
+  :root{
+    --paper:#fbfbfd; --raise:#fff; --sink:#f2f3f7; --rule:#e2e4ec;
+    --ink:#16181d; --mid:#4e5563; --faint:#868d9c;
+    --click:#1f7a4d; --click-bg:#e8f4ee;
+    --decide:#a85b00; --decide-bg:#fdf3e6;
+    --session:#0b6e7f; --session-bg:#e2f1f4;
+    --wait:#55606e; --wait-bg:#eff1f4;
+    --bad:#963232; --bad-bg:#faecec;
+    --link:#33507f;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#131519; --raise:#1a1d23; --sink:#1f232a; --rule:#2b313a;
+      --ink:#e9ebef; --mid:#a6aebc; --faint:#727a88;
+      --click:#5fcb92; --click-bg:#16281f;
+      --decide:#f0a44a; --decide-bg:#2e2216;
+      --session:#5cc6d8; --session-bg:#12262b;
+      --wait:#a6aeba; --wait-bg:#212529;
+      --bad:#e08b8b; --bad-bg:#2c1919;
+      --link:#a9c0e4;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 ui-sans-serif,
+       -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 64px;display:flex;
+        flex-direction:column;gap:26px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:11px}
+  h1{margin:0;font-size:21px;font-weight:640;letter-spacing:-.015em}
+  .stamp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
+         color:var(--faint);letter-spacing:.02em}
+  h2{margin:0 0 4px;font-size:11px;font-weight:660;letter-spacing:.1em;
+     text-transform:uppercase;color:var(--faint)}
+  section{display:flex;flex-direction:column;gap:11px}
+  a{color:var(--link);text-decoration:none;border-bottom:1px dotted currentColor}
+  a:hover{border-bottom-style:solid}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
 
-<h2>calendar — the next fortnight</h2>
-<pre>{{.Calendar}}</pre>
+  .cal{display:flex;flex-wrap:wrap;gap:8px}
+  .cal div{background:var(--sink);border:1px solid var(--rule);border-radius:6px;
+           padding:7px 11px;font-size:13px;color:var(--mid)}
+  .cal div.now{background:var(--decide-bg);border-color:var(--decide);color:var(--decide);font-weight:600}
+  .cal b{color:var(--ink);font-weight:620}
+  .cal.now b{color:inherit}
 
-<h2>queue — unblocked actions</h2>
-<pre>{{.Queue}}</pre>
+  ol.queue{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;
+           counter-reset:q}
+  ol.queue li{counter-increment:q;background:var(--raise);border:1px solid var(--rule);
+              border-left-width:3px;border-radius:0 7px 7px 0;padding:10px 14px 10px 44px;
+              position:relative}
+  ol.queue li::before{content:counter(q);position:absolute;left:14px;top:10px;
+              font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:640;
+              color:var(--faint);font-variant-numeric:tabular-nums}
+  li.click{border-left-color:var(--click);background:var(--click-bg)}
+  li.click::before,li.click .id{color:var(--click)}
+  li.decide{border-left-color:var(--decide);background:var(--decide-bg)}
+  li.decide::before,li.decide .id{color:var(--decide)}
+  li.session{border-left-color:var(--session)}
+  li.session::before,li.session .id{color:var(--session)}
+  li.wait{border-left-color:var(--wait);background:var(--wait-bg)}
+  li.wait::before,li.wait .id{color:var(--wait)}
+  li.expired{border-left-color:var(--bad);background:var(--bad-bg)}
+  li.expired::before,li.expired .id{color:var(--bad)}
 
-<h2>projects — active</h2>
-<pre>{{.Projects}}</pre>
+  .do{font-weight:600;letter-spacing:-.006em}
+  .id{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:660;margin-right:7px}
+  .verb{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;text-transform:uppercase;
+        letter-spacing:.05em;color:var(--faint);margin-left:7px}
+  .age{float:right;font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;
+       color:var(--faint);margin-left:12px}
+  .why{color:var(--mid);font-size:13.5px;margin-top:2px}
+  .refs{margin-top:4px;font-size:12.5px;color:var(--mid);display:flex;flex-wrap:wrap;gap:4px 14px}
+  .refs .bad{color:var(--bad);font-weight:600}
+  .refs .state{color:var(--faint)}
+
+  .tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:7px;background:var(--raise)}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+  thead th{background:var(--sink);text-align:left;font-size:10px;letter-spacing:.08em;
+           text-transform:uppercase;color:var(--faint);font-weight:660;padding:7px 12px;
+           border-bottom:1px solid var(--rule);white-space:nowrap}
+  td{padding:7px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tr.expired td{background:var(--bad-bg)}
+  td.n{font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:nowrap;width:1%}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mid);width:1%}
+  .empty{color:var(--faint);font-size:13.5px}
+  footer{border-top:1px solid var(--rule);padding-top:12px;color:var(--faint);font-size:12px}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>todo</h1>
+    <div class="stamp">{{.GeneratedAt}} · {{.Stamp}}</div>
+  </header>
+
+  <section>
+    <h2>next fortnight</h2>
+    {{if .Windows}}
+    <div class="cal">
+      {{range .Windows}}
+      <div{{if .Current}} class="now"{{end}}><b>{{.Label}}</b> {{.Range}} · {{.Capacity}}</div>
+      {{end}}
+    </div>
+    {{else}}<p class="empty">no calendar entries</p>{{end}}
+  </section>
+
+  <section>
+    <h2>queue</h2>
+    {{if .Queue}}
+    <ol class="queue">
+      {{range .Queue}}
+      <li class="{{.RankClass}}{{if .Expired}} expired{{end}}">
+        <div class="do">
+          {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
+          <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
+        </div>
+        {{if .Why}}<div class="why">{{.Why}}</div>{{end}}
+        {{template "refs" .}}
+      </li>
+      {{end}}
+    </ol>
+    {{else}}<p class="empty">nothing to do</p>{{end}}
+  </section>
+
+  {{if .Waiting}}
+  <section>
+    <h2>waiting — not the queue, but not nothing</h2>
+    <ol class="queue">
+      {{range .Waiting}}
+      <li class="wait{{if .Expired}} expired{{end}}">
+        <div class="do">
+          {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
+          <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
+        </div>
+        {{if .Why}}<div class="why">{{.Why}}</div>{{end}}
+        {{template "refs" .}}
+      </li>
+      {{end}}
+    </ol>
+  </section>
+  {{end}}
+
+  <section>
+    <h2>projects</h2>
+    {{if .Projects}}
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>id</th><th>title</th><th>status</th><th>pri</th><th>effort</th>
+          <th>open</th><th>jira</th><th>snoozed</th>
+        </tr></thead>
+        <tbody>
+          {{range .Projects}}
+          <tr{{if .Expired}} class="expired"{{end}}>
+            <td class="n">{{.ID}}</td>
+            <td>{{.Title}}</td>
+            <td>{{.Status}}</td>
+            <td class="num">{{.Priority}}</td>
+            <td>{{.Effort}}</td>
+            <td class="num">{{if .Actions}}{{.Actions}}{{else}}·{{end}}</td>
+            <td>{{range $i, $j := .Jira}}{{if $i}}, {{end}}{{template "jira" $j}}{{else}}-{{end}}</td>
+            <td class="n">{{.Snooze}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty">no active projects</p>{{end}}
+  </section>
+
+  <footer>The page is a view; the database is the truth. Nothing reads it back.</footer>
+</div>
 {{if .Live}}
 {{/* The server streams a line on /events whenever the log moves. Reloading
      whole is crude and correct: the page is cheap to build and holds no state
      worth keeping. Comments inside <script> are stripped by html/template,
      which is why this one is out here. */}}
 <script>new EventSource("/events").onmessage = () => location.reload();</script>
+{{end}}
+
+{{define "refs"}}
+{{if or .PRs .Jira .Project}}
+<div class="refs">
+  {{if .Project}}<span class="mono">{{.Project}}</span>{{end}}
+  {{range .PRs}}
+  <span>
+    {{if .URL}}<a href="{{.URL}}" class="mono">{{.ID}}</a>{{else}}<span class="mono">{{.ID}}</span>{{end}}
+    {{if .Status}}<span class="{{if .Bad}}bad{{else}}state{{end}}">{{.Status}}</span>{{end}}
+  </span>
+  {{end}}
+  {{range .Jira}}<span>{{template "jira" .}}</span>{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "jira"}}
+{{if .URL}}<a href="{{.URL}}" class="mono">{{.Key}}</a>{{else}}<span class="mono">{{.Key}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}
 {{end}}

@@ -247,3 +247,52 @@ func (t *Tx) LinkedActions(ctx context.Context, prID string) ([]*Action, error) 
 		  AND a.id IN (SELECT action_id FROM action_pr WHERE pr_id = ? AND role = 'subject')
 		ORDER BY a.n`, prID)
 }
+
+// ActionPR is a pull request as it hangs off an action, with the role it
+// plays. Subject is what predicates read; context is background.
+type ActionPR struct {
+	*PR
+	Role string
+}
+
+// PRsByAction returns each action's pull requests, keyed by action id.
+//
+// One query rather than one per action, for the same reason as
+// JiraByProject: the status page reads this for every row it draws.
+func (s *Store) PRsByAction(ctx context.Context) (map[string][]ActionPR, error) {
+	fields, err := fieldsOf(&PR{})
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]string, len(fields))
+	for i, f := range fields {
+		columns[i] = "p." + f.column
+	}
+
+	query := fmt.Sprintf(
+		"SELECT ap.action_id, ap.role, %s FROM action_pr ap "+
+			"JOIN pr p ON p.id = ap.pr_id ORDER BY ap.action_id, ap.role, p.id",
+		strings.Join(columns, ", "))
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("reading pull request links: %w", err)
+	}
+	defer rows.Close()
+
+	byAction := map[string][]ActionPR{}
+	for rows.Next() {
+		var actionID, role string
+		var pr PR
+		dest := make([]any, 0, len(fields)+2)
+		dest = append(dest, &actionID, &role)
+		for _, f := range fields {
+			dest = append(dest, f.pointerOf(&pr))
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, fmt.Errorf("reading pull request links: %w", err)
+		}
+		copied := pr
+		byAction[actionID] = append(byAction[actionID], ActionPR{PR: &copied, Role: role})
+	}
+	return byAction, rows.Err()
+}

@@ -62,11 +62,11 @@ func TestRender(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"<pre>", "calendar", "queue", "projects",
+		"next fortnight", "queue", "projects",
 		"primary oncall",        // inside the fortnight
 		"Split the pool config", // unblocked
 		"everything else waits on it",
-		"CDSS-1744 (In Progress)",
+		"CDSS-1744", "(In Progress)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the page does not contain %q:\n%s", want, out)
@@ -146,7 +146,7 @@ func TestTemplateIsTheOneOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the embedded template: %v", err)
 	}
-	for _, want := range []string{"{{.Calendar}}", "{{.Queue}}", "{{.Projects}}", "{{.GeneratedAt}}"} {
+	for _, want := range []string{"{{.Stamp}}", "range .Queue", "range .Projects", "{{.GeneratedAt}}"} {
 		if !strings.Contains(string(onDisk), want) {
 			t.Errorf("the template does not use %s", want)
 		}
@@ -161,7 +161,7 @@ func TestTemplateIsTheOneOnDisk(t *testing.T) {
 	if strings.Contains(out, "{{") {
 		t.Errorf("the page has an unexpanded action in it:\n%s", out)
 	}
-	for _, want := range []string{"<pre>", "<title>todo</title>"} {
+	for _, want := range []string{"<title>todo</title>", "nothing to do"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the page is missing %q:\n%s", want, out)
 		}
@@ -299,5 +299,51 @@ func TestSortPriorityStillFilters(t *testing.T) {
 	}
 	if !strings.Contains(out, "ready work") || strings.Contains(out, "blocked work") {
 		t.Errorf("--unblocked --sort priority returned the wrong rows:\n%s", out)
+	}
+}
+
+// TestLinkify: most of a title's references are written into the sentence
+// rather than attached as a link, so the page has to find them there.
+func TestLinkify(t *testing.T) {
+	const base = "https://example.atlassian.net/browse"
+
+	prefixes := []string{"CDSS"}
+
+	for _, tt := range []struct {
+		name, text, want string
+	}{
+		{"a jira key in prose", "Close CDSS-1557 once resizing merges",
+			`<a href="https://example.atlassian.net/browse/CDSS-1557">CDSS-1557</a>`},
+		{"a qualified pull request", "follows temporalio/saas-infra-plane#4156",
+			`<a href="https://github.com/temporalio/saas-infra-plane/pull/4156">temporalio/saas-infra-plane#4156</a>`},
+		{"a bare number is left alone", "follows #4156", "#4156"},
+		{"markup in a title is escaped", "a <script>alert(1)</script> title",
+			"&lt;script&gt;"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := string(linkify(tt.text, base, prefixes))
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("linkify(%q) = %q, want it to contain %q", tt.text, got, tt.want)
+			}
+		})
+	}
+
+	// Without a base URL there is nowhere for a Jira key to point, and
+	// guessing at a host would produce links that look right and go nowhere.
+	if got := string(linkify("Close CDSS-1557", "", prefixes)); strings.Contains(got, "<a") {
+		t.Errorf("linkify without a base linked anyway: %q", got)
+	}
+
+	// A key's shape is not distinctive: the pattern that finds CDSS-1744 also
+	// finds UTF-8. Anything whose project is not configured stays plain text.
+	for _, text := range []string{
+		"UTF-8 encoding", "SHA-256 digest", "ISO-8601 timestamps", "CVE-2024-1234", "RE-42",
+	} {
+		if got := string(linkify(text, base, prefixes)); strings.Contains(got, "<a") {
+			t.Errorf("linkify(%q) linked something that is not a configured project: %q", text, got)
+		}
+	}
+	if got := string(linkify("Close CDSS-1557", base, nil)); strings.Contains(got, "<a") {
+		t.Errorf("linkify with no prefixes linked anyway: %q", got)
 	}
 }

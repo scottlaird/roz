@@ -6,10 +6,8 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
-	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,17 +26,13 @@ var templates embed.FS
 // a title full of angle brackets and the page is this.
 var page = template.Must(template.ParseFS(templates, "templates/page.html.tmpl"))
 
-// pageContent is what the template renders. The three blocks are
-// preformatted text, and go inside <pre>.
-type pageContent struct {
-	GeneratedAt string
-	Calendar    string
-	Queue       string
-	Projects    string
-	// Live adds the script that reloads when the server says something
-	// moved. A page written to a file has no server to listen to.
-	Live bool
-}
+// Set by --jira-base-url and --jira-prefix. Neither has a default: guessing
+// at a host, or at what a key looks like, produces links that look right and
+// go nowhere.
+var (
+	jiraBase     string
+	jiraPrefixes []string
+)
 
 // horizon is how far ahead the calendar block looks. Two weeks is what a
 // weekly review can act on; beyond that the answer is "ask again later".
@@ -95,47 +89,9 @@ func runRender(cmd *cobra.Command, _ []string) error {
 // the previous page in place: a status page that is truncated looks like an
 // empty queue, which is the one wrong answer that matters.
 func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) ([]byte, error) {
-	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
-		Upcoming: true,
-		Through:  now.Add(horizon).UTC().Format(store.DateFormat),
-	})
+	content, err := buildPage(ctx, st, now, live, jiraBaseURL(), jiraProjectPrefixes())
 	if err != nil {
 		return nil, err
-	}
-	// The page is what gets read at a glance, so it is the one place that
-	// does not print in creation order.
-	actions, err := st.ListActions(ctx, store.ActionFilter{
-		Unblocked: true, Order: store.OrderPriority,
-	})
-	if err != nil {
-		return nil, err
-	}
-	projects, err := st.ListProjects(ctx, store.ProjectFilter{
-		Status: store.ProjectActive, Order: store.OrderPriority,
-	})
-	if err != nil {
-		return nil, err
-	}
-	jiraByProject, err := st.JiraByProject(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	content := pageContent{GeneratedAt: now.UTC().Format(time.RFC3339), Live: live}
-	blocks := []struct {
-		into  *string
-		write func(io.Writer) error
-	}{
-		{&content.Calendar, func(w io.Writer) error { return writeCalendarTable(w, windows) }},
-		{&content.Queue, func(w io.Writer) error { return writeRenderedActions(w, actions) }},
-		{&content.Projects, func(w io.Writer) error { return writeRenderedProjects(w, projects, jiraByProject) }},
-	}
-	for _, b := range blocks {
-		text, err := block(b.write)
-		if err != nil {
-			return nil, err
-		}
-		*b.into = text
 	}
 
 	var rendered bytes.Buffer
@@ -145,64 +101,29 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) 
 	return rendered.Bytes(), nil
 }
 
-// block runs one of the table writers and returns what it produced, as plain
-// text. The template escapes it.
-func block(write func(io.Writer) error) (string, error) {
-	var raw bytes.Buffer
-	if err := write(&raw); err != nil {
-		return "", err
+// jiraBaseURL is where a Jira key turns into a link. There is no sensible
+// default -- every install has its own host -- so an unset one renders the
+// key as plain text rather than guessing at somebody else's Jira.
+func jiraBaseURL() string {
+	if v := os.Getenv("TODO_JIRA_BASE_URL"); v != "" {
+		return v
 	}
-	return raw.String(), nil
+	return jiraBase
 }
 
-// writeRenderedActions is the queue, trimmed to what is worth reading at a
-// glance: what to do, what it is for, and why it matters.
-func writeRenderedActions(out io.Writer, actions []*store.Action) error {
-	if len(actions) == 0 {
-		fmt.Fprintln(out, "nothing to do")
-		return nil
+// jiraProjectPrefixes are the project keys worth linking, e.g. CDSS. There is
+// no default for the same reason: a key's shape is not distinctive, and the
+// obvious pattern matches UTF-8 and SHA-256 as readily as CDSS-1744.
+func jiraProjectPrefixes() []string {
+	raw := jiraPrefixes
+	if v := os.Getenv("TODO_JIRA_PREFIXES"); v != "" {
+		raw = strings.Split(v, ",")
 	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tVERB\tPROJECT\tTITLE\tWHY")
-	for _, a := range actions {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			a.ID, a.Verb, nullText(a.ProjectID), a.Title, orDash(a.Why))
-	}
-	return w.Flush()
-}
-
-func writeRenderedProjects(out io.Writer, projects []*store.Project, jira map[string][]*store.JiraIssue) error {
-	if len(projects) == 0 {
-		fmt.Fprintln(out, "no active projects")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tPRI\tEFFORT\tJIRA\tTITLE")
-	for _, p := range projects {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			p.ID, nullIntText(p.Priority), nullText(p.Effort),
-			jiraSummary(jira[p.ID]), p.Title)
-	}
-	return w.Flush()
-}
-
-// jiraSummary is the keys and their statuses, since neither says much alone:
-// a key with no status means nothing has looked at it yet.
-//
-// A project may track several issues — scaling up and scaling down being two
-// tickets for one piece of work — so this joins them rather than picking one.
-func jiraSummary(issues []*store.JiraIssue) string {
-	if len(issues) == 0 {
-		return "-"
-	}
-	parts := make([]string, len(issues))
-	for i, issue := range issues {
-		parts[i] = issue.ID
-		if issue.Status.Valid && issue.Status.String != "" {
-			parts[i] += " (" + issue.Status.String + ")"
+	var out []string
+	for _, p := range raw {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
 		}
 	}
-	return strings.Join(parts, ", ")
+	return out
 }

@@ -39,7 +39,7 @@ func TestProjectAddPrintsID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project add returned error: %v", err)
 	}
-	if got, want := strings.TrimSpace(out), "SL1"; got != want {
+	if got, want := strings.TrimSpace(out), "TD1"; got != want {
 		t.Errorf("project add printed %q, want %q", got, want)
 	}
 }
@@ -56,7 +56,7 @@ func TestProjectAddThenList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project list returned error: %v", err)
 	}
-	for _, want := range []string{"SL1", "active", "weeks", "Split the nodepool"} {
+	for _, want := range []string{"TD1", "active", "weeks", "Split the nodepool"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("project list output does not contain %q:\n%s", want, out)
 		}
@@ -119,8 +119,8 @@ func TestProjectListJSON(t *testing.T) {
 	}
 
 	project := got[0]
-	if project["id"] != "SL1" || project["title"] != "with refs" {
-		t.Errorf("project = %#v, want SL1 / with refs", project)
+	if project["id"] != "TD1" || project["title"] != "with refs" {
+		t.Errorf("project = %#v, want TD1 / with refs", project)
 	}
 	if project["priority"] != float64(2) {
 		t.Errorf("priority = %#v, want 2", project["priority"])
@@ -239,7 +239,7 @@ func TestRejectedInputConsumesNoIdentifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project add returned error: %v", err)
 	}
-	if got, want := strings.TrimSpace(out), "SL1"; got != want {
+	if got, want := strings.TrimSpace(out), "TD1"; got != want {
 		t.Errorf("first successful add produced %q, want %q", got, want)
 	}
 }
@@ -287,22 +287,22 @@ func TestProjectCloseRejections(t *testing.T) {
 	}{
 		{
 			name:    "unknown project",
-			args:    []string{"project", "close", "SL404"},
-			wantErr: "no such item: SL404",
+			args:    []string{"project", "close", "TD404"},
+			wantErr: "no such item: TD404",
 		},
 		{
 			name:    "superseding through close",
-			args:    []string{"project", "close", "SL1", "--status", "superseded"},
+			args:    []string{"project", "close", "TD1", "--status", "superseded"},
 			wantErr: "supersede",
 		},
 		{
 			name:    "an invented status",
-			args:    []string{"project", "close", "SL1", "--status", "abandoned"},
+			args:    []string{"project", "close", "TD1", "--status", "abandoned"},
 			wantErr: "does not close a project",
 		},
 		{
 			name:    "a sync actor",
-			args:    []string{"project", "close", "SL1", "--actor", "sync:github"},
+			args:    []string{"project", "close", "TD1", "--actor", "sync:github"},
 			wantErr: "not allowed",
 		},
 	}

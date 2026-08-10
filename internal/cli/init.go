@@ -12,7 +12,7 @@ import (
 // The only place the conventional prefixes appear. Everywhere else reads them
 // back from the database they were seeded into.
 const (
-	defaultProjectPrefix = "SL"
+	defaultProjectPrefix = "TD"
 	defaultActionPrefix  = "NA"
 )
 

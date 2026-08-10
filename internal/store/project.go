@@ -131,7 +131,7 @@ func projectOrder(order string) string {
 // ListProjects returns projects matching the filter.
 //
 // Creation order by default, and ordering is on n rather than id, which is
-// the reason n exists: SL100 sorts before SL41 lexically.
+// the reason n exists: TD100 sorts before TD41 lexically.
 func (s *Store) ListProjects(ctx context.Context, filter ProjectFilter) ([]*Project, error) {
 	fields, err := fieldsOf(&Project{})
 	if err != nil {

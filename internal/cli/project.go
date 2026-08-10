@@ -19,7 +19,7 @@ import (
 func newProjectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "project",
-		Short: "Bodies of work, allocated an SL identifier",
+		Short: "Bodies of work, allocated a TD identifier",
 	}
 	cmd.AddCommand(
 		newProjectAddCmd(),
@@ -488,8 +488,8 @@ func newProjectSupersedeCmd() *cobra.Command {
 		RunE: runProjectSupersede,
 	}
 	f := cmd.Flags()
-	f.String("from", "", "project being superseded, e.g. SL32 (required)")
-	f.String("into", "", "project that replaces it, e.g. SL94 (required)")
+	f.String("from", "", "project being superseded, e.g. TD32 (required)")
+	f.String("into", "", "project that replaces it, e.g. TD94 (required)")
 	_ = cmd.MarkFlagRequired("from")
 	_ = cmd.MarkFlagRequired("into")
 	addActorFlag(cmd)

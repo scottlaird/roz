@@ -45,7 +45,7 @@ func newExceptionCmd() *cobra.Command {
 		RunE: runException,
 	}
 	f := cmd.Flags()
-	f.String(flagSubject, "", "subject id, e.g. SL48 (required)")
+	f.String(flagSubject, "", "subject id, e.g. TD48 (required)")
 	f.String(flagKind, "", "e.g. unexpected_review_state (required)")
 	f.String(flagNote, "", "free text")
 	_ = cmd.MarkFlagRequired(flagSubject)

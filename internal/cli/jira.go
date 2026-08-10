@@ -25,7 +25,7 @@ func newProjectJiraCmd() *cobra.Command {
 		Short: "Record by hand what Jira says about a project",
 		Long: "Stands in for Jira sync, which does not exist yet.\n\n" +
 			"Keyed on the issue rather than on the project, because that is what an\n" +
-			"integration would have: a Jira issue does not know it is SL106. Every\n" +
+			"integration would have: a Jira issue does not know it is TD106. Every\n" +
 			"project carrying the key is updated, and a key no project carries is\n" +
 			"reported rather than treated as an error — this tracks a subset of\n" +
 			"what Jira holds.\n\n" +

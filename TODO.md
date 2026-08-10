@@ -119,7 +119,7 @@ poll writes nothing. What remains open is whether a minute is often enough to
 catch states that do not persist — `UNSTABLE` and `BEHIND` in particular.
 
 **`--json` can reach columns that have a dedicated verb.** `project set --json
-'{"superseded_by":"SL94"}'` skips the target-existence check that `project
+'{"superseded_by":"TD94"}'` skips the target-existence check that `project
 supersede` performs. The foreign key still catches a bad target, so the cost is
 a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 
@@ -172,7 +172,7 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   `--actor`, which keeps the exception to one named verb instead of a hole in
   the rule.
 - **Jira observations are keyed on the issue, not the project.** An
-  integration has `CDSS-1744`, not `SL106`. Every project carrying the key
+  integration has `CDSS-1744`, not `TD106`. Every project carrying the key
   gets the observation, and a key nobody carries is reported rather than
   refused: this tracks a subset of what Jira holds.
 - A verb naming a predicate the build lacks is refused when the store opens.

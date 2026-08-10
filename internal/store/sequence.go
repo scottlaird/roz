@@ -116,7 +116,7 @@ func seedSequences(tx *sql.Tx, prefixes map[Entity]string) error {
 //
 // Anything not of that shape is rejected rather than split on a best guess.
 // That matters because subject_id in the log is heterogeneous by design: it
-// holds SL1 or myrepo#4174, and only the first is a sequence identifier.
+// holds TD1 or myrepo#4174, and only the first is a sequence identifier.
 func SplitIdent(id string) (prefix string, n int64, ok bool) {
 	split := strings.LastIndexFunc(id, func(r rune) bool {
 		return r < '0' || r > '9'
@@ -140,7 +140,7 @@ func SplitIdent(id string) (prefix string, n int64, ok bool) {
 // prefix up in the registry seeded at init.
 //
 // This is why the prefixes are stored rather than hardcoded: the mapping from
-// SL to project is the user's, made once, and read back here.
+// TD to project is the user's, made once, and read back here.
 func (s *Store) EntityForID(id string) (Entity, bool) {
 	prefix, _, ok := SplitIdent(id)
 	if !ok {

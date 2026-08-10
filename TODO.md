@@ -82,6 +82,25 @@ them.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
+- [ ] **`todo pr track --pipeline`.** A pull request takes its repository's
+      pipeline, and there is no way to say this one is different — a
+      hotfix that skips review, or a change to protected code that needs more
+      than the usual chain. The column would sit on `pr` and fall back to the
+      repository's when unset, which is the same shape `github_repo.pipeline`
+      already has against the default.
+- [ ] **Pipelines with more than one review step.** A real change can need
+      reviewing by your own team, then by the owners of code it happens to
+      touch, then by whoever guards the protected parts — three reviews, in
+      order, by different groups. Today `wait_review` is one step closing on
+      one `reviewDecision`, which cannot express any of that.
+
+      This is a design and schema question before it is code. A step would
+      need to name *who* it waits for, the predicate would need to ask whether
+      that group has approved rather than whether the pull request has, and
+      GitHub's `reviewDecision` is a single verdict that will not answer it —
+      it wants the individual reviews and the teams they came from. It also
+      leans on knowing which teams a pull request needs, which is the
+      CODEOWNERS inference work, so the two are worth designing together.
 - [ ] **An MCP server**, so an agent can read the queue and write to it
       without shelling out. Stdio is the shape that matters — an agent spawns
       the process — and localhost is fine as a second transport, where `todo

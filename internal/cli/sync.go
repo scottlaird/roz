@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -75,15 +76,37 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	for _, key := range sortedKeys(result.Missing) {
 		fmt.Fprintf(out, "%s could not be read: %s\n", key, result.Missing[key])
 	}
+	reportSettled(out, result)
 
 	if !quiet {
 		fmt.Fprintf(out, "polled %d, %d changed", result.Polled, result.ChangedCount())
 		if len(result.Missing) > 0 {
 			fmt.Fprintf(out, ", %d unreadable", len(result.Missing))
 		}
+		if result.SettledCount() > 0 {
+			fmt.Fprintf(out, ", %d closed", result.SettledCount())
+		}
 		fmt.Fprintln(out)
 	}
 	return nil
+}
+
+// reportSettled prints what closed itself, and what that freed.
+//
+// It prints even under --quiet, because an action closing without anyone
+// asking is the most surprising thing sync does, and finding out from a
+// later `action list` is worse.
+func reportSettled(out io.Writer, result ghsync.Result) {
+	for _, settled := range result.Settled {
+		fmt.Fprintf(out, "%s closed: %s is %s\n",
+			settled.Action.ID, settled.PR, settled.Action.Verb)
+		for _, freed := range settled.Result.Unblocked {
+			fmt.Fprintf(out, "  %s is now %s\n", freed.ID, freed.State)
+		}
+		for _, back := range settled.Result.Unhidden {
+			fmt.Fprintf(out, "  %s is no longer hidden\n", back.ID)
+		}
+	}
 }
 
 // sortedKeys makes the report deterministic, since both maps are keyed by

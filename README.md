@@ -53,7 +53,7 @@ directory.
 | `todo pr track` | Start tracking a pull request, keyed `owner/repo#number`. |
 | `todo pr show` / `list` | Read tracked pull requests. |
 | `todo pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync. |
-| `todo sync github` | Refresh observed columns from GitHub. Read-only. |
+| `todo sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
 | `todo syncer` | The same on a loop, backing off as rate limit heads down. |
 | **vocabulary** | |
 | `todo verb list` | The verbs, how each closes, and its rank class. |
@@ -69,7 +69,10 @@ directory.
 
 ## A walkthrough
 
-Everything below is real output.
+Everything below is real output, captured by running these commands in order
+against a fresh database and the live `scottlaird/todo#31`. That pull request
+has moved on since, so re-running it today will answer differently — which is
+rather the point of the tool.
 
 ### Set up
 
@@ -127,8 +130,8 @@ A repository must be tracked before its pull requests, because the pipeline
 decides what a pull request against it will need doing to it.
 
 ```console
-$ todo pr track scottlaird/todo#29
-scottlaird/todo#29
+$ todo pr track scottlaird/todo#31
+scottlaird/todo#31
 ```
 
 ### Two actions, one waiting on the other
@@ -151,21 +154,25 @@ the queue until you say otherwise.
 
 ```console
 $ todo sync github
-scottlaird/todo#29 title: "" → "Add a hand-fed Jira sync"
-scottlaird/todo#29 author: "" → "scottlaird"
-scottlaird/todo#29 url: "" → "https://github.com/scottlaird/todo/pull/29"
-scottlaird/todo#29 state: "" → "OPEN"
-scottlaird/todo#29 is_draft: "" → "0"
-scottlaird/todo#29 in_merge_queue: "" → "0"
-scottlaird/todo#29 base_ref: "" → "main"
-scottlaird/todo#29 head_sha: "" → "530fa954e1afd45494ebafc14c00e9792f8c7c43"
-scottlaird/todo#29 unresolved_threads: "" → "0"
+scottlaird/todo#31 title: "" → "Close actions when GitHub finishes them"
+scottlaird/todo#31 author: "" → "scottlaird"
+scottlaird/todo#31 url: "" → "https://github.com/scottlaird/todo/pull/31"
+scottlaird/todo#31 state: "" → "OPEN"
+scottlaird/todo#31 is_draft: "" → "0"
+scottlaird/todo#31 merge_state_status: "" → "CLEAN"
+scottlaird/todo#31 in_merge_queue: "" → "0"
+scottlaird/todo#31 base_ref: "" → "main"
+scottlaird/todo#31 head_sha: "" → "76b37af667b23c167051bf905ea849c854bac0dc"
+scottlaird/todo#31 unresolved_threads: "" → "0"
 polled 1, 1 changed
 ```
 
 Read-only, batched into one GraphQL query, and attributed to `sync:github` —
 which the store will not let write an authored column. Where GitHub reports
 nothing, the stored value is left alone: absence is not a fact.
+
+Sync also closes any action whose predicate the new observations satisfy; the
+walkthrough gets to that below.
 
 `todo syncer` runs the same thing on a loop, slowing down as the rate limit
 budget drops and backing off on a 429.
@@ -175,12 +182,12 @@ budget drops and backing off on a 429.
 This is where the queue moves on its own.
 
 ```console
-$ todo action close NA1 --pr scottlaird/todo#29
+$ todo action close NA1 --pr scottlaird/todo#31
 NA1 done (completed)
   skipped undraft: already true
-  created NA3 send for review scottlaird/todo#29
-  created NA4 wait for review scottlaird/todo#29 (blocked by NA3)
-  created NA5 merge scottlaird/todo#29 (blocked by NA4)
+  created NA3 send for review scottlaird/todo#31
+  created NA4 wait for review scottlaird/todo#31 (blocked by NA3)
+  created NA5 merge scottlaird/todo#31 (blocked by NA4)
   NA2 is now ready
 ```
 
@@ -196,15 +203,15 @@ Four things happened under one correlation id:
 - **`NA2` was freed**, its last open blocker having closed.
 - Anything hidden behind `NA1` would have come back too.
 
-### The steps close themselves — nearly
+### The steps close themselves
 
 `send_for_review` closes on the announcement, which is the one signal GitHub
 cannot supply. Until Slack sync exists, that is recorded by hand:
 
 ```console
-$ todo pr announce scottlaird/todo#29 --channel '#infra-reviews'
-scottlaird/todo#29 announced_at: "" → "2026-08-10T03:59:17.509Z"
-scottlaird/todo#29 announced_channel: "" → "#infra-reviews"
+$ todo pr announce scottlaird/todo#31 --channel '#infra-reviews'
+scottlaird/todo#31 announced_at: "" → "2026-08-10T04:14:59.157Z"
+scottlaird/todo#31 announced_channel: "" → "#infra-reviews"
 ```
 
 Jira is the same arrangement, keyed on the issue rather than the project,
@@ -215,41 +222,57 @@ $ todo project jira CDSS-1744 --status "In Progress" --sprint "Sprint 42" --assi
 SL1 jira_status: "" → "In Progress"
 SL1 jira_sprint: "" → "Sprint 42"
 SL1 jira_assignee: "" → "scott"
-SL1 jira_synced_at: "" → "2026-08-10T03:59:17.522Z"
+SL1 jira_synced_at: "" → "2026-08-10T04:14:59.168Z"
 ```
 
 `--feed` takes a JSON array of the same thing, so faking a whole sync run is
 one command. Both are logged as `sync:slack-manual` and `sync:jira-manual`, so
 the log never claims an integration reported something typed in by hand.
 
-Closing a step frees the next one through exactly the same unblocking any
-action gets — there is no separate notion of advancing a pipeline:
+Now the announcement is a fact, `send_for_review` is satisfied, and the next
+sync notices:
 
 ```console
-$ todo action close NA3
-NA3 done (completed)
+$ todo sync github
+NA3 closed: scottlaird/todo#31 is send_for_review
   NA4 is now ready
+polled 1, 0 changed, 1 closed
 
 $ todo action list --open
 ID   STATE    VERB         PROJECT  SNOOZED UNTIL  TITLE
 NA2  ready    run          SL1      -              Roll the change out
-NA4  ready    wait_review  SL1      -              wait for review scottlaird/todo#29
-NA5  blocked  merge        SL1      -              merge scottlaird/todo#29
+NA4  ready    wait_review  SL1      -              wait for review scottlaird/todo#31
+NA5  blocked  merge        SL1      -              merge scottlaird/todo#31
 ```
 
-`NA4` and `NA5` close on their own predicates — an approval and a merge — once
-sync observes them. That last step is not wired up yet; see `TODO.md`.
+Nobody closed `NA3`. A predicate verb says how its action closes, and sync is
+what asks. `NA4` and `NA5` go the same way once GitHub reports the approval
+and the merge — leave `todo syncer` running and the chain empties itself.
+
+Closing a step frees the next through exactly the same unblocking any action
+gets, whether a person closed it or a predicate did. There is no separate
+notion of advancing a pipeline.
+
+Two rules keep this from being alarming. A predicate is false wherever nothing
+has been observed, so an unreachable GitHub cannot empty the queue — absence
+is not completion. And settling is written as `predicate`, not as
+`sync:github`: observing that a pull request merged and deciding the merge
+action is done are different acts, and the log keeps them apart.
 
 ### The log
 
 ```console
 $ todo watch --once -n 5
-2026-08-10T03:59:17.522Z  info  sync:jira-manual   changed  SL1  jira_synced_at: "" → "2026-08-10T03:59:17.522Z"
-2026-08-10T03:59:17.535Z  info  human              changed  NA3  state: "ready" → "done"
-2026-08-10T03:59:17.535Z  info  human              changed  NA3  closed_at: "" → "2026-08-10T03:59:17.535Z"
-2026-08-10T03:59:17.535Z  info  human              changed  NA3  closed_reason: "" → "completed"
-2026-08-10T03:59:17.535Z  info  human              changed  NA4  state: "blocked" → "ready"
+2026-08-10T04:14:59.168Z  info  sync:jira-manual  changed  SL1  jira_synced_at: "" → "2026-08-10T04:14:59.168Z"
+2026-08-10T04:14:59.639Z  info  predicate         changed  NA3  state: "ready" → "done"
+2026-08-10T04:14:59.639Z  info  predicate         changed  NA3  closed_at: "" → "2026-08-10T04:14:59.639Z"
+2026-08-10T04:14:59.639Z  info  predicate         changed  NA3  closed_reason: "" → "completed"
+2026-08-10T04:14:59.639Z  info  predicate         changed  NA4  state: "blocked" → "ready"
 ```
+
+Note the actor: `predicate`, not `human` and not `sync:slack-manual`. One act
+recorded that the pull request was announced; a second decided the action was
+therefore done. Those are different claims, and the log keeps them apart.
 
 Without `--once` it follows. Every row came from a diff between two versions
 of a record — nothing writes to the log by hand except the edge and lifecycle

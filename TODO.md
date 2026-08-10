@@ -13,21 +13,15 @@ chooses between. `todo watch` tails the log.
 
 Two commands are still stubs that exit 1: `render` and `verify`.
 
-Closing works, and with it the cascade: closing a `write` action instantiates
-the repository's pipeline as a chain of blocked actions, frees what it was
-holding up, and brings back whatever was hidden behind it. The queue now moves
-on its own when a human closes something. It does not yet move when GitHub
-does — nothing asks the predicates during sync, which is the next thing.
+The queue is mechanical, which was the claim the whole design rested on.
+Closing a `write` action instantiates the repository's pipeline as a chain of
+blocked actions; sync then closes each step as GitHub satisfies its predicate,
+and each closure frees the next. Nobody types "the pull request merged".
 
 ## The critical path
 
 In dependency order. Nothing later can be finished first.
 
-- [ ] **Closing on predicates during sync.** The registry can answer "is this
-      done" and the pipeline steps are actions with predicate verbs and a
-      subject pull request, so everything is in place; nothing asks yet. This
-      is the difference between a queue that models the work and one that
-      keeps up with it.
 - [ ] **The queue queries.** `--unblocked`, `--expired`, `--stale`,
       `--waiting`, `--orphaned`. `--expired` is called the highest-value query
       in the system; `--stale` catches an item claiming done whose pull request
@@ -41,17 +35,16 @@ In dependency order. Nothing later can be finished first.
 
 ## What dogfooding needs
 
-Enough works to track this repository's own pull requests today: track the
-repo, track a pull request, `action add --verb write`, then `action close --pr`
-to get the chain. What is missing before it is not more work than it saves:
+Nothing blocking. Track the repo, track a pull request, `action add --verb
+write`, `action close --pr`, and let `todo syncer` close the steps as GitHub
+finishes them. What would make it pleasant rather than merely possible:
 
-- [ ] **Sync closing the predicate steps.** Without it every `undraft`,
-      `wait_review` and `merge` action has to be closed by hand, which is the
-      opposite of the point. This is the one blocker.
 - [ ] **`action list --unblocked`.** Otherwise the queue is read by eye,
       filtering out the blocked steps mentally.
 - [ ] A `todo pr announce` habit, since `send_for_review` closes on the
       announcement and GitHub cannot supply it.
+- [ ] Settling after `pr announce` as well as after sync, so the step closes
+      when the fact arrives rather than at the next poll.
 
 `todo render` and the web server are not needed for it. `todo db backup` is
 not either, but a real database makes it worth having sooner.
@@ -131,7 +124,16 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - Absence is not a fact. Where GitHub reports nothing, sync leaves the stored
   value alone rather than clearing it.
 - **Absence is not completion either.** Every predicate is false where nothing
-  has been observed, so an unsynced pull request closes nothing.
+  has been observed, so an unsynced pull request closes nothing — and an
+  unreachable GitHub cannot empty the queue.
+- **Settling is not sync, and has its own actor.** Recording that a pull
+  request merged is an observation, written as `sync:github`; deciding the
+  merge action is therefore done carries out a rule someone wrote into the
+  vocabulary, and is written as `predicate`. The actor that observes a fact is
+  exactly the one not allowed to act on it.
+- **A satisfied step closes whatever its state.** A merged pull request means
+  the merge happened, whatever the chain expected to come first. Reality
+  outranks the plan.
 - Hand-entered observations get their own actor — `sync:slack-manual` and
   `sync:jira-manual` — so the log never claims an integration reported
   something typed in. The actor is fixed by the command rather than taken from

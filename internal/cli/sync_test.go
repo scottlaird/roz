@@ -167,3 +167,73 @@ func TestSyncWithNothingTracked(t *testing.T) {
 		t.Errorf("output = %q, want it to report nothing polled", out)
 	}
 }
+
+// TestSyncClosesTheStepsGitHubFinished is the whole loop end to end: a write
+// action closes into a chain, GitHub reports the pull request merged, and the
+// steps close themselves.
+func TestSyncClosesTheStepsGitHubFinished(t *testing.T) {
+	db, key := trackedPR(t)
+	if _, err := runCLI(t, "repo", "set", "--db", db, "owner/repo", "--pipeline", "direct"); err != nil {
+		t.Fatalf("repo set returned error: %v", err)
+	}
+
+	write := addAction(t, db, "--title", "write it", "--verb", "write")
+	if _, err := runCLI(t, "action", "close", "--db", db, write, "--pr", key); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+
+	// direct is undraft → merge, and GitHub says both are done.
+	withFetcher(t, stubFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{{
+			Key: key, Repo: "owner/repo", Number: 1,
+			Title: "a title", State: "MERGED", BaseRef: "main", IsDraft: false,
+		}},
+	}})
+
+	out, err := runCLI(t, "sync", "github", "--db", db)
+	if err != nil {
+		t.Fatalf("sync github returned error: %v", err)
+	}
+	if !strings.Contains(out, "closed") {
+		t.Errorf("sync did not report closing anything:\n%s", out)
+	}
+
+	listed, err := runCLI(t, "action", "list", "--db", db, "--open")
+	if err != nil {
+		t.Fatalf("action list returned error: %v", err)
+	}
+	if !strings.Contains(listed, "no actions") {
+		t.Errorf("actions are still open after GitHub finished the work:\n%s", listed)
+	}
+}
+
+// TestSettledIsReportedEvenWhenQuiet: an action closing without anyone asking
+// is the most surprising thing sync does, and --quiet is about noise, not
+// about hiding that.
+func TestSettledIsReportedEvenWhenQuiet(t *testing.T) {
+	db, key := trackedPR(t)
+	if _, err := runCLI(t, "repo", "set", "--db", db, "owner/repo", "--pipeline", "direct"); err != nil {
+		t.Fatalf("repo set returned error: %v", err)
+	}
+	write := addAction(t, db, "--title", "write it", "--verb", "write")
+	if _, err := runCLI(t, "action", "close", "--db", db, write, "--pr", key); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+
+	withFetcher(t, stubFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{{
+			Key: key, Repo: "owner/repo", Number: 1, State: "MERGED", BaseRef: "main",
+		}},
+	}})
+
+	out, err := runCLI(t, "sync", "github", "--db", db, "--quiet")
+	if err != nil {
+		t.Fatalf("sync github --quiet returned error: %v", err)
+	}
+	if !strings.Contains(out, "closed") {
+		t.Errorf("--quiet hid a self-closing action:\n%s", out)
+	}
+	if strings.Contains(out, "polled") {
+		t.Errorf("--quiet printed the summary:\n%s", out)
+	}
+}

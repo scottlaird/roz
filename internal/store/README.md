@@ -20,6 +20,7 @@ verb.go      the vocabulary, and the check that every predicate resolves
 pipeline.go  what closing a verb instantiates
 edge.go      blocking, hiding and pull request links
 close.go     closing an action, and the cascade that follows
+settle.go    closing the actions whose predicate has come true
 project.go  action.go  pr.go  repo.go  calendar.go   the entities
 ```
 

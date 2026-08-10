@@ -177,6 +177,8 @@ CREATE TABLE pr (
   raw                TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(raw)),
   tracked_since      TEXT NOT NULL,
   last_synced_at     TEXT,
+  -- unresolved and not outdated; NULL means never synced. See 0003.
+  unresolved_threads INTEGER,
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;

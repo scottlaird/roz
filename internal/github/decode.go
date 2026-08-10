@@ -51,6 +51,12 @@ type PullRequest struct {
 
 	FirstReviewRequestedAt string
 	HumanCommentedAt       string
+
+	// UnresolvedThreads counts review threads that are unresolved and not
+	// outdated. Outdated means the thread hangs off a commit that is no
+	// longer the head, which is GitHub's way of saying it has been overtaken
+	// — close enough to "newer than head_sha" to answer the same question.
+	UnresolvedThreads int
 }
 
 const (
@@ -141,6 +147,13 @@ type wirePullRequest struct {
 	Commits struct {
 		Nodes []wireCommit `json:"nodes"`
 	} `json:"commits"`
+
+	ReviewThreads struct {
+		Nodes []struct {
+			IsResolved bool `json:"isResolved"`
+			IsOutdated bool `json:"isOutdated"`
+		} `json:"nodes"`
+	} `json:"reviewThreads"`
 }
 
 type wireAlias struct {
@@ -193,6 +206,7 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 		pr.HumanCommentedAt = p.Comments.Nodes[0].CreatedAt
 	}
 	pr.ChecksState, pr.Checks = checks(p)
+	pr.UnresolvedThreads = unresolvedThreads(p)
 
 	return pr, nil
 }
@@ -230,6 +244,18 @@ func approvals(p *wirePullRequest) []string {
 	}
 	sort.Strings(logins)
 	return logins
+}
+
+// unresolvedThreads counts the review threads that still apply: unresolved,
+// and not left behind by a newer commit.
+func unresolvedThreads(p *wirePullRequest) int {
+	var count int
+	for _, thread := range p.ReviewThreads.Nodes {
+		if !thread.IsResolved && !thread.IsOutdated {
+			count++
+		}
+	}
+	return count
 }
 
 // checks flattens the rollup into a state and a name-to-conclusion map.

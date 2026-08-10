@@ -141,6 +141,13 @@ func OpenStore(path string) (*Store, error) {
 			path, version, latest)
 	}
 
+	// A verb naming a predicate this build lacks is refused here rather than
+	// discovered later, when an action would quietly stop closing.
+	if err := checkPredicates(context.Background(), db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	st, err := New(db)
 	if err != nil {
 		db.Close()

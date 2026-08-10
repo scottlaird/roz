@@ -146,6 +146,9 @@ func merge(before *store.PR, observed github.PullRequest) (*store.PR, error) {
 	after.ChecksState = keepIfEmpty(before.ChecksState, observed.ChecksState)
 	after.FirstReviewRequestedAt = keepIfEmpty(before.FirstReviewRequestedAt, observed.FirstReviewRequestedAt)
 	after.HumanCommentedAt = keepIfEmpty(before.HumanCommentedAt, observed.HumanCommentedAt)
+	// Zero is a real answer here — no unresolved threads — so unlike the
+	// text columns this is always written.
+	after.UnresolvedThreads = sql.NullInt64{Int64: int64(observed.UnresolvedThreads), Valid: true}
 
 	checks, err := encodeChecks(observed.Checks)
 	if err != nil {

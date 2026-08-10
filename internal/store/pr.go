@@ -79,6 +79,11 @@ type PR struct {
 	Raw          string `db:"raw" kind:"observed" format:"json"`
 	TrackedSince string `db:"tracked_since" kind:"created"`
 
+	// UnresolvedThreads counts review threads that are unresolved and not
+	// outdated — the ones hanging off the current head. NULL means never
+	// synced, which address_comments must not read as none.
+	UnresolvedThreads sql.NullInt64 `db:"unresolved_threads" kind:"observed"`
+
 	// LastSyncedAt is auto rather than observed: sync touches it on every
 	// poll, and logging that would bury real transitions under one event per
 	// pull request per cycle. It moves only when something else does, so it

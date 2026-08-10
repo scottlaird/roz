@@ -29,6 +29,7 @@ const prFields = `
       nodes { ... on ReviewRequestedEvent { createdAt } }
     }
     comments(last: 1) { nodes { createdAt author { login } } }
+    reviewThreads(first: 50) { nodes { isResolved isOutdated } }
     commits(last: 1) {
       nodes { commit { statusCheckRollup {
         state

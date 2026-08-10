@@ -32,6 +32,15 @@ const (
 	// what Jira sync would have observed, kept distinct so the log does not
 	// claim Jira said it.
 	ActorJiraManual Actor = "sync:jira-manual"
+
+	// ActorPredicate closes actions whose predicate has come true.
+	//
+	// It is deliberately not a sync actor. Closing writes authored columns,
+	// and it should: a predicate verb is a rule a person wrote into the
+	// vocabulary, so closing on it is that judgement being carried out, not
+	// an observation. Sync reports what GitHub says; this decides what that
+	// means, and the log should not confuse the two.
+	ActorPredicate Actor = "predicate"
 )
 
 // syncPrefix marks an actor as a sync. New sync sources are named

@@ -326,3 +326,103 @@ func TestChecksEncodeStably(t *testing.T) {
 		t.Errorf("encodeChecks() = %q, want %q", first, want)
 	}
 }
+
+// linkedAction creates an action with a predicate verb whose subject is the
+// pull request, which is what a pipeline step is.
+func linkedAction(t *testing.T, st *store.Store, verb, key string) *store.Action {
+	t.Helper()
+	ctx := context.Background()
+
+	a := store.NewAction(verb+" it", verb)
+	if err := st.AllocateAction(ctx, a); err != nil {
+		t.Fatalf("AllocateAction() returned error: %v", err)
+	}
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	if err := tx.Insert(ctx, a); err != nil {
+		t.Fatalf("Insert() returned error: %v", err)
+	}
+	if err := tx.LinkPR(ctx, a, key, store.RoleSubject); err != nil {
+		t.Fatalf("LinkPR() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return a
+}
+
+// TestSyncSettlesWhatItObserves is the join between the two halves: sync
+// records that the pull request merged, and the merge action goes away
+// without anyone closing it.
+func TestSyncSettlesWhatItObserves(t *testing.T) {
+	st, key := newStore(t)
+	merge := linkedAction(t, st, "merge", key)
+	undraft := linkedAction(t, st, "undraft", key)
+
+	pr := observed(key)
+	pr.State = "MERGED"
+	pr.IsDraft = true // still a draft, so undraft is not satisfied
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{pr}}}
+
+	result, err := Sync(context.Background(), st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	if result.SettledCount() != 1 {
+		t.Fatalf("settled %d actions, want 1", result.SettledCount())
+	}
+	if got := result.Settled[0].Action.ID; got != merge.ID {
+		t.Errorf("settled %s, want the merge action %s", got, merge.ID)
+	}
+	if result.Settled[0].PR != key {
+		t.Errorf("settled against %q, want %q", result.Settled[0].PR, key)
+	}
+
+	// The one GitHub did not finish is untouched.
+	if loadAction(t, st, undraft.ID).State == "done" {
+		t.Error("the undraft action closed on a pull request that is still a draft")
+	}
+}
+
+func loadAction(t *testing.T, st *store.Store, id string) *store.Action {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	a, err := tx.LoadAction(ctx, id)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	return a
+}
+
+// TestSyncSettlesNothingWhenNothingIsObserved: a poll that learns nothing
+// must not close anything, or an unreachable GitHub would empty the queue.
+func TestSyncSettlesNothingWhenNothingIsObserved(t *testing.T) {
+	st, key := newStore(t)
+	linkedAction(t, st, "merge", key)
+
+	client := &fakeFetcher{result: github.Result{
+		Missing: map[string]string{key: "is not a pull request GitHub will show us"},
+	}}
+
+	result, err := Sync(context.Background(), st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if result.SettledCount() != 0 {
+		t.Errorf("settled %d actions on an unreadable pull request, want none",
+			result.SettledCount())
+	}
+}

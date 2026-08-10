@@ -1,8 +1,14 @@
-// Package ghsync applies GitHub's view of a pull request to the store.
+// Package ghsync applies GitHub's view of a pull request to the store, and
+// closes the actions that view has finished.
 //
 // It is the only writer of observed pull request columns, and it writes them
 // as sync:github, so the actor rule in the store rejects any attempt to touch
 // an authored one. It never writes to GitHub.
+//
+// Settling is a separate act under a separate actor. Recording that a pull
+// request is merged is an observation; deciding that the merge action is
+// therefore done is a rule a person wrote into the vocabulary, so it is
+// written as `predicate` rather than as sync:github.
 package ghsync
 
 import (
@@ -34,10 +40,17 @@ type Result struct {
 	// is something a person should hear about.
 	Missing map[string]string
 
+	// Settled lists the actions closed because what was observed satisfied
+	// their predicate, with whatever each closure cascaded into.
+	Settled []store.Settled
+
 	// RateLimit is what GitHub last said about the budget, so a caller
 	// polling on a loop can pace itself.
 	RateLimit github.RateLimit
 }
+
+// SettledCount is how many actions closed on their own.
+func (r Result) SettledCount() int { return len(r.Settled) }
 
 // ChangedCount is how many pull requests moved.
 func (r Result) ChangedCount() int { return len(r.Changed) }
@@ -87,6 +100,14 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 		if err := reportMissing(ctx, st, key, why); err != nil {
 			return Result{}, err
 		}
+	}
+
+	// Settle after applying everything, not per pull request: a chain can
+	// span several, and a step freed by one closure may be satisfied by an
+	// observation made in the same pass.
+	result.Settled, err = st.Settle(ctx, store.ActorPredicate)
+	if err != nil {
+		return Result{}, err
 	}
 	return result, nil
 }

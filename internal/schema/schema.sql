@@ -185,12 +185,6 @@ CREATE TABLE project (
   snooze_reason    TEXT NOT NULL DEFAULT '',
   superseded_by    TEXT REFERENCES project(id),
   design_refs      TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(design_refs)),  -- JSON array of file paths
-  jira_key         TEXT,                       -- informal FK into Jira, e.g. 'CDSS-1744'
-  jira_status      TEXT,                       -- observed from here down. Jira's vocabulary,
-                                               -- not ours: 'To Do' | 'In Progress' | 'Done' | ...
-  jira_sprint      TEXT,
-  jira_assignee    TEXT,
-  jira_synced_at   TEXT,
   last_verified_at TEXT,
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
@@ -300,6 +294,23 @@ CREATE TABLE pr (
   CHECK (id = repo || '#' || number)
 ) STRICT;
 
+-- ── jira ─────────────────────────────────────────────────────────────
+-- Its own entity rather than columns on project, because one piece of work
+-- legitimately maps to more than one issue and a column can hold one key.
+CREATE TABLE jira_issue (
+  id         TEXT PRIMARY KEY,          -- 'CDSS-1744'; Jira's identifier, not ours
+  summary    TEXT NOT NULL DEFAULT '',  -- observed from here down
+  -- Jira's vocabulary, NOT ours: 'To Do' | 'In Progress' | 'Done' | 'Blocked' | ...
+  -- deliberately unconstrained, because Jira may add a value whenever it likes
+  -- and a CHECK here would turn someone else's release into a failing ingest
+  status     TEXT,
+  sprint     TEXT,
+  assignee   TEXT,                      -- display name; empty string means unassigned
+  synced_at  TEXT,                      -- when Jira was last read for this issue
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
 -- ── edges ────────────────────────────────────────────────────────────
 CREATE TABLE action_blocks (
   blocker_id TEXT NOT NULL REFERENCES action(id),
@@ -314,6 +325,15 @@ CREATE TABLE action_pr (
   pr_id     TEXT NOT NULL REFERENCES pr(id),
   role      TEXT NOT NULL CHECK (role IN ('subject','context')),
   PRIMARY KEY (action_id, pr_id)
+) STRICT;
+
+-- Many-to-many in both directions: a project may track several issues, and an
+-- issue may be tracked by several projects -- two projects watching one epic.
+CREATE TABLE project_jira (
+  project_id TEXT NOT NULL REFERENCES project(id),
+  issue_id   TEXT NOT NULL REFERENCES jira_issue(id),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, issue_id)
 ) STRICT;
 
 -- an action has at most ONE subject PR: this is the constraint that makes
@@ -409,3 +429,4 @@ CREATE INDEX action_expired  ON action(snooze_until)
 CREATE INDEX project_expired ON project(snooze_until)
                              WHERE status = 'snoozed' AND snooze_until IS NOT NULL;
 CREATE INDEX action_project  ON action(project_id);
+CREATE INDEX project_jira_issue ON project_jira(issue_id);

@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -115,6 +116,10 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) 
 	if err != nil {
 		return nil, err
 	}
+	jiraByProject, err := st.JiraByProject(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	content := pageContent{GeneratedAt: now.UTC().Format(time.RFC3339), Live: live}
 	blocks := []struct {
@@ -123,7 +128,7 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) 
 	}{
 		{&content.Calendar, func(w io.Writer) error { return writeCalendarTable(w, windows) }},
 		{&content.Queue, func(w io.Writer) error { return writeRenderedActions(w, actions) }},
-		{&content.Projects, func(w io.Writer) error { return writeRenderedProjects(w, projects) }},
+		{&content.Projects, func(w io.Writer) error { return writeRenderedProjects(w, projects, jiraByProject) }},
 	}
 	for _, b := range blocks {
 		text, err := block(b.write)
@@ -167,7 +172,7 @@ func writeRenderedActions(out io.Writer, actions []*store.Action) error {
 	return w.Flush()
 }
 
-func writeRenderedProjects(out io.Writer, projects []*store.Project) error {
+func writeRenderedProjects(out io.Writer, projects []*store.Project, jira map[string][]*store.JiraIssue) error {
 	if len(projects) == 0 {
 		fmt.Fprintln(out, "no active projects")
 		return nil
@@ -178,20 +183,26 @@ func writeRenderedProjects(out io.Writer, projects []*store.Project) error {
 	for _, p := range projects {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			p.ID, nullIntText(p.Priority), nullText(p.Effort),
-			jiraSummary(p), p.Title)
+			jiraSummary(jira[p.ID]), p.Title)
 	}
 	return w.Flush()
 }
 
-// jiraSummary is the key and its status together, since neither says much
-// alone: a key with no status means nothing has looked, and a status with no
-// key cannot happen.
-func jiraSummary(p *store.Project) string {
-	if !p.JiraKey.Valid || p.JiraKey.String == "" {
+// jiraSummary is the keys and their statuses, since neither says much alone:
+// a key with no status means nothing has looked at it yet.
+//
+// A project may track several issues — scaling up and scaling down being two
+// tickets for one piece of work — so this joins them rather than picking one.
+func jiraSummary(issues []*store.JiraIssue) string {
+	if len(issues) == 0 {
 		return "-"
 	}
-	if !p.JiraStatus.Valid || p.JiraStatus.String == "" {
-		return p.JiraKey.String
+	parts := make([]string, len(issues))
+	for i, issue := range issues {
+		parts[i] = issue.ID
+		if issue.Status.Valid && issue.Status.String != "" {
+			parts[i] += " (" + issue.Status.String + ")"
+		}
 	}
-	return p.JiraKey.String + " (" + p.JiraStatus.String + ")"
+	return strings.Join(parts, ", ")
 }

@@ -22,6 +22,21 @@ func runCLIWithInput(t *testing.T, input string, args ...string) (string, error)
 	return out.String(), err
 }
 
+// issueJSON reads one Jira issue back as an object.
+func issueJSON(t *testing.T, db, key string) map[string]any {
+	t.Helper()
+
+	out, err := runCLI(t, "jira", "show", "--db", db, key, "-o", "json")
+	if err != nil {
+		t.Fatalf("jira show returned error: %v", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal([]byte(out), &object); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	return object
+}
+
 // projectJSON reads one project back as an object.
 func projectJSON(t *testing.T, db, id string) map[string]any {
 	t.Helper()
@@ -52,22 +67,23 @@ func TestProjectJira(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project jira returned error: %v", err)
 	}
-	for _, want := range []string{"jira_status", "In Progress", "jira_assignee", "jira_synced_at"} {
+	// Reported against the issue now, not the project: an issue is the record
+	// and a project merely references it.
+	for _, want := range []string{"CDSS-1744", "status", "In Progress", "assignee", "synced_at"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output does not mention %q:\n%s", want, out)
 		}
 	}
-
-	object := projectJSON(t, db, id)
-	if object["jira_status"] != "In Progress" || object["jira_assignee"] != "scott" {
-		t.Errorf("project = %#v, want the observation applied", object)
+	if strings.Contains(out, "TD1") {
+		t.Errorf("output names a project; the observation is about the issue:\n%s", out)
 	}
+	_ = id
 }
 
 func TestProjectJiraFeed(t *testing.T) {
 	db := initDB(t)
-	first := jiraProject(t, db, "Split the nodepool", "CDSS-1744")
-	second := jiraProject(t, db, "Retire the old one", "CDSS-1750")
+	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
+	jiraProject(t, db, "Retire the old one", "CDSS-1750")
 
 	feed := `[
 	  {"key": "CDSS-1744", "status": "In Progress", "sprint": "Sprint 42"},
@@ -78,15 +94,15 @@ func TestProjectJiraFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project jira --feed returned error: %v", err)
 	}
-	if !strings.Contains(out, "CDSS-9999 matches no project") {
-		t.Errorf("an unmatched key was not reported:\n%s", out)
+	if !strings.Contains(out, "CDSS-9999 is tracked by no project") {
+		t.Errorf("an issue nothing tracks was not reported:\n%s", out)
 	}
 
-	if got := projectJSON(t, db, first)["jira_sprint"]; got != "Sprint 42" {
-		t.Errorf("jira_sprint = %#v, want Sprint 42", got)
+	if got := issueJSON(t, db, "CDSS-1744")["sprint"]; got != "Sprint 42" {
+		t.Errorf("sprint = %#v, want Sprint 42", got)
 	}
-	if got := projectJSON(t, db, second)["jira_status"]; got != "Done" {
-		t.Errorf("jira_status = %#v, want Done", got)
+	if got := issueJSON(t, db, "CDSS-1750")["status"]; got != "Done" {
+		t.Errorf("status = %#v, want Done", got)
 	}
 }
 
@@ -94,15 +110,15 @@ func TestProjectJiraFeed(t *testing.T) {
 // wrapping it in brackets is friction.
 func TestJiraFeedAcceptsOneObject(t *testing.T) {
 	db := initDB(t)
-	id := jiraProject(t, db, "Split the nodepool", "CDSS-1744")
+	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
 
 	_, err := runCLIWithInput(t, `{"key": "CDSS-1744", "status": "Done"}`,
 		"project", "jira", "--db", db, "--feed", "-")
 	if err != nil {
 		t.Fatalf("project jira --feed returned error: %v", err)
 	}
-	if got := projectJSON(t, db, id)["jira_status"]; got != "Done" {
-		t.Errorf("jira_status = %#v, want Done", got)
+	if got := issueJSON(t, db, "CDSS-1744")["status"]; got != "Done" {
+		t.Errorf("status = %#v, want Done", got)
 	}
 }
 
@@ -110,7 +126,7 @@ func TestJiraFeedAcceptsOneObject(t *testing.T) {
 // omitted and empty stay distinguishable.
 func TestJiraOmittedFieldIsNotACleared(t *testing.T) {
 	db := initDB(t)
-	id := jiraProject(t, db, "Split the nodepool", "CDSS-1744")
+	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
 
 	if _, err := runCLI(t, "project", "jira", "--db", db, "CDSS-1744",
 		"--assignee", "scott", "--sprint", "Sprint 42"); err != nil {
@@ -121,9 +137,9 @@ func TestJiraOmittedFieldIsNotACleared(t *testing.T) {
 		t.Fatalf("project jira --feed returned error: %v", err)
 	}
 
-	object := projectJSON(t, db, id)
-	if object["jira_assignee"] != "scott" || object["jira_sprint"] != "Sprint 42" {
-		t.Errorf("project = %#v, want the omitted fields left alone", object)
+	object := issueJSON(t, db, "CDSS-1744")
+	if object["assignee"] != "scott" || object["sprint"] != "Sprint 42" {
+		t.Errorf("issue = %#v, want the omitted fields left alone", object)
 	}
 
 	// An explicit empty one is a fact, and does clear.
@@ -131,8 +147,8 @@ func TestJiraOmittedFieldIsNotACleared(t *testing.T) {
 		"project", "jira", "--db", db, "--feed", "-"); err != nil {
 		t.Fatalf("project jira --feed returned error: %v", err)
 	}
-	if got := projectJSON(t, db, id)["jira_assignee"]; got != nil && got != "" {
-		t.Errorf("jira_assignee = %#v, want it cleared", got)
+	if got := issueJSON(t, db, "CDSS-1744")["assignee"]; got != nil && got != "" {
+		t.Errorf("assignee = %#v, want it cleared", got)
 	}
 }
 

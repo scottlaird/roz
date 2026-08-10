@@ -25,8 +25,8 @@ func TestApplyJSON(t *testing.T) {
 		},
 		{
 			name: "nullable string column",
-			json: `{"jira_key":"CDSS-1744"}`,
-			want: func(p *Project) bool { return p.JiraKey.Valid && p.JiraKey.String == "CDSS-1744" },
+			json: `{"effort":"weeks"}`,
+			want: func(p *Project) bool { return p.Effort.Valid && p.Effort.String == "weeks" },
 		},
 		{
 			name: "null clears a nullable column",
@@ -43,7 +43,7 @@ func TestApplyJSON(t *testing.T) {
 		},
 		{
 			name:    "observed column is refused",
-			json:    `{"jira_status":"Done"}`,
+			json:    `{"last_verified_at":"2026-08-10T00:00:00.000Z"}`,
 			wantErr: "observed",
 		},
 		{
@@ -114,7 +114,7 @@ func TestApplyJSONListsSettableColumns(t *testing.T) {
 			t.Errorf("error %v does not mention the settable column %q", err, column)
 		}
 	}
-	if strings.Contains(err.Error(), "jira_status") {
-		t.Errorf("error %v offers jira_status, which is observed", err)
+	if strings.Contains(err.Error(), "last_verified_at") {
+		t.Errorf("error %v offers last_verified_at, which is observed", err)
 	}
 }

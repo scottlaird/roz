@@ -38,7 +38,6 @@ func TestSetEveryFieldFlag(t *testing.T) {
 		{flag: flagPriority, args: []string{"--priority", "3"}, column: "priority", want: float64(3)},
 		{flag: flagEffort, args: []string{"--effort", "hours"}, column: "effort", want: "hours"},
 		{flag: flagSnoozeReason, args: []string{"--snooze-reason", "later"}, column: "snooze_reason", want: "later"},
-		{flag: flagJiraKey, args: []string{"--jira-key", "CDSS-1"}, column: "jira_key", want: "CDSS-1"},
 	}
 
 	for _, tt := range tests {
@@ -73,7 +72,6 @@ func TestSetEveryFieldFlagIsApplied(t *testing.T) {
 		flagEffort:       "days",
 		flagSnoozeReason: "r",
 		flagDesignRef:    "docs/a.md",
-		flagJiraKey:      "K-1",
 	}
 
 	for _, flag := range projectFieldFlags {
@@ -117,11 +115,11 @@ func TestSetSnoozePairTogether(t *testing.T) {
 
 func TestSetClearsNullableColumns(t *testing.T) {
 	db := initDB(t)
-	id := addProject(t, db, "a title", "--jira-key", "CDSS-1744", "--priority", "2")
+	id := addProject(t, db, "a title", "--effort", "weeks", "--priority", "2")
 
 	// An empty value clears a nullable string.
-	if _, err := runCLI(t, "project", "set", "--db", db, id, "--jira-key", ""); err != nil {
-		t.Fatalf("project set --jira-key '' returned error: %v", err)
+	if _, err := runCLI(t, "project", "set", "--db", db, id, "--effort", ""); err != nil {
+		t.Fatalf("project set --effort '' returned error: %v", err)
 	}
 	// A number needs JSON null, since an empty flag value is not a number.
 	if _, err := runCLI(t, "project", "set", "--db", db, id, "--json", `{"priority":null}`); err != nil {
@@ -219,7 +217,7 @@ func TestSetRejections(t *testing.T) {
 		},
 		{
 			name:    "observed column",
-			args:    []string{"--json", `{"jira_status":"Done"}`},
+			args:    []string{"--json", `{"last_verified_at":"2026-08-10T00:00:00.000Z"}`},
 			wantErr: "observed",
 		},
 		{

@@ -155,7 +155,7 @@ func TestInsertRejectsObservedFromHuman(t *testing.T) {
 	if err := st.AllocateProject(ctx, p); err != nil {
 		t.Fatalf("AllocateProject() returned error: %v", err)
 	}
-	p.JiraStatus = sql.NullString{String: "Done", Valid: true}
+	p.LastVerifiedAt = sql.NullString{String: "2026-08-10T00:00:00.000Z", Valid: true}
 
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {
@@ -181,7 +181,7 @@ func TestSyncCannotCreateAProject(t *testing.T) {
 	if err := st.AllocateProject(ctx, p); err != nil {
 		t.Fatalf("AllocateProject() returned error: %v", err)
 	}
-	p.JiraStatus = sql.NullString{String: "Done", Valid: true}
+	p.LastVerifiedAt = sql.NullString{String: "2026-08-10T00:00:00.000Z", Valid: true}
 
 	tx, err := st.Begin(ctx, ActorSyncJira)
 	if err != nil {

@@ -36,7 +36,10 @@ directory.
 | `todo project wake` | Clear a snooze. |
 | `todo project supersede` | Record that one project is the same work as another. |
 | `todo project close` | Close it, dropping whatever was still open on it. |
-| `todo project jira` | Record by hand what Jira says. Stands in for Jira sync. |
+| `todo project jira` | Record by hand what Jira says about an issue. Stands in for Jira sync. |
+| `todo project link-jira` / `unlink-jira` | Say which issues a project tracks. More than one is allowed. |
+| **jira** | |
+| `todo jira show` / `list` | Issues as last observed, and which projects track them. |
 | **actions** | |
 | `todo action add` | Allocate an action and print its id. |
 | `todo action show` | Print one action, its blockers and its pull request. |
@@ -218,14 +221,15 @@ scottlaird/todo#39 announced_channel: "" → "#infra-reviews"
 ```
 
 Jira is the same arrangement, keyed on the issue rather than the project,
-because an integration would have `CDSS-1744` and not `TD1`:
+because an integration would have `CDSS-1744` and not `TD1` — and because an
+issue is a record in its own right, so one nothing tracks is still stored:
 
 ```console
 $ todo project jira CDSS-1744 --status "In Progress" --sprint "Sprint 42" --assignee scott
-TD1 jira_status: "" → "In Progress"
-TD1 jira_sprint: "" → "Sprint 42"
-TD1 jira_assignee: "" → "scott"
-TD1 jira_synced_at: "" → "2026-08-10T14:47:22.053Z"
+CDSS-1744 status: "" → "In Progress"
+CDSS-1744 sprint: "" → "Sprint 42"
+CDSS-1744 assignee: "" → "scott"
+CDSS-1744 synced_at: "" → "2026-08-10T14:47:22.053Z"
 ```
 
 `--feed` takes a JSON array of the same thing, so faking a whole sync run is
@@ -266,7 +270,7 @@ action is done are different acts, and the log keeps them apart.
 
 ```console
 $ todo watch --once -n 5
-2026-08-10T14:47:22.053Z  info  sync:jira-manual  changed  TD1  jira_synced_at: "" → "2026-08-10T14:47:22.053Z"
+2026-08-10T14:47:22.053Z  info  sync:jira-manual  changed  CDSS-1744  synced_at: "" → "2026-08-10T14:47:22.053Z"
 2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  state: "ready" → "done"
 2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  closed_at: "" → "2026-08-10T14:47:22.567Z"
 2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  closed_reason: "" → "completed"
@@ -290,14 +294,15 @@ and stdout, for an agent to call without shelling out.
 than written out again, so the two cannot drift: the name is the command path
 with an underscore (`action add` → `action_add`), the description is that
 command's own help, and the arguments are its flags and whatever its usage
-line names. Thirty-nine of them:
+line names. Forty-three of them:
 
 | | |
 |---|---|
-| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_jira` |
+| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_jira` `project_link-jira` `project_unlink-jira` |
 | actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
 | GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_show` `pr_list` `pr_announce` `sync` |
 | the log | `note` `exception` `watch` (bounded to one read) |
+| jira | `jira_show` `jira_list` |
 | other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
 
 **Left out**, because they are not an agent's to call: `init`, which decides

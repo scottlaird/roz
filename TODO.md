@@ -5,34 +5,38 @@ are ordered roughly by what blocks what, not by importance.
 
 ## Where things stand
 
-Built: the schema and its migration machinery, the diff-and-emit layer, three
-entities — `project`, `pr` and `github_repo` — and GitHub sync, both one-shot
-and as a polling loop. `todo watch` tails the log. Ten commands are still
-stubs that exit 1, and all ten are `action`, `render` or `verify`.
+Built: the schema and its migration machinery; the diff-and-emit layer; five
+entities — `project`, `pr`, `github_repo`, `calendar_window` and `actionverb`;
+GitHub sync, one-shot and as a polling loop; and the predicate registry the
+verb vocabulary resolves against. `todo watch` tails the log.
+
+Ten commands are still stubs that exit 1. Eight of them are `action`; the
+other two are `render` and `verify`.
 
 The sketch's core claim — that the queue is mechanical — is still not
-testable, because `action` does not exist. Everything below it now does.
+testable, because `action` does not exist. Everything it stands on now does.
 
 ## The critical path
 
 In dependency order. Nothing later can be finished first.
 
-- [ ] **Predicate registry.** `predicate_key` → `func(pr) bool` in code. Every
-      predicate but one reads a `pr` column that sync now populates, so this is
-      unblocked. The sketch is explicit that a key with no registered function
-      must fail loudly at startup rather than silently at 3am.
-- [ ] **Seed `actionverb`.** Cannot be seeded before the registry exists, or
-      the `CHECK` tying `closes = 'predicate'` to a `predicate_key` points at
-      nothing.
-- [ ] **`action`.** Blocked on the above: `action.verb` is a foreign key into
-      `actionverb`, so with foreign keys on, not one action can be inserted
-      until the vocabulary is seeded.
-- [ ] **`action` commands.** `add`, `close` (with the cascade), `snooze`,
-      `wake`, `add-blocker`, `hide-behind`, `link-pr`, `list`.
+- [ ] **`action`, the entity.** Nothing blocks it: the vocabulary is seeded and
+      every predicate it names resolves. Same shape as `project`, plus
+      `hidden_behind` and the closed_at/closed_reason pair.
+- [ ] **`action add`, `show`, `list`, `set`.** Mechanical, once the entity
+      exists.
+- [ ] **`action close`, and the cascade.** The interesting one: closing
+      instantiates the follow-on actions and unblocks dependents, all under one
+      correlation id. Blocked on a decision — see the first open question.
+- [ ] **`add-blocker`, `hide-behind`, `link-pr`.** The edges, which need
+      `action_blocks` and `action_pr`.
+- [ ] **Closing on predicates during sync.** The registry can answer "is this
+      done", but nothing asks it yet. This is what makes the queue mechanical
+      rather than merely modelled.
 - [ ] **The queue queries.** `--unblocked`, `--expired`, `--stale`,
       `--waiting`, `--orphaned`. `--expired` is called the highest-value query
-      in the system; `--stale` is the one that catches an item claiming done
-      whose pull request is still open.
+      in the system; `--stale` catches an item claiming done whose pull request
+      is still open, and needs the predicates.
 - [ ] **`todo render`.** Templates, and the status page the whole thing exists
       to regenerate.
 - [ ] **A web server for the rendered page**, at which point `todo serve`
@@ -48,50 +52,48 @@ them.
 - [ ] `action_blocks` — the blocked-by edge.
 - [ ] `action_pr` — including the `action_one_subject` partial index, which the
       sketch calls the most valuable line in the schema.
-- [ ] `calendar_window` — oncall, PTO, holidays. Hand-entered at the weekly
-      review. `ends_on` is inclusive and `capacity` is an enum, both
-      deliberately.
 - [ ] `priority` and `priority_target` — the dated priorities block. Authored,
       superseded rather than edited.
 - [ ] `review_rule` — routing policy. The sketch says implement it late.
 
 ## Smaller gaps
 
-- [ ] `todo verify` — still stubbed, and blocked on a question below.
+- [ ] `todo verify` — still stubbed, though no longer for want of a design:
+      `todo pr announce` set the pattern. See the open question.
 - [ ] Action sort order — `rank_class`, then `unblocks_count`, then `effort`,
-      with `rank_pin` as the override. Needs the dependency graph.
+      with `rank_pin` as the override. `rank_class` is already on every verb;
+      the rest needs the dependency graph.
 - [ ] The root `README.md` is two lines.
-- [ ] Nothing consumes `todo watch` yet. Sync raises a `pr_unresolvable`
-      exception when a tracked pull request goes invisible, and today only a
-      human watching would see it.
+- [ ] Nothing consumes `todo watch`. Sync raises a `pr_unresolvable` exception
+      when a tracked pull request goes invisible, and today only a human
+      watching would see it.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
-- [ ] Tracking a pull request assigned to us, rather than authored by us, has
-      nowhere to record *why* it is tracked. That is a schema change.
+- [ ] Tracking a pull request assigned to us rather than authored by us has
+      nowhere to record *why* it is tracked. That is a schema change, and it is
+      what `review` needs before it can close on a predicate.
 
 ## Open questions
 
 **What does `review_policy = none` change?** Closing a `write` action is
 supposed to instantiate `send_for_review → wait_review → merge`. For a
 repository needing no review that pipeline is wrong, but the replacement is
-undecided — probably just `merge`, possibly `undraft → merge`. This is now
-directly in the way: the predicate registry is the next thing to build, and
-the cascade is where this gets encoded.
+undecided — probably just `merge`, possibly `undraft → merge`. This is the
+next thing in the way: the cascade is where it gets encoded, and guessing now
+means rewriting later.
 
-**`todo verify` writes an observed column.** It stamps `last_verified_at`, so
-a human running it is exactly what `Tx.Update` refuses. The sketch files
-`verify` under *observe — the only writers of observed fields*. `todo pr
-announce` has since set a precedent for this shape of problem: a named verb
-that picks its own sync actor, rather than an `--actor` override. The same
-approach would work here, with an actor saying a person asserted it.
+**`todo verify` writes an observed column.** It stamps `last_verified_at`, so a
+human running it is exactly what `Tx.Update` refuses. `todo pr announce` has
+since shown the shape that works: a named verb that picks its own sync actor,
+with a distinct actor name so the log does not claim an integration said it.
+The same approach fits here. It is a decision rather than a design problem
+now.
 
-**Sync cadence versus event fidelity.** The sketch's own open question, now
-half-answered. Polling loses transitions between polls, but the log records
-observed transitions rather than poll results — a quiet poll writes nothing,
-and `last_synced_at` moves without being logged. What remains open is whether
-a minute is often enough to catch states that do not persist, `UNSTABLE` and
-`BEHIND` in particular.
+**Sync cadence versus event fidelity.** The sketch's own question, mostly
+answered: the log records transitions rather than poll results, so a quiet
+poll writes nothing. What remains open is whether a minute is often enough to
+catch states that do not persist — `UNSTABLE` and `BEHIND` in particular.
 
 **`--json` can reach columns that have a dedicated verb.** `project set --json
 '{"superseded_by":"SL94"}'` skips the target-existence check that `project
@@ -106,6 +108,10 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   admin, and it is a statement about how someone works.
 - Migrations are the only thing executed; `schema.sql` is documentation with a
   test keeping it honest.
+- **Which migrations have run is recorded in `applied_migration`, not inferred
+  from `user_version`.** A high-water mark silently skips a migration numbered
+  below one already applied, which is what two branches adding migrations
+  produces. Numbers need not be higher than everything already merged.
 - Events come from automatic field-level diffs, never hand-written calls.
 - `set`, not `edit` — `edit` reads as interactive.
 - No `DELETE` guard on `sequence`. If someone really wants to edit the
@@ -115,12 +121,19 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   returns an opaque 502. REST is not an option — `reviewDecision` and
   `mergeStateStatus` exist only in GraphQL.
 - `last_synced_at` is `auto`: written when something else changes, never
-  logged. Logging it would bury real transitions under one event per pull
-  request per poll.
+  logged.
 - Absence is not a fact. Where GitHub reports nothing, sync leaves the stored
   value alone rather than clearing it.
+- **Absence is not completion either.** Every predicate is false where nothing
+  has been observed, so an unsynced pull request closes nothing.
 - Hand-entered observations get their own actor — `sync:slack-manual` — so the
   log never claims an integration reported something typed in.
+- A verb naming a predicate the build lacks is refused when the store opens.
+  Retired verbs are skipped; rows are deactivated, never deleted.
+- `review` is seeded human-closed, against the sketch, until there is somewhere
+  to record that a pull request is tracked because it is assigned to us.
+- Calendar kinds are free text; capacity is not. Nothing branches on kind,
+  while the sort reads capacity.
 
 ## Deliberately out of scope
 

@@ -160,6 +160,13 @@ type ActionFilter struct {
 	Project string
 	// Open keeps everything not closed.
 	Open bool
+	// Unblocked keeps what could be worked on right now: open, ready, and
+	// not folded out of the queue behind something else. It is the queue.
+	//
+	// It reads state rather than counting blockers, because state is
+	// recomputed from the open blockers wherever an edge or a closure moves
+	// it — two ways of answering the same question would be one too many.
+	Unblocked bool
 	// Expired keeps snoozed actions whose date has passed — the query the
 	// sketch calls the highest value in the system, because a snooze nobody
 	// is watching is how work goes quiet.
@@ -230,6 +237,10 @@ func (f ActionFilter) clauses(now string) ([]string, []any) {
 	}
 	if f.Open {
 		where = append(where, "closed_at IS NULL")
+	}
+	if f.Unblocked {
+		where = append(where, "closed_at IS NULL", "state = ?", "hidden_behind IS NULL")
+		args = append(args, ActionReady)
 	}
 	if f.Expired {
 		where = append(where, "state = ? AND snooze_until IS NOT NULL AND snooze_until < ?")

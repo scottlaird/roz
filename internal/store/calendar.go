@@ -167,6 +167,10 @@ type WindowFilter struct {
 	Upcoming bool
 	// Kind keeps one kind.
 	Kind string
+	// Through keeps windows that begin on or before a date, which with
+	// Upcoming gives "what is coming in the next fortnight" — the horizon a
+	// status page cares about.
+	Through string
 }
 
 // ListCalendarWindows returns windows matching the filter, earliest first.
@@ -233,6 +237,10 @@ func (f WindowFilter) clauses(today string) ([]string, []any) {
 	if f.Kind != "" {
 		where = append(where, "kind = ?")
 		args = append(args, f.Kind)
+	}
+	if f.Through != "" {
+		where = append(where, "starts_on <= ?")
+		args = append(args, f.Through)
 	}
 	return where, args
 }

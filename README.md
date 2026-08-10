@@ -39,7 +39,7 @@ directory.
 | **actions** | |
 | `todo action add` | Allocate an action and print its id. |
 | `todo action show` | Print one action, its blockers and its pull request. |
-| `todo action list` | Actions in creation order, with `--open`, `--expired` and filters. |
+| `todo action list` | Actions in creation order, with `--unblocked`, `--open`, `--expired` and filters. |
 | `todo action set` | Change authored columns. Closing is not one of them. |
 | `todo action snooze` | Defer an action to a real date. |
 | `todo action wake` | Clear a snooze. |
@@ -64,7 +64,7 @@ directory.
 | `todo exception` | Record an exception for a monitor to surface. |
 | **other** | |
 | `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
-| `todo render` | Regenerate the status page. *Not implemented yet.* |
+| `todo render` | Regenerate the status page: three `<pre>` blocks, no design worth the name. |
 | `todo verify` | Stamp `last_verified_at`. *Not implemented yet.* |
 
 ## A walkthrough

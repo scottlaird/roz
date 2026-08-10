@@ -301,3 +301,55 @@ func TestLoadSubjectResolvesActions(t *testing.T) {
 			subject.subjectType(), subject.subjectID(), a.ID)
 	}
 }
+
+// TestUnblockedIsTheQueue: what could be worked on right now is open, ready,
+// and not folded out of sight behind something else.
+func TestUnblockedIsTheQueue(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	ready := addAction(t, st, "do this one", "write")
+	blocked := addAction(t, st, "waits on the first", "run")
+	hidden := addAction(t, st, "nothing to do about it yet", "write")
+	snoozed := addAction(t, st, "not until Thursday", "decide")
+	closed := addAction(t, st, "already finished", "decide")
+
+	blockOn(t, st, blocked, ready)
+	attach(t, st, hidden, func(a *Action) {
+		a.HiddenBehind = sql.NullString{String: ready.ID, Valid: true}
+	})
+	attach(t, st, snoozed, func(a *Action) {
+		a.State = ActionSnoozed
+		a.SnoozeUntil = sql.NullString{String: "2027-01-01", Valid: true}
+	})
+	closeIt(t, st, CloseRequest{ID: closed.ID})
+
+	got, err := st.ListActions(ctx, ActionFilter{Unblocked: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(got), []string{ready.ID}) {
+		t.Errorf("ListActions(unblocked) = %v, want [%s]", ids(got), ready.ID)
+	}
+}
+
+// TestUnblockedFollowsTheCascade: closing the blocker puts the dependent in
+// the queue, with nothing else asked to keep the two in step.
+func TestUnblockedFollowsTheCascade(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	blocker := addAction(t, st, "do this one", "write")
+	dependent := addAction(t, st, "waits on the first", "run")
+	blockOn(t, st, dependent, blocker)
+
+	closeIt(t, st, CloseRequest{ID: blocker.ID})
+
+	got, err := st.ListActions(ctx, ActionFilter{Unblocked: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(got), []string{dependent.ID}) {
+		t.Errorf("ListActions(unblocked) = %v, want [%s]", ids(got), dependent.ID)
+	}
+}

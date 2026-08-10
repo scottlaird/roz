@@ -11,7 +11,7 @@ entities — `project`, `action`, `pr`, `github_repo`, `calendar_window` and
 registry the verb vocabulary resolves against; and the pipelines a repository
 chooses between. `todo watch` tails the log.
 
-Two commands are still stubs that exit 1: `render` and `verify`.
+One command is still a stub that exits 1: `verify`.
 
 The queue is mechanical, which was the claim the whole design rested on.
 Closing a `write` action instantiates the repository's pipeline as a chain of
@@ -22,12 +22,12 @@ and each closure frees the next. Nobody types "the pull request merged".
 
 In dependency order. Nothing later can be finished first.
 
-- [ ] **The queue queries.** `--unblocked`, `--expired`, `--stale`,
-      `--waiting`, `--orphaned`. `--expired` is called the highest-value query
-      in the system; `--stale` catches an item claiming done whose pull request
-      is still open, and needs the predicates.
-- [ ] **`todo render`.** Templates, and the status page the whole thing exists
-      to regenerate.
+- [ ] **The rest of the queue queries.** `--unblocked` and `--expired` exist.
+      Left: `--stale`, which catches an item claiming done whose pull request
+      is still open, and `--waiting`.
+- [ ] **A real `todo render`.** What exists is three `<pre>` blocks and no
+      design worth the name. Templates, the ranking, and the status page the
+      whole thing exists to regenerate are still ahead.
 - [ ] **A web server for the rendered page**, at which point `todo serve`
       running sync, watch and the server together is the natural shape.
       `internal/service` exists for this: `service.Run(ctx, syncer, server,
@@ -39,8 +39,6 @@ Nothing blocking. Track the repo, track a pull request, `action add --verb
 write`, `action close --pr`, and let `todo syncer` close the steps as GitHub
 finishes them. What would make it pleasant rather than merely possible:
 
-- [ ] **`action list --unblocked`.** Otherwise the queue is read by eye,
-      filtering out the blocked steps mentally.
 - [ ] A `todo pr announce` habit, since `send_for_review` closes on the
       announcement and GitHub cannot supply it.
 - [ ] Settling after `pr announce` as well as after sync, so the step closes
@@ -62,9 +60,10 @@ them.
 
 - [ ] `todo verify` — still stubbed, though no longer for want of a design:
       `todo pr announce` set the pattern. See the open question.
-- [ ] Action sort order — `rank_class`, then `unblocks_count`, then `effort`,
-      with `rank_pin` as the override. `rank_class` is already on every verb;
-      the rest needs the dependency graph.
+- [ ] Ranking — `rank_class`, then `unblocks_count`, then `effort`, with
+      `rank_pin` as the override. `rank_class` is already on every verb; the
+      rest needs the dependency graph. `render` and `action list` both print
+      in creation order until it exists.
 - [ ] `action show -o json` omits the edges, which the table shows. They are
       not columns of `action`, and a record marshals from its own columns.
 - [ ] `todo db backup` and `todo db restore` — thin wrappers over SQLite, so

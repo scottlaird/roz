@@ -533,6 +533,7 @@ func newActionListCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.Bool("open", false, "not closed")
+	f.Bool("unblocked", false, "ready, not hidden, nothing in the way — the queue")
 	f.Bool("expired", false, "snoozed with a date that has passed")
 	f.String(flagStatus, "", "filter to one state")
 	f.String(flagVerb, "", "filter to one verb")
@@ -581,6 +582,10 @@ func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
 	if err != nil {
 		return store.ActionFilter{}, err
 	}
+	unblocked, err := f.GetBool("unblocked")
+	if err != nil {
+		return store.ActionFilter{}, err
+	}
 	expired, err := f.GetBool("expired")
 	if err != nil {
 		return store.ActionFilter{}, err
@@ -598,7 +603,8 @@ func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
 		return store.ActionFilter{}, err
 	}
 	return store.ActionFilter{
-		State: state, Verb: verb, Project: project, Open: open, Expired: expired,
+		State: state, Verb: verb, Project: project,
+		Open: open, Unblocked: unblocked, Expired: expired,
 	}, nil
 }
 

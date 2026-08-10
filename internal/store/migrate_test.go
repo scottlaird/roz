@@ -184,12 +184,19 @@ func TestMigrateRefusesANewerDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestSchemaVersion() returned error: %v", err)
 	}
-	if _, err := db.Exec("PRAGMA user_version = " + strconv.Itoa(latest+1)); err != nil {
-		t.Fatalf("setting user_version: %v", err)
+	// A migration from a newer build, recorded as having run here.
+	_, err = db.Exec("INSERT INTO applied_migration (version, name, applied_at) VALUES (?, ?, ?)",
+		latest+1, "9999_from_the_future.sql", "2027-01-01T00:00:00.000Z")
+	if err != nil {
+		t.Fatalf("recording the future migration: %v", err)
 	}
 
-	if _, _, err := migrate(ctx, db); err == nil {
-		t.Error("migrate() on a newer database returned nil, want an error")
+	_, _, err = migrate(ctx, db)
+	if err == nil {
+		t.Fatal("migrate() on a newer database returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "does not have") {
+		t.Errorf("error = %v, want it to say the build is behind", err)
 	}
 }
 
@@ -282,6 +289,9 @@ func TestRebuildMigrationPreservesData(t *testing.T) {
 	if len(migrations) < 2 {
 		t.Skip("no rebuild migration yet")
 	}
+	if err := ensureBookkeeping(ctx, db); err != nil {
+		t.Fatalf("ensureBookkeeping() returned error: %v", err)
+	}
 	if err := applyMigration(ctx, db, migrations[0]); err != nil {
 		t.Fatalf("applying %s: %v", migrations[0].Name, err)
 	}
@@ -358,6 +368,9 @@ func TestRebuildMigrationRejectsUnsplittableRepo(t *testing.T) {
 	if len(migrations) < 2 {
 		t.Skip("no rebuild migration yet")
 	}
+	if err := ensureBookkeeping(ctx, db); err != nil {
+		t.Fatalf("ensureBookkeeping() returned error: %v", err)
+	}
 	if err := applyMigration(ctx, db, migrations[0]); err != nil {
 		t.Fatalf("applying %s: %v", migrations[0].Name, err)
 	}
@@ -375,6 +388,120 @@ func TestRebuildMigrationRejectsUnsplittableRepo(t *testing.T) {
 	// And it left the database where it was rather than half rebuilt.
 	if got, _ := userVersion(db); got != migrations[0].Version {
 		t.Errorf("user_version = %d after a failed migration, want %d", got, migrations[0].Version)
+	}
+}
+
+// TestOutOfOrderMigrationIsStillApplied is the reason the record exists.
+//
+// Two branches each adding a migration can land in the other order, leaving a
+// migration numbered below one already applied. Under a single cursor it
+// would be passed over and never noticed; the record makes it pending.
+func TestOutOfOrderMigrationIsStillApplied(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "todo.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer db.Close()
+
+	_, to, err := migrate(ctx, db)
+	if err != nil {
+		t.Fatalf("migrate() returned error: %v", err)
+	}
+
+	// A migration numbered below the newest, as though it had been written on
+	// a branch that landed second.
+	late := schema.Migration{
+		Version: to + 1,
+		Name:    "late.sql",
+		SQL:     "ALTER TABLE project ADD COLUMN late_arrival TEXT;",
+	}
+	if err := applyMigration(ctx, db, late); err != nil {
+		t.Fatalf("applying the later migration: %v", err)
+	}
+
+	overtaken := schema.Migration{
+		Version: to, // already passed by user_version, but never applied
+		Name:    "overtaken.sql",
+		SQL:     "ALTER TABLE project ADD COLUMN overtaken TEXT;",
+	}
+	if err := db.QueryRow("SELECT 1 FROM applied_migration WHERE version = ?", overtaken.Version).
+		Scan(new(int)); err != nil {
+		t.Fatalf("the base migration is not recorded: %v", err)
+	}
+
+	// The record says it ran, so it is not pending. Remove the row to stand
+	// in for a migration that never ran despite a higher number existing.
+	if _, err := db.Exec("DELETE FROM applied_migration WHERE version = ?", overtaken.Version); err != nil {
+		t.Fatalf("clearing the record: %v", err)
+	}
+
+	pending, err := PendingMigrations(ctx, db)
+	if err != nil {
+		t.Fatalf("PendingMigrations() returned error: %v", err)
+	}
+	var found bool
+	for _, m := range pending {
+		if m.Version == overtaken.Version {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a migration below the highest applied is not pending; it would be skipped")
+	}
+}
+
+// TestBackfillFromUserVersion covers a database written before the record
+// existed: what it already ran is inferred from the cursor it did keep.
+func TestBackfillFromUserVersion(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "todo.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer db.Close()
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations() returned error: %v", err)
+	}
+
+	// Apply the first two the way the old runner did: the SQL and the cursor,
+	// and no record.
+	for _, m := range migrations[:2] {
+		if _, err := db.Exec(m.SQL); err != nil {
+			t.Fatalf("applying %s: %v", m.Name, err)
+		}
+	}
+	if _, err := db.Exec("PRAGMA user_version = " + strconv.Itoa(migrations[1].Version)); err != nil {
+		t.Fatalf("setting user_version: %v", err)
+	}
+
+	if _, _, err := migrate(ctx, db); err != nil {
+		t.Fatalf("migrate() on a pre-record database returned error: %v", err)
+	}
+
+	applied, err := appliedVersions(ctx, db)
+	if err != nil {
+		t.Fatalf("appliedVersions() returned error: %v", err)
+	}
+	for _, m := range migrations {
+		if !applied[m.Version] {
+			t.Errorf("%s is not recorded as applied", m.Name)
+		}
+	}
+
+	// The backfilled rows say where they came from, so the record does not
+	// pretend to know when they ran.
+	var note string
+	if err := db.QueryRow("SELECT applied_at FROM applied_migration WHERE version = ?",
+		migrations[0].Version).Scan(&note); err != nil {
+		t.Fatalf("reading the backfilled row: %v", err)
+	}
+	if !strings.Contains(note, "backfilled") {
+		t.Errorf("backfilled row says %q, want it marked as such", note)
 	}
 }
 

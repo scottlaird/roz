@@ -84,7 +84,7 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestSchemaVersion() returned error: %v", err)
 	}
-	setUserVersion(t, path, latest+1)
+	recordFutureMigration(t, path, latest+1)
 
 	if _, _, err := Init(path, testPrefixes()); err == nil {
 		t.Error("Init() on a newer schema version returned nil, want an error")
@@ -223,6 +223,23 @@ func nextN(t *testing.T, path string, entity Entity) int {
 		t.Fatalf("reading next_n: %v", err)
 	}
 	return n
+}
+
+// recordFutureMigration marks a migration this build does not have as
+// applied, which is how a database written by a newer version looks.
+func recordFutureMigration(t *testing.T, path string, version int) {
+	t.Helper()
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec("INSERT INTO applied_migration (version, name, applied_at) VALUES (?, ?, ?)",
+		version, "9999_from_the_future.sql", "2027-01-01T00:00:00.000Z")
+	if err != nil {
+		t.Fatalf("recording the future migration: %v", err)
+	}
 }
 
 func setUserVersion(t *testing.T, path string, version int) {

@@ -492,7 +492,34 @@ func runActionShow(cmd *cobra.Command, args []string) error {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
 		return err
 	}
-	return writeRecordDetail(cmd.OutOrStdout(), a)
+	extra, err := actionEdgeRows(ctx, tx, a)
+	if err != nil {
+		return err
+	}
+	return writeRecordDetailWith(cmd.OutOrStdout(), a, extra)
+}
+
+// actionEdgeRows are what an action is waiting for and what it is about.
+// Without them a blocked action shows a state and no reason for it.
+func actionEdgeRows(ctx context.Context, tx *store.Tx, a *store.Action) ([][2]string, error) {
+	var rows [][2]string
+
+	blockers, err := tx.OpenBlockers(ctx, a.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(blockers) > 0 {
+		rows = append(rows, [2]string{"blocked_by", strings.Join(blockers, ", ")})
+	}
+
+	pr, ok, err := tx.SubjectPR(ctx, a.ID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		rows = append(rows, [2]string{"subject_pr", pr})
+	}
+	return rows, nil
 }
 
 func newActionListCmd() *cobra.Command {
@@ -591,24 +618,69 @@ func writeActionTable(out io.Writer, actions []*store.Action) error {
 	return w.Flush()
 }
 
-// The edges and closing are still stubs. They arrive together with the
-// cascade, because closing an action is what instantiates the next ones and
-// unblocks the dependents, and the edges are what it walks.
+// The edges. Closing is still a stub: it walks these, and arrives with the
+// cascade.
+
+const (
+	flagFrom   = "from"
+	flagTo     = "to"
+	flagAction = "action"
+	flagBehind = "behind"
+	flagPR     = "pr"
+	flagRole   = "role"
+)
 
 func newActionAddBlockerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-blocker",
 		Short: "Record that one action must precede another",
-		Args:  cobra.NoArgs,
-		Run:   stub,
+		Long: "The blocked action moves to blocked, and returns to ready when its\n" +
+			"last open blocker closes. It still appears in the queue meanwhile,\n" +
+			"with what it is waiting for named — that is the difference from\n" +
+			"hide-behind.",
+		Args: cobra.NoArgs,
+		RunE: runActionAddBlocker,
 	}
 	f := cmd.Flags()
-	f.String("from", "", "blocked action (required)")
-	f.String("to", "", "action that blocks it (required)")
-	_ = cmd.MarkFlagRequired("from")
-	_ = cmd.MarkFlagRequired("to")
+	f.String(flagFrom, "", "blocked action (required)")
+	f.String(flagTo, "", "action that blocks it (required)")
+	_ = cmd.MarkFlagRequired(flagFrom)
+	_ = cmd.MarkFlagRequired(flagTo)
 	addActorFlag(cmd)
 	return cmd
+}
+
+func runActionAddBlocker(cmd *cobra.Command, _ []string) error {
+	f := cmd.Flags()
+
+	blockedID, err := f.GetString(flagFrom)
+	if err != nil {
+		return err
+	}
+	blockerID, err := f.GetString(flagTo)
+	if err != nil {
+		return err
+	}
+
+	return withActionTx(cmd, func(ctx context.Context, tx *store.Tx) error {
+		blocked, err := loadAction(ctx, tx, blockedID)
+		if err != nil {
+			return err
+		}
+		blocker, err := loadAction(ctx, tx, blockerID)
+		if err != nil {
+			return err
+		}
+		if !blocker.IsOpen() {
+			return fmt.Errorf("%s is already %s and blocks nothing", blocker.ID, blocker.State)
+		}
+		if err := tx.AddBlocker(ctx, blocker, blocked); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s is %s, waiting on %s\n",
+			blocked.ID, blocked.State, blocker.ID)
+		return nil
+	})
 }
 
 func newActionHideBehindCmd() *cobra.Command {
@@ -617,17 +689,48 @@ func newActionHideBehindCmd() *cobra.Command {
 		Short: "Fold an action out of the queue until another clears",
 		Long: "Not the same edge as add-blocker. Blocked-by is a fact about ordering;\n" +
 			"hidden-behind is the judgement that there is nothing to do about this\n" +
-			"one other than clearing the other.",
+			"one other than clearing the other.\n\n" +
+			"--behind \"\" brings it back.",
 		Args: cobra.NoArgs,
-		Run:  stub,
+		RunE: runActionHideBehind,
 	}
 	f := cmd.Flags()
-	f.String("action", "", "action to hide (required)")
-	f.String("behind", "", "action it hides behind (required)")
-	_ = cmd.MarkFlagRequired("action")
-	_ = cmd.MarkFlagRequired("behind")
+	f.String(flagAction, "", "action to hide (required)")
+	f.String(flagBehind, "", "action it hides behind; empty brings it back (required)")
+	_ = cmd.MarkFlagRequired(flagAction)
+	_ = cmd.MarkFlagRequired(flagBehind)
 	addActorFlag(cmd)
 	return cmd
+}
+
+func runActionHideBehind(cmd *cobra.Command, _ []string) error {
+	f := cmd.Flags()
+
+	id, err := f.GetString(flagAction)
+	if err != nil {
+		return err
+	}
+	behind, err := f.GetString(flagBehind)
+	if err != nil {
+		return err
+	}
+
+	return updateAction(cmd, id, func(ctx context.Context, tx *store.Tx, a *store.Action) error {
+		if behind == "" {
+			a.HiddenBehind = sql.NullString{}
+			return nil
+		}
+		target, err := loadAction(ctx, tx, behind)
+		if err != nil {
+			return err
+		}
+		if !target.IsOpen() {
+			return fmt.Errorf("%s is already %s; hiding behind it would hide %s for good",
+				target.ID, target.State, a.ID)
+		}
+		a.HiddenBehind = sql.NullString{String: target.ID, Valid: true}
+		return nil
+	})
 }
 
 func newActionLinkPRCmd() *cobra.Command {
@@ -635,18 +738,94 @@ func newActionLinkPRCmd() *cobra.Command {
 		Use:   "link-pr",
 		Short: "Attach a pull request to an action",
 		Long: "An action has at most one subject pull request; --role context is for\n" +
-			"mentioning one as background.",
+			"mentioning one as background.\n\n" +
+			"The subject is what closing reads: a predicate verb asks the pull\n" +
+			"request whether its work is done, and a context link is not asked.",
 		Args: cobra.NoArgs,
-		Run:  stub,
+		RunE: runActionLinkPR,
 	}
 	f := cmd.Flags()
-	f.String("action", "", "action, e.g. NA103 (required)")
-	f.String("pr", "", "pull request, e.g. owner/repo#812 (required)")
-	f.String("role", "subject", "subject or context")
-	_ = cmd.MarkFlagRequired("action")
-	_ = cmd.MarkFlagRequired("pr")
+	f.String(flagAction, "", "action, e.g. NA103 (required)")
+	f.String(flagPR, "", "pull request, e.g. owner/repo#812 (required)")
+	f.String(flagRole, store.RoleSubject, "subject or context")
+	_ = cmd.MarkFlagRequired(flagAction)
+	_ = cmd.MarkFlagRequired(flagPR)
 	addActorFlag(cmd)
 	return cmd
+}
+
+func runActionLinkPR(cmd *cobra.Command, _ []string) error {
+	f := cmd.Flags()
+
+	id, err := f.GetString(flagAction)
+	if err != nil {
+		return err
+	}
+	prID, err := f.GetString(flagPR)
+	if err != nil {
+		return err
+	}
+	role, err := f.GetString(flagRole)
+	if err != nil {
+		return err
+	}
+	// Checked here as well as in the store, so that a typo is reported as
+	// itself rather than as whatever the lookups happen to fail on first.
+	if role != store.RoleSubject && role != store.RoleContext {
+		return fmt.Errorf("--%s %q is not a role: use %s or %s",
+			flagRole, role, store.RoleSubject, store.RoleContext)
+	}
+
+	return withActionTx(cmd, func(ctx context.Context, tx *store.Tx) error {
+		a, err := loadAction(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.LoadPR(ctx, prID); err != nil {
+			return notFoundOr(err, prID)
+		}
+		if err := tx.LinkPR(ctx, a, prID, role); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", a.ID, role, prID)
+		return nil
+	})
+}
+
+// withActionTx runs body in one unit of work and commits it, which is the
+// shape every command that writes something other than a single record needs.
+func withActionTx(cmd *cobra.Command, body func(context.Context, *store.Tx) error) error {
+	ctx := cmd.Context()
+
+	actor, err := actorFrom(cmd)
+	if err != nil {
+		return err
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	tx, err := st.Begin(ctx, actor)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := body(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// loadAction reads one action, reporting a missing one by name.
+func loadAction(ctx context.Context, tx *store.Tx, id string) (*store.Action, error) {
+	a, err := tx.LoadAction(ctx, id)
+	if err != nil {
+		return nil, notFoundOr(err, id)
+	}
+	return a, nil
 }
 
 func newActionCloseCmd() *cobra.Command {

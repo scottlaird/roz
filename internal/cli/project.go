@@ -291,6 +291,13 @@ func runProjectShow(cmd *cobra.Command, args []string) error {
 // writeRecordDetail prints every column, one per line. The columns come from
 // the record's own metadata, so a new one appears here without being added.
 func writeRecordDetail(out io.Writer, r any) error {
+	return writeRecordDetailWith(out, r, nil)
+}
+
+// writeRecordDetailWith prints a record, followed by rows that are not
+// columns of it — an action's blockers, say, which live in another table.
+// They share the record's tabwriter so the two halves line up.
+func writeRecordDetailWith(out io.Writer, r any, extra [][2]string) error {
 	encoded, err := store.MarshalRecord(r)
 	if err != nil {
 		return err
@@ -309,6 +316,9 @@ func writeRecordDetail(out io.Writer, r any) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, column := range columns {
 		fmt.Fprintf(w, "%s\t%s\n", column, detailValue(object[column]))
+	}
+	for _, row := range extra {
+		fmt.Fprintf(w, "%s\t%s\n", row[0], row[1])
 	}
 	return w.Flush()
 }

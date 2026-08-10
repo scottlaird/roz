@@ -628,6 +628,7 @@ const (
 	flagBehind = "behind"
 	flagPR     = "pr"
 	flagRole   = "role"
+	flagReason = "reason"
 )
 
 func newActionAddBlockerCmd() *cobra.Command {
@@ -832,12 +833,75 @@ func newActionCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "close <action>",
 		Short: "Close an action; cascades to its dependents",
-		Args:  cobra.ExactArgs(1),
-		Run:   stub,
+		Long: "Closing is where the queue moves on its own. It instantiates the\n" +
+			"repository's pipeline when the verb starts one, frees whatever this\n" +
+			"action was blocking, and brings back anything hidden behind it — all\n" +
+			"under one correlation id, so the log reads as a single act.\n\n" +
+			"Steps the pull request already satisfies are skipped rather than\n" +
+			"created complete.",
+		Args: cobra.ExactArgs(1),
+		RunE: runActionClose,
 	}
 	f := cmd.Flags()
-	f.String("reason", "completed", strings.Join(store.ClosedReasons, ", "))
-	f.String("pr", "", "link a pull request as part of closing")
+	f.String(flagReason, store.ClosedCompleted, strings.Join(store.ClosedReasons, ", "))
+	f.String(flagPR, "", "link a pull request as the subject while closing")
 	addActorFlag(cmd)
 	return cmd
+}
+
+func runActionClose(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	f := cmd.Flags()
+
+	actor, err := actorFrom(cmd)
+	if err != nil {
+		return err
+	}
+	reason, err := f.GetString(flagReason)
+	if err != nil {
+		return err
+	}
+	pr, err := f.GetString(flagPR)
+	if err != nil {
+		return err
+	}
+
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	result, err := st.CloseAction(ctx, actor, store.CloseRequest{
+		ID: args[0], Reason: reason, PR: pr,
+	})
+	if err != nil {
+		return notFoundOr(err, args[0])
+	}
+	return writeCloseResult(cmd.OutOrStdout(), result)
+}
+
+// writeCloseResult reports the cascade. Everything it lists happened in the
+// same unit of work, and saying so is most of the value: a close that quietly
+// created four actions somewhere else would be indistinguishable from a bug.
+func writeCloseResult(out io.Writer, r *store.CloseResult) error {
+	fmt.Fprintf(out, "%s %s (%s)\n", r.Closed.ID, r.Closed.State, nullText(r.Closed.ClosedReason))
+
+	for _, verb := range r.Skipped {
+		fmt.Fprintf(out, "  skipped %s: already true\n", verb)
+	}
+	for i, a := range r.Created {
+		blocked := ""
+		if i > 0 {
+			blocked = fmt.Sprintf(" (blocked by %s)", r.Created[i-1].ID)
+		}
+		fmt.Fprintf(out, "  created %s %s%s\n", a.ID, a.Title, blocked)
+	}
+	for _, a := range r.Unblocked {
+		fmt.Fprintf(out, "  %s is now %s\n", a.ID, a.State)
+	}
+	for _, a := range r.Unhidden {
+		fmt.Fprintf(out, "  %s is no longer hidden\n", a.ID)
+	}
+	return nil
 }

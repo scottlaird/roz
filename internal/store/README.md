@@ -18,6 +18,8 @@ subject.go   resolving an identifier to whatever it names
 predicate.go how a verb decides its work is done
 verb.go      the vocabulary, and the check that every predicate resolves
 pipeline.go  what closing a verb instantiates
+edge.go      blocking, hiding and pull request links
+close.go     closing an action, and the cascade that follows
 project.go  action.go  pr.go  repo.go  calendar.go   the entities
 ```
 

@@ -222,7 +222,7 @@ func verbRows(t *testing.T, db *sql.DB) map[string]string {
 	t.Helper()
 
 	rows, err := db.Query(`SELECT verb, label, closes, coalesce(predicate_key, ''),
-	                              rank_class, requires_pr, active, description
+	                              rank_class, requires_pr, starts_pipeline, active, description
 	                       FROM actionverb`)
 	if err != nil {
 		t.Fatalf("reading the vocabulary: %v", err)
@@ -232,12 +232,13 @@ func verbRows(t *testing.T, db *sql.DB) map[string]string {
 	verbs := map[string]string{}
 	for rows.Next() {
 		var verb, label, closes, key, rank, description string
-		var requiresPR, active int
-		if err := rows.Scan(&verb, &label, &closes, &key, &rank, &requiresPR, &active, &description); err != nil {
+		var requiresPR, startsPipeline, active int
+		if err := rows.Scan(&verb, &label, &closes, &key, &rank,
+			&requiresPR, &startsPipeline, &active, &description); err != nil {
 			t.Fatalf("scanning a verb: %v", err)
 		}
-		verbs[verb] = fmt.Sprintf("%s|%s|%s|%s|%d|%d|%s",
-			label, closes, key, rank, requiresPR, active, description)
+		verbs[verb] = fmt.Sprintf("%s|%s|%s|%s|%d|%d|%d|%s",
+			label, closes, key, rank, requiresPR, startsPipeline, active, description)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("reading the vocabulary: %v", err)

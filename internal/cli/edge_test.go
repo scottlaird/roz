@@ -3,32 +3,16 @@ package cli
 import (
 	"strings"
 	"testing"
-
-	"github.com/scottlaird/todo/internal/store"
 )
 
-// closeAction closes an action by writing the row.
-//
-// `todo action close` does not exist yet — it arrives with the cascade — and
-// the guards below are about actions that are already closed, so there has to
-// be some way to get one. This becomes a call to the command when there is
-// one.
-func closeAction(t *testing.T, db, id string) {
+// closeAction closes an action.
+func closeAction(t *testing.T, db, id string) string {
 	t.Helper()
-
-	conn, err := store.Open(db)
+	out, err := runCLI(t, "action", "close", "--db", db, id)
 	if err != nil {
-		t.Fatalf("opening %s: %v", db, err)
+		t.Fatalf("action close returned error: %v", err)
 	}
-	defer conn.Close()
-
-	_, err = conn.Exec(`UPDATE action
-	                    SET state = 'done', closed_at = '2026-08-09T12:00:00.000Z',
-	                        closed_reason = 'completed'
-	                    WHERE id = ?`, id)
-	if err != nil {
-		t.Fatalf("closing %s: %v", id, err)
-	}
+	return out
 }
 
 func TestAddBlocker(t *testing.T) {

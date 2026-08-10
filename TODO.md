@@ -11,23 +11,23 @@ entities — `project`, `action`, `pr`, `github_repo`, `calendar_window` and
 registry the verb vocabulary resolves against; and the pipelines a repository
 chooses between. `todo watch` tails the log.
 
-Three commands are still stubs that exit 1: `action close`, `render` and
-`verify`.
+Two commands are still stubs that exit 1: `render` and `verify`.
 
-The edges exist now — `action_blocks` and `action_pr`, with the commands that
-write them — so the graph closing has to walk is there. Closing itself is not,
-which is why the queue's core claim is still untested.
+Closing works, and with it the cascade: closing a `write` action instantiates
+the repository's pipeline as a chain of blocked actions, frees what it was
+holding up, and brings back whatever was hidden behind it. The queue now moves
+on its own when a human closes something. It does not yet move when GitHub
+does — nothing asks the predicates during sync, which is the next thing.
 
 ## The critical path
 
 In dependency order. Nothing later can be finished first.
 
-- [ ] **`action close`, and the cascade.** The interesting one: closing
-      instantiates the pipeline and unblocks dependents, all under one
-      correlation id.
 - [ ] **Closing on predicates during sync.** The registry can answer "is this
-      done", but nothing asks it yet. This is what makes the queue mechanical
-      rather than merely modelled.
+      done" and the pipeline steps are actions with predicate verbs and a
+      subject pull request, so everything is in place; nothing asks yet. This
+      is the difference between a queue that models the work and one that
+      keeps up with it.
 - [ ] **The queue queries.** `--unblocked`, `--expired`, `--stale`,
       `--waiting`, `--orphaned`. `--expired` is called the highest-value query
       in the system; `--stale` catches an item claiming done whose pull request
@@ -38,6 +38,23 @@ In dependency order. Nothing later can be finished first.
       running sync, watch and the server together is the natural shape.
       `internal/service` exists for this: `service.Run(ctx, syncer, server,
       tailer)`, first failure cancels the rest.
+
+## What dogfooding needs
+
+Enough works to track this repository's own pull requests today: track the
+repo, track a pull request, `action add --verb write`, then `action close --pr`
+to get the chain. What is missing before it is not more work than it saves:
+
+- [ ] **Sync closing the predicate steps.** Without it every `undraft`,
+      `wait_review` and `merge` action has to be closed by hand, which is the
+      opposite of the point. This is the one blocker.
+- [ ] **`action list --unblocked`.** Otherwise the queue is read by eye,
+      filtering out the blocked steps mentally.
+- [ ] A `todo pr announce` habit, since `send_for_review` closes on the
+      announcement and GitHub cannot supply it.
+
+`todo render` and the web server are not needed for it. `todo db backup` is
+not either, but a real database makes it worth having sooner.
 
 ## Entities the sketch specifies but nothing uses
 
@@ -126,6 +143,17 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   blocked/ready state is recomputed from the open blockers in one place, so
   adding an edge and closing one cannot disagree. A snooze outranks both: it
   is a decision about time.
+- **A pipeline is instantiated as a chain of blocked actions, all at once.**
+  Closing a step frees the next through the same unblocking every other action
+  gets, so there is no separate notion of advancing a pipeline to keep
+  correct.
+- **Which verb opens a pipeline is a column, not an `if`.** `actionverb`
+  carries `starts_pipeline`; having a subject pull request is not on its own a
+  reason, since investigating one ends when you know the answer.
+- **Closing allocates identifiers between reading and writing.** The plan is
+  read in one transaction, the identifiers allocated with none open, and the
+  cascade written in a second. Allocation writes on its own connection, so a
+  transaction holding the write lock would deadlock against it.
 - **Blocking cycles are refused, not just self-edges.** The `CHECK` catches
   `A → A`; a recursive query catches the rest. A cycle is a set of actions
   that never unblocks.

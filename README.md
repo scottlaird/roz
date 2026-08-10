@@ -290,14 +290,14 @@ and stdout, for an agent to call without shelling out.
 than written out again, so the two cannot drift: the name is the command path
 with an underscore (`action add` → `action_add`), the description is that
 command's own help, and the arguments are its flags and whatever its usage
-line names. Thirty-eight of them:
+line names. Thirty-nine of them:
 
 | | |
 |---|---|
 | projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_jira` |
 | actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
 | GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_show` `pr_list` `pr_announce` `sync` |
-| the log | `note` `exception` |
+| the log | `note` `exception` `watch` (bounded to one read) |
 | other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
 
 **Left out**, because they are not an agent's to call: `init`, which decides

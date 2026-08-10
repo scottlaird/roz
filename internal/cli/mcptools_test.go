@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/scottlaird/todo/internal/mcp"
 )
@@ -35,14 +36,16 @@ func TestToolsAreTheCommands(t *testing.T) {
 		"project_add", "project_close", "action_add", "action_close",
 		"action_add-blocker", "pr_track", "pr_announce", "repo_track",
 		"note", "exception", "sync", "render", "verb_list", "pipeline_list",
+		"watch",
 	} {
 		if !listed[want] {
 			t.Errorf("%s is a command but not a tool", want)
 		}
 	}
 
-	// The ones an agent has no business calling, and cobra's own.
-	for _, unwanted := range []string{"init", "serve", "syncer", "watch", "mcp", "completion", "help"} {
+	// The ones an agent has no business calling, and cobra's own. watch is
+	// not among them: it is exposed, bounded to its read-once form.
+	for _, unwanted := range []string{"init", "serve", "syncer", "mcp", "completion", "help"} {
 		if listed[unwanted] {
 			t.Errorf("%s is exposed as a tool", unwanted)
 		}
@@ -245,5 +248,71 @@ func TestRepeatedFlags(t *testing.T) {
 		if !strings.Contains(shown, want) {
 			t.Errorf("%s is missing from the record:\n%s", want, shown)
 		}
+	}
+}
+
+// TestWatchIsBounded: the command follows by default and would never return,
+// so the tool is the read-once form. An agent asks again rather than waits.
+func TestWatchIsBounded(t *testing.T) {
+	db := initDB(t)
+	m := tools(t, db)
+	call(t, m, "claude-code", "project_add", map[string]any{"title": "something happened"})
+
+	// It returns, which is the whole point.
+	done := make(chan string, 1)
+	go func() { done <- call(t, m, "claude-code", "watch", map[string]any{"since": "2000-01-01"}) }()
+
+	select {
+	case out := <-done:
+		if !strings.Contains(out, "created") || !strings.Contains(out, "TD1") {
+			t.Errorf("watch = %q, want the log", out)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("watch did not return: the tool is following")
+	}
+}
+
+// TestWatchDoesNotOfferFollowing: --once is the server's, and --interval only
+// means something while following.
+func TestWatchDoesNotOfferFollowing(t *testing.T) {
+	var watch mcp.Tool
+	for _, tool := range tools(t, initDB(t)).List() {
+		if tool.Name == "watch" {
+			watch = tool
+		}
+	}
+	if watch.Name == "" {
+		t.Fatal("watch is not exposed")
+	}
+
+	properties := watch.InputSchema["properties"].(map[string]any)
+	for _, hidden := range []string{"once", "interval"} {
+		if _, ok := properties[hidden]; ok {
+			t.Errorf("watch offers %q, which the server decides", hidden)
+		}
+	}
+	// The filters are still the caller's.
+	for _, want := range []string{"since", "kind", "severity", "lines"} {
+		if _, ok := properties[want]; !ok {
+			t.Errorf("watch does not offer %q", want)
+		}
+	}
+}
+
+// TestWatchToolFilters is the query worth having: what happened, of this
+// kind, since when.
+func TestWatchToolFilters(t *testing.T) {
+	db := initDB(t)
+	m := tools(t, db)
+	id := call(t, m, "claude-code", "project_add", map[string]any{"title": "first"})
+	call(t, m, "claude-code", "project_set", map[string]any{"project": id, "summary": "changed"})
+
+	changes := call(t, m, "claude-code", "watch",
+		map[string]any{"since": "2000-01-01", "kind": "changed"})
+	if !strings.Contains(changes, "summary") {
+		t.Errorf("watch kind=changed = %q", changes)
+	}
+	if strings.Contains(changes, "created") {
+		t.Errorf("watch kind=changed returned a created event:\n%s", changes)
 	}
 }

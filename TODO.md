@@ -80,6 +80,14 @@ them.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
+- [ ] **`todo project close`, with the cascade.** Closing a project is
+      `project set --status done` today, and nothing happens to its open
+      actions — so a retired project can leave `write` actions sitting in
+      `--unblocked` pointing at work nobody wants. The verb wants to set the
+      status and drop or report those actions, mirroring `action close`. No
+      schema change: `done`, `retired` and `superseded` already carry the
+      reason an action keeps in `closed_reason`, and the log carries the
+      timestamp, so adding `closed_at` to `project` would only save a join.
 - [ ] **An MCP server**, so an agent can read the queue and write to it
       without shelling out. Stdio is the shape that matters — an agent spawns
       the process — and localhost is fine as a second transport, where `todo

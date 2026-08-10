@@ -28,7 +28,7 @@ func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "todo",
 		Short: "Track projects, actions and pull requests",
-		Long: "todo keeps a work queue correct mechanically: projects (SL) are what you\n" +
+		Long: "todo keeps a work queue correct mechanically: projects (TD) are what you\n" +
 			"plan from, actions (NA) are what you read. Every mutation is an event.",
 		SilenceUsage: true,
 	}

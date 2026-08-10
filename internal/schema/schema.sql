@@ -172,7 +172,7 @@ INSERT INTO pipeline_step (pipeline, position, verb) VALUES
 
 -- ── project ──────────────────────────────────────────────────────────
 CREATE TABLE project (
-  id               TEXT PRIMARY KEY,           -- 'SL106' with the default prefix
+  id               TEXT PRIMARY KEY,           -- 'TD106' with the default prefix
   kind             TEXT NOT NULL,              -- = sequence.kind for 'project'
   n                INTEGER NOT NULL,
   title            TEXT NOT NULL,
@@ -335,7 +335,7 @@ CREATE TABLE event (
                  CHECK (severity IN ('info','notice','exception')),
 
   -- informal FK, not enforced (polymorphic). vocab and target:
-  --   'project'          -> project.id           e.g. 'SL106'
+  --   'project'          -> project.id           e.g. 'TD106'
   --   'action'           -> action.id            e.g. 'NA57'
   --   'pr'               -> pr.id                e.g. 'saas-infra-plane#4174'
   --   'calendar_window'  -> calendar_window.id
@@ -384,7 +384,7 @@ CREATE TABLE priority (
 
 CREATE TABLE priority_target (
   priority_id  TEXT NOT NULL REFERENCES priority(id),
-  -- same informal-FK pair as `event`: 'project'->'SL106', 'action'->'NA57'
+  -- same informal-FK pair as `event`: 'project'->'TD106', 'action'->'NA57'
   subject_type TEXT NOT NULL,
   subject_id   TEXT NOT NULL,
   note         TEXT NOT NULL DEFAULT '',

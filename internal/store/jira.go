@@ -41,7 +41,7 @@ type JiraApplied struct {
 // ObserveJira applies Jira observations to whatever projects carry the keys.
 //
 // It is keyed on jira_key rather than on project id because that is what an
-// integration would have: a Jira issue does not know it is SL106. More than
+// integration would have: a Jira issue does not know it is TD106. More than
 // one project may carry the same key, and each gets the observation — the
 // schema does not make jira_key unique, and two projects tracking one epic is
 // a reasonable thing to do.

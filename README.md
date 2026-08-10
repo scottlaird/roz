@@ -2,7 +2,7 @@
 
 A work queue that stays correct mechanically.
 
-Projects (`SL`) are what you plan from; actions (`NA`) are what you read. An
+Projects (`TD`) are what you plan from; actions (`NA`) are what you read. An
 action's verb decides how it closes — a *predicate* verb closes when GitHub
 says the work is done, a *human* verb only when you say so — so the only items
 that reach the queue as thinking work are the ones that need thinking about.
@@ -72,7 +72,7 @@ directory.
 ## A walkthrough
 
 Everything below is real output, captured by running these commands in order
-against a fresh database and the live `scottlaird/todo#31`. That pull request
+against a fresh database and the live `scottlaird/todo#39`. That pull request
 has moved on since, so re-running it today will answer differently — which is
 rather the point of the tool.
 
@@ -80,38 +80,38 @@ rather the point of the tool.
 
 ```console
 $ todo init
-initialised /home/scott/.local/share/todo/todo.db (action=NA, project=SL)
+initialised /home/scott/.local/share/todo/todo.db (action=NA, project=TD)
 ```
 
 Prefixes are chosen here and are write-once — identifiers get quoted in
 tickets and said out loud, so they cannot be renamed later. Pass
-`--project-prefix` and `--action-prefix` if `SL`/`NA` are not what you want.
+`--project-prefix` and `--action-prefix` if `TD`/`NA` are not what you want.
 
 ### Two projects, and a relationship between them
 
 ```console
 $ todo project add --title "Split the nodepool" --priority 1 --effort weeks --jira-key CDSS-1744
-SL1
+TD1
 $ todo project add --title "Retire the old pool" --priority 3 --effort days
-SL2
+TD2
 ```
 
 It turns out those are the same work:
 
 ```console
-$ todo project supersede --from SL2 --into SL1
-SL2 status: "active" → "superseded"
-SL2 superseded_by: "" → "SL1"
+$ todo project supersede --from TD2 --into TD1
+TD2 status: "active" → "superseded"
+TD2 superseded_by: "" → "TD1"
 ```
 
 Superseding records both ends and keeps the identifier. Nothing is deleted,
-because `SL2` may already be written down somewhere this tool cannot reach.
+because `TD2` may already be written down somewhere this tool cannot reach.
 
 ```console
 $ todo project list
 ID   STATUS      PRI  EFFORT  SNOOZED UNTIL  TITLE
-SL1  active      1    weeks   -              Split the nodepool
-SL2  superseded  3    days    -              Retire the old pool
+TD1  active      1    weeks   -              Split the nodepool
+TD2  superseded  3    days    -              Retire the old pool
 ```
 
 ### A repository and a pull request
@@ -132,17 +132,17 @@ A repository must be tracked before its pull requests, because the pipeline
 decides what a pull request against it will need doing to it.
 
 ```console
-$ todo pr track scottlaird/todo#31
-scottlaird/todo#31
+$ todo pr track scottlaird/todo#39
+scottlaird/todo#39
 ```
 
 ### Two actions, one waiting on the other
 
 ```console
-$ todo action add --title "Split the pool config" --verb write --project SL1 \
+$ todo action add --title "Split the pool config" --verb write --project TD1 \
     --why "everything else waits on it"
 NA1
-$ todo action add --title "Roll the change out" --verb run --project SL1
+$ todo action add --title "Roll the change out" --verb run --project TD1
 NA2
 $ todo action add-blocker --from NA2 --to NA1
 NA2 is blocked, waiting on NA1
@@ -156,16 +156,16 @@ the queue until you say otherwise.
 
 ```console
 $ todo sync github
-scottlaird/todo#31 title: "" → "Close actions when GitHub finishes them"
-scottlaird/todo#31 author: "" → "scottlaird"
-scottlaird/todo#31 url: "" → "https://github.com/scottlaird/todo/pull/31"
-scottlaird/todo#31 state: "" → "OPEN"
-scottlaird/todo#31 is_draft: "" → "0"
-scottlaird/todo#31 merge_state_status: "" → "CLEAN"
-scottlaird/todo#31 in_merge_queue: "" → "0"
-scottlaird/todo#31 base_ref: "" → "main"
-scottlaird/todo#31 head_sha: "" → "76b37af667b23c167051bf905ea849c854bac0dc"
-scottlaird/todo#31 unresolved_threads: "" → "0"
+scottlaird/todo#39 title: "" → "Default new databases to the TD project prefix"
+scottlaird/todo#39 author: "" → "scottlaird"
+scottlaird/todo#39 url: "" → "https://github.com/scottlaird/todo/pull/39"
+scottlaird/todo#39 state: "" → "OPEN"
+scottlaird/todo#39 is_draft: "" → "0"
+scottlaird/todo#39 merge_state_status: "" → "CLEAN"
+scottlaird/todo#39 in_merge_queue: "" → "0"
+scottlaird/todo#39 base_ref: "" → "main"
+scottlaird/todo#39 head_sha: "" → "6d7450f3ce139e323fa2264191598ff0d1418f1a"
+scottlaird/todo#39 unresolved_threads: "" → "0"
 polled 1, 1 changed
 ```
 
@@ -184,12 +184,12 @@ budget drops and backing off on a 429.
 This is where the queue moves on its own.
 
 ```console
-$ todo action close NA1 --pr scottlaird/todo#31
+$ todo action close NA1 --pr scottlaird/todo#39
 NA1 done (completed)
   skipped undraft: already true
-  created NA3 send for review scottlaird/todo#31
-  created NA4 wait for review scottlaird/todo#31 (blocked by NA3)
-  created NA5 merge scottlaird/todo#31 (blocked by NA4)
+  created NA3 send for review scottlaird/todo#39
+  created NA4 wait for review scottlaird/todo#39 (blocked by NA3)
+  created NA5 merge scottlaird/todo#39 (blocked by NA4)
   NA2 is now ready
 ```
 
@@ -211,20 +211,20 @@ Four things happened under one correlation id:
 cannot supply. Until Slack sync exists, that is recorded by hand:
 
 ```console
-$ todo pr announce scottlaird/todo#31 --channel '#infra-reviews'
-scottlaird/todo#31 announced_at: "" → "2026-08-10T04:14:59.157Z"
-scottlaird/todo#31 announced_channel: "" → "#infra-reviews"
+$ todo pr announce scottlaird/todo#39 --channel '#infra-reviews'
+scottlaird/todo#39 announced_at: "" → "2026-08-10T14:47:22.041Z"
+scottlaird/todo#39 announced_channel: "" → "#infra-reviews"
 ```
 
 Jira is the same arrangement, keyed on the issue rather than the project,
-because an integration would have `CDSS-1744` and not `SL1`:
+because an integration would have `CDSS-1744` and not `TD1`:
 
 ```console
 $ todo project jira CDSS-1744 --status "In Progress" --sprint "Sprint 42" --assignee scott
-SL1 jira_status: "" → "In Progress"
-SL1 jira_sprint: "" → "Sprint 42"
-SL1 jira_assignee: "" → "scott"
-SL1 jira_synced_at: "" → "2026-08-10T04:14:59.168Z"
+TD1 jira_status: "" → "In Progress"
+TD1 jira_sprint: "" → "Sprint 42"
+TD1 jira_assignee: "" → "scott"
+TD1 jira_synced_at: "" → "2026-08-10T14:47:22.053Z"
 ```
 
 `--feed` takes a JSON array of the same thing, so faking a whole sync run is
@@ -236,15 +236,15 @@ sync notices:
 
 ```console
 $ todo sync github
-NA3 closed: scottlaird/todo#31 is send_for_review
+NA3 closed: scottlaird/todo#39 is send_for_review
   NA4 is now ready
 polled 1, 0 changed, 1 closed
 
 $ todo action list --open
 ID   STATE    VERB         PROJECT  SNOOZED UNTIL  TITLE
-NA2  ready    run          SL1      -              Roll the change out
-NA4  ready    wait_review  SL1      -              wait for review scottlaird/todo#31
-NA5  blocked  merge        SL1      -              merge scottlaird/todo#31
+NA2  ready    run          TD1      -              Roll the change out
+NA4  ready    wait_review  TD1      -              wait for review scottlaird/todo#39
+NA5  blocked  merge        TD1      -              merge scottlaird/todo#39
 ```
 
 Nobody closed `NA3`. A predicate verb says how its action closes, and sync is
@@ -265,11 +265,11 @@ action is done are different acts, and the log keeps them apart.
 
 ```console
 $ todo watch --once -n 5
-2026-08-10T04:14:59.168Z  info  sync:jira-manual  changed  SL1  jira_synced_at: "" → "2026-08-10T04:14:59.168Z"
-2026-08-10T04:14:59.639Z  info  predicate         changed  NA3  state: "ready" → "done"
-2026-08-10T04:14:59.639Z  info  predicate         changed  NA3  closed_at: "" → "2026-08-10T04:14:59.639Z"
-2026-08-10T04:14:59.639Z  info  predicate         changed  NA3  closed_reason: "" → "completed"
-2026-08-10T04:14:59.639Z  info  predicate         changed  NA4  state: "blocked" → "ready"
+2026-08-10T14:47:22.053Z  info  sync:jira-manual  changed  TD1  jira_synced_at: "" → "2026-08-10T14:47:22.053Z"
+2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  state: "ready" → "done"
+2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  closed_at: "" → "2026-08-10T14:47:22.567Z"
+2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  closed_reason: "" → "completed"
+2026-08-10T14:47:22.567Z  info  predicate         changed  NA4  state: "blocked" → "ready"
 ```
 
 Note the actor: `predicate`, not `human` and not `sync:slack-manual`. One act

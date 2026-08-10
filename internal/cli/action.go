@@ -57,7 +57,7 @@ func addActionFieldFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.String(flagTitle, "", "what to do")
 	f.String(flagVerb, "", "from the vocabulary; see `todo verb list`")
-	f.String(flagProject, "", "project this advances, e.g. SL200; omit if it advances nothing")
+	f.String(flagProject, "", "project this advances, e.g. TD200; omit if it advances nothing")
 	f.String(flagWhy, "", "what it unblocks; one sentence maximum")
 	f.String(flagStatus, "", strings.Join(store.ActionStates, ", "))
 	f.Int(flagRankPin, 0, "manual sort override; 0 clears it")

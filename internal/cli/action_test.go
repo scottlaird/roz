@@ -147,8 +147,8 @@ func TestActionRejections(t *testing.T) {
 		},
 		{
 			name:    "missing project",
-			args:    []string{"action", "add", "--title", "x", "--verb", "write", "--project", "SL404"},
-			wantErr: "no such item: SL404",
+			args:    []string{"action", "add", "--title", "x", "--verb", "write", "--project", "TD404"},
+			wantErr: "no such item: TD404",
 		},
 		{
 			name:    "closing through set",

@@ -224,7 +224,7 @@ func TestSetRejections(t *testing.T) {
 		},
 		{
 			name:    "identity column",
-			args:    []string{"--json", `{"id":"SL99"}`},
+			args:    []string{"--json", `{"id":"TD99"}`},
 			wantErr: "identity",
 		},
 		{
@@ -254,11 +254,11 @@ func TestSetRejections(t *testing.T) {
 func TestSetMissingProject(t *testing.T) {
 	db := initDB(t)
 
-	_, err := runCLI(t, "project", "set", "--db", db, "SL404", "--title", "x")
+	_, err := runCLI(t, "project", "set", "--db", db, "TD404", "--title", "x")
 	if err == nil {
 		t.Fatal("project set on a missing project returned nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "SL404") {
+	if !strings.Contains(err.Error(), "TD404") {
 		t.Errorf("error = %v, want it to name the identifier", err)
 	}
 }

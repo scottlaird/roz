@@ -145,7 +145,7 @@ func TestPRTrackIsNotIdempotent(t *testing.T) {
 }
 
 // TestNoteOnAPullRequest checks the log's heterogeneous subject_id end to end:
-// the same command annotates SL1 and myrepo#812.
+// the same command annotates TD1 and myrepo#812.
 func TestNoteOnAPullRequest(t *testing.T) {
 	db := initDB(t)
 	trackRepo(t, db, "owner/myrepo")

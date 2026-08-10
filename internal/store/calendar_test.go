@@ -86,13 +86,48 @@ func TestValidateDate(t *testing.T) {
 	}
 }
 
+// TestSuggestedKindsAreAdviceNotLaw records the split: the familiar four are
+// what the interface offers, and anything else is remarked on rather than
+// refused.
+func TestSuggestedKindsAreAdviceNotLaw(t *testing.T) {
+	if !IsSuggestedKind(WindowOncall) {
+		t.Error("oncall is not among the suggested kinds")
+	}
+	if IsSuggestedKind("sabbatical") {
+		t.Error("sabbatical is reported as a suggested kind")
+	}
+}
+
+// TestKindIsFreeText covers what 0005 bought: a kind outside the suggested
+// set is storable, because nothing branches on it. Capacity is not, because
+// the sort reads that one.
+func TestKindIsFreeText(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	w := NewCalendarWindow("sabbatical", "2027-01-04")
+	w.EndsOn = "2027-03-28"
+	w.Capacity = CapacityNone
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	if err := tx.Insert(ctx, w); err != nil {
+		t.Fatalf("a kind outside the suggested set was refused: %v", err)
+	}
+
+	bad := NewCalendarWindow(WindowPTO, "2027-05-01")
+	bad.EndsOn = "2027-05-02"
+	bad.Capacity = "half"
+	if err := tx.Insert(ctx, bad); err == nil {
+		t.Error("an unknown capacity was accepted, want the CHECK to refuse it")
+	}
+}
+
 func TestValidateEnums(t *testing.T) {
-	if err := ValidateWindowKind(WindowOncall); err != nil {
-		t.Errorf("ValidateWindowKind(oncall) returned error: %v", err)
-	}
-	if err := ValidateWindowKind("vacation"); err == nil {
-		t.Error("ValidateWindowKind(vacation) returned nil, want an error")
-	}
 	// Capacity is an enum and not a boolean, so all three are accepted.
 	for _, capacity := range Capacities {
 		if err := ValidateCapacity(capacity); err != nil {

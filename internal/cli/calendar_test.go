@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -95,6 +96,42 @@ func TestCalendarCapacityIsAnEnum(t *testing.T) {
 	}
 }
 
+// TestNewKindNeedsNoRelease is the point of dropping the CHECK: a kind
+// nobody anticipated is recorded, with a note rather than a refusal, and no
+// migration or code change behind it.
+func TestNewKindNeedsNoRelease(t *testing.T) {
+	db := initDB(t)
+
+	root := NewRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"calendar", "add", "--db", db, "--kind", "sabbatical",
+		"--starts", "2027-01-04", "--ends", "2027-03-28", "--capacity", "none"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("an unfamiliar kind was refused: %v", err)
+	}
+
+	if got := strings.TrimSpace(out.String()); got != "sabbatical-2027-01-04" {
+		t.Errorf("printed %q, want the derived id", got)
+	}
+	if !strings.Contains(errOut.String(), "not one of the usual kinds") {
+		t.Errorf("nothing was said about the unfamiliar kind: %q", errOut.String())
+	}
+	// Said once, not once per code path that looks at it.
+	if strings.Count(errOut.String(), "not one of the usual kinds") != 1 {
+		t.Errorf("the note was repeated:\n%s", errOut.String())
+	}
+
+	listed, err := runCLI(t, "calendar", "list", "--db", db, "--kind", "sabbatical")
+	if err != nil {
+		t.Fatalf("calendar list --kind returned error: %v", err)
+	}
+	if !strings.Contains(listed, "sabbatical") {
+		t.Errorf("the new kind is not filterable:\n%s", listed)
+	}
+}
+
 func TestCalendarShowJSON(t *testing.T) {
 	db := initDB(t)
 	id := addCalendarEntry(t, db, "--kind", "pto", "--starts", "2026-08-24",
@@ -163,9 +200,9 @@ func TestCalendarRejections(t *testing.T) {
 			wantErr: "is the last day, inclusive",
 		},
 		{
-			name:    "unknown kind",
-			args:    []string{"--kind", "vacation", "--starts", "2026-01-01", "--ends", "2026-01-02"},
-			wantErr: "oncall, pto, holiday, other",
+			name:    "empty kind",
+			args:    []string{"--kind", "", "--starts", "2026-01-01", "--ends", "2026-01-02"},
+			wantErr: "cannot be empty",
 		},
 		{
 			name:    "a timestamp is not a date",

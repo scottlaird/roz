@@ -241,7 +241,10 @@ CREATE INDEX event_subject ON event(subject_type, subject_id, seq);
 -- ── calendar, priorities, review policy ──────────────────────────────
 CREATE TABLE calendar_window (              -- not `window`: reserved in SQLite
   id         TEXT PRIMARY KEY,
-  kind       TEXT NOT NULL CHECK (kind IN ('oncall','pto','holiday','other')),
+  -- Free text. Nothing branches on kind: it is stored, filtered and shown,
+  -- while capacity is what decides availability. A CHECK here would mean
+  -- rebuilding the table for every new kind. See 0005.
+  kind       TEXT NOT NULL,
   label      TEXT NOT NULL,
   starts_on  TEXT NOT NULL,                 -- 'YYYY-MM-DD', inclusive
   ends_on    TEXT NOT NULL,                 -- 'YYYY-MM-DD', INCLUSIVE — see the entry note

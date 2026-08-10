@@ -30,12 +30,15 @@ const (
 	CapacityFull    = "full"
 )
 
-// WindowKinds and Capacities list the accepted values, matching the CHECK
-// constraints on the table.
-var (
-	WindowKinds = []string{WindowOncall, WindowPTO, WindowHoliday, WindowOther}
-	Capacities  = []string{CapacityNone, CapacityReduced, CapacityFull}
-)
+// WindowKinds are the kinds the interface suggests. The column takes any
+// text: nothing branches on kind, so a closed set would have meant rebuilding
+// the table for each new one. The list is here so a typo is remarked on where
+// it is made.
+var WindowKinds = []string{WindowOncall, WindowPTO, WindowHoliday, WindowOther}
+
+// Capacities are the accepted values, matching the CHECK that is still on
+// that column. That set stays closed because the sort reads it.
+var Capacities = []string{CapacityNone, CapacityReduced, CapacityFull}
 
 // CalendarWindow is a block of time that changes what can be taken on:
 // oncall, PTO, a holiday.
@@ -99,12 +102,23 @@ func ValidateDate(field, value string) (string, error) {
 	return value, nil
 }
 
-// ValidateWindowKind and ValidateCapacity check the two enums, reporting what
-// is accepted rather than only that the value was not.
-func ValidateWindowKind(kind string) error {
-	return validateOneOf("kind", kind, WindowKinds)
+// IsSuggestedKind reports whether a kind is one of the familiar four.
+//
+// It is deliberately not a Validate: the column takes any text, so an
+// unfamiliar kind is worth remarking on but not refusing. A caller that
+// refuses one has decided a typo is likelier than a new kind, which is a
+// judgement about its own users rather than a rule about the data.
+func IsSuggestedKind(kind string) bool {
+	for _, k := range WindowKinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
 }
 
+// ValidateCapacity checks a capacity. This one the database enforces too,
+// reporting what is accepted rather than only that the value was not.
 func ValidateCapacity(capacity string) error {
 	return validateOneOf("capacity", capacity, Capacities)
 }

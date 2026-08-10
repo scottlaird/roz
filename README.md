@@ -36,7 +36,7 @@ directory.
 | `todo project wake` | Clear a snooze. |
 | `todo project supersede` | Record that one project is the same work as another. |
 | `todo project close` | Close it, dropping whatever was still open on it. |
-| `todo project jira` | Record by hand what Jira says about an issue. Stands in for Jira sync. |
+| `todo project jira` | Record by hand what Jira says about an issue — summary, status, sprint, assignee. Stands in for Jira sync. |
 | `todo project link-jira` / `unlink-jira` | Say which issues a project tracks. More than one is allowed. |
 | **jira** | |
 | `todo jira show` / `list` | Issues as last observed, and which projects track them. |

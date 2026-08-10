@@ -243,3 +243,82 @@ func TestRejectedInputConsumesNoIdentifier(t *testing.T) {
 		t.Errorf("first successful add produced %q, want %q", got, want)
 	}
 }
+
+// TestProjectClose is the verb the queue needed: a closed project must not
+// leave work in it.
+func TestProjectClose(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "Split the nodepool")
+
+	first := addAction(t, db, "--title", "write it", "--verb", "write", "--project", project)
+	waiting := addAction(t, db, "--title", "waits on it", "--verb", "announce")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db, "--from", waiting, "--to", first); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "project", "close", "--db", db, project, "--status", "retired")
+	if err != nil {
+		t.Fatalf("project close returned error: %v", err)
+	}
+	for _, want := range []string{"retired", first + " dropped", waiting + " is now ready"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not mention %q:\n%s", want, out)
+		}
+	}
+
+	// The queue is left with only the thing that is still worth doing.
+	listed, err := runCLI(t, "action", "list", "--db", db, "--unblocked")
+	if err != nil {
+		t.Fatalf("action list returned error: %v", err)
+	}
+	if strings.Contains(listed, "write it") {
+		t.Errorf("a dropped action is still in the queue:\n%s", listed)
+	}
+	if !strings.Contains(listed, "waits on it") {
+		t.Errorf("the freed action is missing from the queue:\n%s", listed)
+	}
+}
+
+func TestProjectCloseRejections(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "unknown project",
+			args:    []string{"project", "close", "SL404"},
+			wantErr: "no such item: SL404",
+		},
+		{
+			name:    "superseding through close",
+			args:    []string{"project", "close", "SL1", "--status", "superseded"},
+			wantErr: "supersede",
+		},
+		{
+			name:    "an invented status",
+			args:    []string{"project", "close", "SL1", "--status", "abandoned"},
+			wantErr: "does not close a project",
+		},
+		{
+			name:    "a sync actor",
+			args:    []string{"project", "close", "SL1", "--actor", "sync:github"},
+			wantErr: "not allowed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := initDB(t)
+			addProject(t, db, "Split the nodepool")
+
+			_, err := runCLI(t, append(tt.args, "--db", db)...)
+			if err == nil {
+				t.Fatalf("%v returned nil, want an error", tt.args)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}

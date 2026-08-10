@@ -35,6 +35,7 @@ directory.
 | `todo project snooze` | Defer a project to a real date. |
 | `todo project wake` | Clear a snooze. |
 | `todo project supersede` | Record that one project is the same work as another. |
+| `todo project close` | Close it, dropping whatever was still open on it. |
 | `todo project jira` | Record by hand what Jira says. Stands in for Jira sync. |
 | **actions** | |
 | `todo action add` | Allocate an action and print its id. |

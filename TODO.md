@@ -80,14 +80,6 @@ them.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
-- [ ] **`todo project close`, with the cascade.** Closing a project is
-      `project set --status done` today, and nothing happens to its open
-      actions — so a retired project can leave `write` actions sitting in
-      `--unblocked` pointing at work nobody wants. The verb wants to set the
-      status and drop or report those actions, mirroring `action close`. No
-      schema change: `done`, `retired` and `superseded` already carry the
-      reason an action keeps in `closed_reason`, and the log carries the
-      timestamp, so adding `closed_at` to `project` would only save a join.
 - [ ] **An MCP server**, so an agent can read the queue and write to it
       without shelling out. Stdio is the shape that matters — an agent spawns
       the process — and localhost is fine as a second transport, where `todo
@@ -161,6 +153,14 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   merge action is therefore done carries out a rule someone wrote into the
   vocabulary, and is written as `predicate`. The actor that observes a fact is
   exactly the one not allowed to act on it.
+- **Only completing something makes it done.** `superseded`, `dropped` and
+  `obsolete` all leave an action in state `dropped`, and abandoning work does
+  not instantiate the pipeline that finishing it would have. Both were wrong
+  until `project close` needed them.
+- **Closing a project drops its open actions**, as `obsolete` rather than
+  `dropped`: the reason is that the project went away, not that anyone decided
+  against the action. Their cascades still run, so nothing is left waiting on
+  something that will never move.
 - **A satisfied step closes whatever its state.** A merged pull request means
   the merge happened, whatever the chain expected to come first. Reality
   outranks the plan.

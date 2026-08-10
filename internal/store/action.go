@@ -171,12 +171,18 @@ type ActionFilter struct {
 	Project string
 	// Open keeps everything not closed.
 	Open bool
-	// Unblocked keeps what could be worked on right now: open, ready, and
-	// not folded out of the queue behind something else. It is the queue.
+	// Unblocked keeps what could be worked on right now: open, ready, not
+	// folded out of the queue behind something else, and not waiting on
+	// somebody. It is the queue.
 	//
 	// It reads state rather than counting blockers, because state is
 	// recomputed from the open blockers wherever an edge or a closure moves
 	// it — two ways of answering the same question would be one too many.
+	//
+	// Waiting is excluded by rank class rather than by naming wait_review, so
+	// a wait verb added later is excluded without editing this. The queue
+	// answers "what do I do now", and a verb whose own description is nothing
+	// to do but wait is not an answer — use --open to see those.
 	Unblocked bool
 	// Order is how the results come back. Empty is creation order.
 	Order string
@@ -272,8 +278,13 @@ func (f ActionFilter) clauses(now string) ([]string, []any) {
 		where = append(where, "a.closed_at IS NULL")
 	}
 	if f.Unblocked {
-		where = append(where, "a.closed_at IS NULL", "a.state = ?", "a.hidden_behind IS NULL")
-		args = append(args, ActionReady)
+		where = append(where,
+			"a.closed_at IS NULL",
+			"a.state = ?",
+			"a.hidden_behind IS NULL",
+			"a.verb NOT IN (SELECT verb FROM actionverb WHERE rank_class = ?)",
+		)
+		args = append(args, ActionReady, RankWait)
 	}
 	if f.Expired {
 		where = append(where, "a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_until < ?")

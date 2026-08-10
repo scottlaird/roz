@@ -125,16 +125,6 @@ them.
       the last time someone *looked at it and was satisfied* is not recorded
       anywhere. Staleness is the second one — an item nobody has changed for a
       month is fine if it was reviewed on Friday, and alarming if it was not.
-- [ ] **An MCP server**, so an agent can read the queue and write to it
-      without shelling out. Stdio is the shape that matters — an agent spawns
-      the process — and localhost is fine as a second transport, where `todo
-      serve` is the obvious host. Two things to settle first: whether the
-      transport is hand-rolled JSON-RPC over stdin and stdout, which the
-      standard library can do, or the official Go SDK, which would be the
-      first dependency here that is not `cobra` or the driver; and that every
-      write is attributed `agent:<name>`, never `human` and never a `sync:`
-      actor, so the log keeps saying who did what. The tool surface is roughly
-      the read commands plus `action add`, `close`, `snooze` and `note`.
 - [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
       `project` name one tracker in the schema, in the entity, and in `todo
       project jira`. Home projects use GitHub issues, and the reader for them
@@ -250,6 +240,14 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   few lines of the standard library against a dependency and a handshake. The
   change signal is the log's head, since nothing changes here without an
   event.
+- **The MCP tools are the CLI's commands, derived from the cobra tree.** A
+  flag added to a command is a tool argument next time the server starts, and
+  calling a tool runs that command, so validation, the actor rule and the
+  cascade are the same code rather than a second implementation. What cannot
+  be derived is which commands make sense to an agent, which is a list.
+- **An MCP write is `agent:<client>`**, taken from what the client calls
+  itself at initialize and falling back to `--agent`. `--actor` is not offered
+  as a tool argument, so there is no way to write as a person from there.
 - **One renderer, used twice.** `todo serve` calls the same function `todo
   render` writes to a file, per request. Two ways of building the page would
   eventually be two different pages.

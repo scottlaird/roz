@@ -138,3 +138,32 @@ func TestRenderEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestTemplateIsTheOneOnDisk guards the embed: an edit to the .tmpl file
+// should reach the page, and nothing should be answering from a copy in Go.
+func TestTemplateIsTheOneOnDisk(t *testing.T) {
+	onDisk, err := templates.ReadFile("templates/page.html.tmpl")
+	if err != nil {
+		t.Fatalf("reading the embedded template: %v", err)
+	}
+	for _, want := range []string{"{{.Calendar}}", "{{.Queue}}", "{{.Projects}}", "{{.GeneratedAt}}"} {
+		if !strings.Contains(string(onDisk), want) {
+			t.Errorf("the template does not use %s", want)
+		}
+	}
+
+	db := initDB(t)
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	// Nothing should reach the page as an unexpanded action.
+	if strings.Contains(out, "{{") {
+		t.Errorf("the page has an unexpanded action in it:\n%s", out)
+	}
+	for _, want := range []string{"<pre>", "<title>todo</title>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the page is missing %q:\n%s", want, out)
+		}
+	}
+}

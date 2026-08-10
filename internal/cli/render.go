@@ -3,8 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"embed"
 	"fmt"
-	"html"
+	"html/template"
 	"io"
 	"os"
 	"text/tabwriter"
@@ -14,6 +15,26 @@ import (
 
 	"github.com/scottlaird/todo/internal/store"
 )
+
+//go:embed templates/page.html.tmpl
+var templates embed.FS
+
+// page is the status page's template, parsed once at startup so a broken one
+// is a build-adjacent failure rather than a surprise at request time.
+//
+// html/template escapes what goes into it, which is why the blocks below are
+// plain text: they are tabwriter output, and the only thing standing between
+// a title full of angle brackets and the page is this.
+var page = template.Must(template.ParseFS(templates, "templates/page.html.tmpl"))
+
+// pageContent is what the template renders. The three blocks are
+// preformatted text, and go inside <pre>.
+type pageContent struct {
+	GeneratedAt string
+	Calendar    string
+	Queue       string
+	Projects    string
+}
 
 // horizon is how far ahead the calendar block looks. Two weeks is what a
 // weekly review can act on; beyond that the answer is "ask again later".
@@ -86,34 +107,38 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time) ([]byte, er
 		return nil, err
 	}
 
-	calendar, err := block(func(w io.Writer) error { return writeCalendarTable(w, windows) })
-	if err != nil {
-		return nil, err
+	content := pageContent{GeneratedAt: now.UTC().Format(time.RFC3339)}
+	blocks := []struct {
+		into  *string
+		write func(io.Writer) error
+	}{
+		{&content.Calendar, func(w io.Writer) error { return writeCalendarTable(w, windows) }},
+		{&content.Queue, func(w io.Writer) error { return writeRenderedActions(w, actions) }},
+		{&content.Projects, func(w io.Writer) error { return writeRenderedProjects(w, projects) }},
 	}
-	queue, err := block(func(w io.Writer) error { return writeRenderedActions(w, actions) })
-	if err != nil {
-		return nil, err
-	}
-	planned, err := block(func(w io.Writer) error { return writeRenderedProjects(w, projects) })
-	if err != nil {
-		return nil, err
+	for _, b := range blocks {
+		text, err := block(b.write)
+		if err != nil {
+			return nil, err
+		}
+		*b.into = text
 	}
 
-	var page bytes.Buffer
-	fmt.Fprintf(&page, pageTemplate,
-		now.UTC().Format(time.RFC3339),
-		calendar, queue, planned)
-	return page.Bytes(), nil
+	var rendered bytes.Buffer
+	if err := page.Execute(&rendered, content); err != nil {
+		return nil, fmt.Errorf("rendering the page: %w", err)
+	}
+	return rendered.Bytes(), nil
 }
 
-// block runs one of the table writers and escapes what it produced, since it
-// is going inside <pre>.
+// block runs one of the table writers and returns what it produced, as plain
+// text. The template escapes it.
 func block(write func(io.Writer) error) (string, error) {
 	var raw bytes.Buffer
 	if err := write(&raw); err != nil {
 		return "", err
 	}
-	return html.EscapeString(raw.String()), nil
+	return raw.String(), nil
 }
 
 // writeRenderedActions is the queue, trimmed to what is worth reading at a
@@ -161,19 +186,3 @@ func jiraSummary(p *store.Project) string {
 	}
 	return p.JiraKey.String + " (" + p.JiraStatus.String + ")"
 }
-
-const pageTemplate = `<!doctype html>
-<meta charset="utf-8">
-<title>todo</title>
-<h1>todo</h1>
-<p>generated %s</p>
-
-<h2>calendar — the next fortnight</h2>
-<pre>%s</pre>
-
-<h2>queue — unblocked actions</h2>
-<pre>%s</pre>
-
-<h2>projects — active</h2>
-<pre>%s</pre>
-`

@@ -387,3 +387,217 @@ func TestCloseAnUntrackedPR(t *testing.T) {
 		t.Errorf("error = %v, want it to say the pull request is not tracked", err)
 	}
 }
+
+// TestOnlyCompletingIsDone: three of the four reasons are abandonment, and
+// the schema keeps state and closed_reason apart so an abandoned action
+// cannot pass for a finished one.
+func TestOnlyCompletingIsDone(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   string
+	}{
+		{ClosedCompleted, ActionDone},
+		{ClosedDropped, ActionDropped},
+		{ClosedObsolete, ActionDropped},
+		{ClosedSuperseded, ActionDropped},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			st := newStore(t)
+			a := addAction(t, st, "write it", "write")
+
+			result := closeIt(t, st, CloseRequest{ID: a.ID, Reason: tt.reason})
+			if result.Closed.State != tt.want {
+				t.Errorf("closing as %s left state %q, want %q",
+					tt.reason, result.Closed.State, tt.want)
+			}
+		})
+	}
+}
+
+// TestAbandoningWorkInstantiatesNothing: dropping a write action must not
+// produce the review chain that finishing it would have.
+func TestAbandoningWorkInstantiatesNothing(t *testing.T) {
+	st := newStore(t)
+	pr, _ := func() (*PR, []*Action) {
+		trackRepo(t, st, "scottlaird/todo")
+		setPipeline(t, st, "scottlaird/todo", PipelineReview)
+		return trackPR(t, st, "scottlaird/todo", 1), nil
+	}()
+	a := addAction(t, st, "write the endpoint", "write")
+
+	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID, Reason: ClosedDropped})
+	if len(result.Created) != 0 {
+		t.Errorf("dropping the work created %v, want nothing", ids(result.Created))
+	}
+}
+
+func closeProject(t *testing.T, st *Store, id, status string) *ProjectCloseResult {
+	t.Helper()
+
+	result, err := st.CloseProject(context.Background(), ActorHuman, id, status)
+	if err != nil {
+		t.Fatalf("CloseProject(%s, %s) returned error: %v", id, status, err)
+	}
+	return result
+}
+
+// TestCloseProjectDropsItsActions is the point of the verb: an action exists
+// to advance a project, and a closed project cannot be advanced.
+func TestCloseProjectDropsItsActions(t *testing.T) {
+	st := newStore(t)
+	p := insertProject(t, st, "Split the nodepool")
+
+	first := addAction(t, st, "write it", "write")
+	second := addAction(t, st, "roll it out", "run")
+	elsewhere := addAction(t, st, "nothing to do with it", "announce")
+	for _, a := range []*Action{first, second} {
+		attach(t, st, a, func(a *Action) {
+			a.ProjectID = sql.NullString{String: p.ID, Valid: true}
+		})
+	}
+
+	result := closeProject(t, st, p.ID, ProjectRetired)
+	if result.Project.Status != ProjectRetired {
+		t.Errorf("status = %q, want %q", result.Project.Status, ProjectRetired)
+	}
+	if !equalStrings(ids(result.Dropped), []string{first.ID, second.ID}) {
+		t.Fatalf("dropped %v, want both of the project's actions", ids(result.Dropped))
+	}
+
+	for _, a := range result.Dropped {
+		if a.State != ActionDropped || a.ClosedReason.String != ClosedObsolete {
+			t.Errorf("%s = %s/%s, want dropped/obsolete", a.ID, a.State, a.ClosedReason.String)
+		}
+	}
+	if got := stateOf(t, st, elsewhere.ID); got != ActionReady {
+		t.Errorf("an action on another project became %q", got)
+	}
+}
+
+// TestCloseProjectFreesWhatItsActionsBlocked: dropping is still closing, so
+// anything waiting behind one is released rather than left waiting on
+// something that will never move.
+func TestCloseProjectFreesWhatItsActionsBlocked(t *testing.T) {
+	st := newStore(t)
+	p := insertProject(t, st, "Split the nodepool")
+
+	blocker := addAction(t, st, "write it", "write")
+	attach(t, st, blocker, func(a *Action) {
+		a.ProjectID = sql.NullString{String: p.ID, Valid: true}
+	})
+	waiting := addAction(t, st, "waits on it, but is not part of it", "announce")
+	blockOn(t, st, waiting, blocker)
+
+	result := closeProject(t, st, p.ID, ProjectDone)
+	if !equalStrings(ids(result.Freed), []string{waiting.ID}) {
+		t.Errorf("freed %v, want [%s]", ids(result.Freed), waiting.ID)
+	}
+	if got := stateOf(t, st, waiting.ID); got != ActionReady {
+		t.Errorf("state = %q, want %q", got, ActionReady)
+	}
+}
+
+// TestFreedThenDroppedIsNotReported: an action freed by one drop can be
+// dropped by the next, and reporting it as freed would be a lie.
+func TestFreedThenDroppedIsNotReported(t *testing.T) {
+	st := newStore(t)
+	p := insertProject(t, st, "Split the nodepool")
+
+	blocker := addAction(t, st, "write it", "write")
+	dependent := addAction(t, st, "roll it out", "run")
+	for _, a := range []*Action{blocker, dependent} {
+		attach(t, st, a, func(a *Action) {
+			a.ProjectID = sql.NullString{String: p.ID, Valid: true}
+		})
+	}
+	blockOn(t, st, dependent, blocker)
+
+	result := closeProject(t, st, p.ID, ProjectRetired)
+	if len(result.Freed) != 0 {
+		t.Errorf("Freed = %v, want nothing: both were dropped", ids(result.Freed))
+	}
+	if !equalStrings(ids(result.Dropped), []string{blocker.ID, dependent.ID}) {
+		t.Errorf("dropped %v, want both", ids(result.Dropped))
+	}
+}
+
+func TestCloseProjectRejections(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	p := insertProject(t, st, "Split the nodepool")
+
+	if _, err := st.CloseProject(ctx, ActorHuman, p.ID, ProjectSuperseded); err == nil ||
+		!strings.Contains(err.Error(), "supersede") {
+		t.Errorf("superseding through close returned %v, want it pointed at the verb", err)
+	}
+	if _, err := st.CloseProject(ctx, ActorHuman, p.ID, "abandoned"); err == nil {
+		t.Error("an invented status was accepted, want an error")
+	}
+
+	closeProject(t, st, p.ID, ProjectDone)
+	if _, err := st.CloseProject(ctx, ActorHuman, p.ID, ProjectRetired); err == nil ||
+		!strings.Contains(err.Error(), "already done") {
+		t.Errorf("closing twice returned %v, want it refused", err)
+	}
+}
+
+// TestCloseProjectIsOneCorrelation: the project and everything it abandoned
+// are one decision, and the log should say so.
+func TestCloseProjectIsOneCorrelation(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	p := insertProject(t, st, "Split the nodepool")
+
+	a := addAction(t, st, "write it", "write")
+	attach(t, st, a, func(a *Action) {
+		a.ProjectID = sql.NullString{String: p.ID, Valid: true}
+	})
+
+	before, err := st.Events(ctx, EventQuery{})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	closeProject(t, st, p.ID, ProjectDone)
+
+	after, err := st.Events(ctx, EventQuery{})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+
+	correlations := map[string]bool{}
+	for _, e := range after[len(before):] {
+		correlations[e.Correlation] = true
+	}
+	if len(correlations) != 1 {
+		t.Errorf("closing wrote %d correlation ids, want 1", len(correlations))
+	}
+}
+
+// TestCloseProjectClearsASnooze: a snooze says when to look again, and there
+// is no again.
+func TestCloseProjectClearsASnooze(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	p := insertProject(t, st, "Split the nodepool")
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	snoozed := p.Clone()
+	snoozed.Status = ProjectSnoozed
+	snoozed.SnoozeUntil = sql.NullString{String: "2027-01-01", Valid: true}
+	if _, err := tx.Update(ctx, p, snoozed); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	result := closeProject(t, st, p.ID, ProjectDone)
+	if result.Project.SnoozeUntil.Valid {
+		t.Errorf("snooze_until = %v, want it cleared", result.Project.SnoozeUntil)
+	}
+}

@@ -125,6 +125,11 @@ func (s *Store) planClose(ctx context.Context, actor Actor, req CloseRequest) (*
 	if !verb.StartsPipeline {
 		return plan, nil
 	}
+	// Abandoning the work does not produce the work that would have followed
+	// it. Only completing it does.
+	if req.Reason != "" && req.Reason != ClosedCompleted {
+		return plan, nil
+	}
 
 	if err := plan.readPipeline(ctx, tx); err != nil {
 		return nil, err
@@ -281,10 +286,7 @@ func linkSubjectIfNeeded(ctx context.Context, tx *Tx, a *Action, subject string)
 // columns the schema couples to it.
 func closeRecord(ctx context.Context, tx *Tx, a *Action, reason string) error {
 	after := a.Clone()
-	after.State = ActionDone
-	if reason == ClosedDropped {
-		after.State = ActionDropped
-	}
+	after.State = stateForReason(reason)
 	after.ClosedAt = sql.NullString{String: tx.at, Valid: true}
 	after.ClosedReason = sql.NullString{String: reason, Valid: true}
 
@@ -293,6 +295,18 @@ func closeRecord(ctx context.Context, tx *Tx, a *Action, reason string) error {
 	}
 	*a = *after
 	return nil
+}
+
+// stateForReason maps why an action closed onto how it closed.
+//
+// Only completing something makes it done. Superseded, dropped and obsolete
+// are all abandonment, whatever prompted them, and the schema keeps two
+// columns precisely so an abandoned item cannot pass for a finished one.
+func stateForReason(reason string) string {
+	if reason == ClosedCompleted {
+		return ActionDone
+	}
+	return ActionDropped
 }
 
 // instantiate writes the pipeline's actions, each blocked by the one before
@@ -367,4 +381,139 @@ func validClosedReason(reason string) bool {
 		}
 	}
 	return false
+}
+
+// Terminal project statuses: a project in one of these is finished with, and
+// closing it again is a mistake rather than a no-op.
+func isTerminalStatus(status string) bool {
+	switch status {
+	case ProjectDone, ProjectRetired, ProjectSuperseded:
+		return true
+	}
+	return false
+}
+
+// ProjectCloseResult is what closing a project did.
+type ProjectCloseResult struct {
+	Project *Project
+	// Dropped are the open actions the closure abandoned. An action exists
+	// to advance a project, and a closed project cannot be advanced.
+	Dropped []*Action
+	// Freed are the actions that became ready because a dropped one stopped
+	// blocking them, and the ones that stopped being hidden behind it.
+	Freed []*Action
+}
+
+// CloseProject closes a project and drops whatever was still open on it.
+//
+// Leaving them is the bug this exists to fix: an action outliving its project
+// sits in `action list --unblocked` pointing at work nobody wants, and the
+// queue is only worth reading if everything in it is worth doing.
+//
+// status must be done or retired. Superseding is its own act, because it
+// records where the work went, which this cannot know.
+//
+// Everything happens in one transaction and under one correlation id, so the
+// log reads as a single decision rather than as a project closing and some
+// unrelated actions being abandoned nearby.
+func (s *Store) CloseProject(ctx context.Context, actor Actor, id, status string) (*ProjectCloseResult, error) {
+	switch status {
+	case ProjectDone, ProjectRetired:
+	case ProjectSuperseded:
+		return nil, fmt.Errorf("use `todo project supersede` for %s: it records where the work went",
+			ProjectSuperseded)
+	default:
+		return nil, fmt.Errorf("%q does not close a project: use %s or %s",
+			status, ProjectDone, ProjectRetired)
+	}
+
+	tx, err := s.Begin(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadProject(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if isTerminalStatus(before.Status) {
+		return nil, fmt.Errorf("%s is already %s", before.ID, before.Status)
+	}
+
+	after := before.Clone()
+	after.Status = status
+	// A snooze is about when to look again, and there is no again.
+	after.SnoozeUntil = sql.NullString{}
+	after.SnoozeReason = ""
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		return nil, err
+	}
+
+	result := &ProjectCloseResult{Project: after}
+	if result.Dropped, result.Freed, err = tx.dropOpenActions(ctx, after.ID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// dropOpenActions abandons every open action advancing a project, and
+// returns what that freed.
+//
+// Each is dropped as obsolete rather than dropped: the distinction is why it
+// stopped mattering, and "the project it advanced was closed" is not the same
+// as "we decided against it". Their cascades still run, so an action blocked
+// behind one of these is released rather than left waiting on something that
+// will never move.
+func (t *Tx) dropOpenActions(ctx context.Context, projectID string) (dropped, freed []*Action, err error) {
+	open, err := t.loadActions(ctx,
+		"SELECT %s FROM action a WHERE a.closed_at IS NULL AND a.project_id = ? ORDER BY a.n", projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for _, a := range open {
+		if err := closeRecord(ctx, t, a, ClosedObsolete); err != nil {
+			return nil, nil, err
+		}
+		dropped = append(dropped, a)
+
+		unblocked, err := t.freeDependents(ctx, a.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		unhidden, err := t.unhide(ctx, a.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		freed = append(freed, unblocked...)
+		freed = append(freed, unhidden...)
+	}
+
+	// Something freed by one drop may be dropped by a later one, since they
+	// can belong to the same project. Report only what survived.
+	//
+	// The check is against the dropped list rather than each record's own
+	// state: a freed action was read before the later drop rewrote it, so the
+	// copy in hand still says ready.
+	return dropped, notDropped(freed, dropped), nil
+}
+
+func notDropped(freed, dropped []*Action) []*Action {
+	gone := make(map[string]bool, len(dropped))
+	for _, a := range dropped {
+		gone[a.ID] = true
+	}
+
+	var survived []*Action
+	for _, a := range freed {
+		if !gone[a.ID] {
+			survived = append(survived, a)
+		}
+	}
+	return survived
 }

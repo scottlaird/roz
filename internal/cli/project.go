@@ -28,6 +28,7 @@ func newProjectCmd() *cobra.Command {
 		newProjectSnoozeCmd(),
 		newProjectWakeCmd(),
 		newProjectSupersedeCmd(),
+		newProjectCloseCmd(),
 		newProjectListCmd(),
 		newProjectJiraCmd(),
 	)
@@ -686,4 +687,57 @@ func nullIntText(v sql.NullInt64) string {
 		return "-"
 	}
 	return fmt.Sprint(v.Int64)
+}
+
+func newProjectCloseCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "close <project>",
+		Short: "Close a project, dropping whatever was still open on it",
+		Long: "An action exists to advance a project, and a closed project cannot be\n" +
+			"advanced — so its open actions are dropped as obsolete rather than left\n" +
+			"in the queue pointing at work nobody wants. Anything blocked behind one\n" +
+			"of them is released.\n\n" +
+			"--status retired is the abandoned case; `todo project supersede` is the\n" +
+			"one that records where the work went instead.",
+		Args: cobra.ExactArgs(1),
+		RunE: runProjectClose,
+	}
+	cmd.Flags().String(flagStatus, store.ProjectDone,
+		store.ProjectDone+" or "+store.ProjectRetired)
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runProjectClose(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+
+	actor, err := actorFrom(cmd)
+	if err != nil {
+		return err
+	}
+	status, err := cmd.Flags().GetString(flagStatus)
+	if err != nil {
+		return err
+	}
+
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	result, err := st.CloseProject(ctx, actor, args[0], status)
+	if err != nil {
+		return notFoundOr(err, args[0])
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%s %s\n", result.Project.ID, result.Project.Status)
+	for _, a := range result.Dropped {
+		fmt.Fprintf(out, "  %s dropped: %s was closed\n", a.ID, result.Project.ID)
+	}
+	for _, a := range result.Freed {
+		fmt.Fprintf(out, "  %s is now %s\n", a.ID, a.State)
+	}
+	return nil
 }

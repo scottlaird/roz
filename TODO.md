@@ -5,29 +5,32 @@ are ordered roughly by what blocks what, not by importance.
 
 ## Where things stand
 
-Built: the schema and its migration machinery; the diff-and-emit layer; five
-entities — `project`, `pr`, `github_repo`, `calendar_window` and `actionverb`;
-GitHub sync, one-shot and as a polling loop; and the predicate registry the
-verb vocabulary resolves against. `todo watch` tails the log.
+Built: the schema and its migration machinery; the diff-and-emit layer; six
+entities — `project`, `action`, `pr`, `github_repo`, `calendar_window` and
+`actionverb`; GitHub sync, one-shot and as a polling loop; and the predicate
+registry the verb vocabulary resolves against. `todo watch` tails the log.
 
-Ten commands are still stubs that exit 1. Eight of them are `action`; the
-other two are `render` and `verify`.
+Six commands are still stubs that exit 1. Four of them are `action`; the other
+two are `render` and `verify`.
 
-The sketch's core claim — that the queue is mechanical — is still not
-testable, because `action` does not exist. Everything it stands on now does.
+What is left of `action` is the half with edges in it. Until closing exists,
+`action list` is a list in creation order — which is what it says it is, and
+why the queue's core claim is still untested.
 
 ## The critical path
 
 In dependency order. Nothing later can be finished first.
 
-- [ ] **`action`, the entity.** Nothing blocks it: the vocabulary is seeded and
-      every predicate it names resolves. Same shape as `project`, plus
-      `hidden_behind` and the closed_at/closed_reason pair.
-- [ ] **`action add`, `show`, `list`, `set`.** Mechanical, once the entity
-      exists.
+- [ ] **`action_pipeline` and `pipeline_step`.** What a verb instantiates when
+      it closes, held as data rather than in code, with `pipeline_step.verb` a
+      foreign key into `actionverb`. `github_repo.review_policy` becomes a
+      reference to one. Default at track time is the lowest-numbered active
+      pipeline. Steps already satisfied at instantiation are skipped, which is
+      what makes a repository needing no review take the same path as one that
+      does.
 - [ ] **`action close`, and the cascade.** The interesting one: closing
-      instantiates the follow-on actions and unblocks dependents, all under one
-      correlation id. Blocked on a decision — see the first open question.
+      instantiates the pipeline and unblocks dependents, all under one
+      correlation id.
 - [ ] **`add-blocker`, `hide-behind`, `link-pr`.** The edges, which need
       `action_blocks` and `action_pr`.
 - [ ] **Closing on predicates during sync.** The registry can answer "is this
@@ -75,13 +78,6 @@ them.
       what `review` needs before it can close on a predicate.
 
 ## Open questions
-
-**What does `review_policy = none` change?** Closing a `write` action is
-supposed to instantiate `send_for_review → wait_review → merge`. For a
-repository needing no review that pipeline is wrong, but the replacement is
-undecided — probably just `merge`, possibly `undraft → merge`. This is the
-next thing in the way: the cascade is where it gets encoded, and guessing now
-means rewriting later.
 
 **`todo verify` writes an observed column.** It stamps `last_verified_at`, so a
 human running it is exactly what `Tx.Update` refuses. `todo pr announce` has
@@ -134,6 +130,15 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   to record that a pull request is tracked because it is assigned to us.
 - Calendar kinds are free text; capacity is not. Nothing branches on kind,
   while the sort reads capacity.
+- **What a verb instantiates is a named pipeline, not a `review_policy` enum.**
+  The write chain is `undraft → send_for_review → wait_review → merge`, and a
+  repository needing no review runs the same one with the satisfied steps
+  skipped, rather than a second chain that has to be kept in step with the
+  first.
+- An identifier is allocated only after the record validates, so a mistyped
+  verb costs no number. Allocation still writes on its own connection, which
+  means no read transaction may be open across it — SQLite answers the upgrade
+  with `SQLITE_BUSY_SNAPSHOT` rather than waiting.
 
 ## Deliberately out of scope
 

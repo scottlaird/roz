@@ -15,7 +15,9 @@ json.go      JSON in and out, driven by the same field metadata
 alloc.go     identifier allocation
 sequence.go  identifier prefixes and the entity registry
 subject.go   resolving an identifier to whatever it names
-project.go   pr.go  repo.go   the entities
+predicate.go how a verb decides its work is done
+verb.go      the vocabulary, and the check that every predicate resolves
+project.go  action.go  pr.go  repo.go  calendar.go   the entities
 ```
 
 ## The one idea

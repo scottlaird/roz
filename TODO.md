@@ -72,7 +72,6 @@ them.
 - [ ] Action sort order — `rank_class`, then `unblocks_count`, then `effort`,
       with `rank_pin` as the override. `rank_class` is already on every verb;
       the rest needs the dependency graph.
-- [ ] The root `README.md` is two lines.
 - [ ] `action show -o json` omits the edges, which the table shows. They are
       not columns of `action`, and a record marshals from its own columns.
 - [ ] `todo db backup` and `todo db restore` — thin wrappers over SQLite, so

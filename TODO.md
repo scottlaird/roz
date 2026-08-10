@@ -94,9 +94,37 @@ them.
       need to name *who* it waits for, the predicate would need to ask whether
       that group has approved rather than whether the pull request has, and
       GitHub's `reviewDecision` is a single verdict that will not answer it —
-      it wants the individual reviews and the teams they came from. It also
-      leans on knowing which teams a pull request needs, which is the
-      CODEOWNERS inference work, so the two are worth designing together.
+      it wants the individual reviews and the teams they came from.
+
+      **Blocked on the CODEOWNERS inference below**, which is where knowing
+      which teams a pull request needs comes from. Designing this first would
+      mean guessing at the shape of what feeds it.
+- [ ] **Infer reviewers from CODEOWNERS.** Which teams a pull request needs
+      is derivable: the files it touches, matched against the repository's
+      CODEOWNERS. Nothing here reads either yet — sync asks for the pull
+      request's state, not its file list.
+
+      It is worth doing for its own sake, since "who is this waiting for" is
+      most of what makes a `wait_review` action readable. Three other things
+      want it: pipelines with more than one review step, which is blocked on
+      it; `review_rule`, which the sketch describes as routing policy; and the
+      `review` verb, which cannot close on a predicate while nothing knows
+      whose review was wanted.
+
+      Ownership can be per-directory and can change under a long-lived pull
+      request, so what is inferred is an observation with a time, not a fact
+      about the repository.
+- [ ] **Sort by staleness — what has gone longest without being looked at.**
+      Half of it exists. `project.last_verified_at` is in the schema and
+      `todo verify` is the verb designed to stamp it; both are waiting on each
+      other. What is missing is the same column on `action`, a way to mark one
+      reviewed, and the ordering itself.
+
+      Two clocks, and they answer different questions: the last time an item
+      *changed* is already recoverable from `updated_at` and the log, while
+      the last time someone *looked at it and was satisfied* is not recorded
+      anywhere. Staleness is the second one — an item nobody has changed for a
+      month is fine if it was reviewed on Friday, and alarming if it was not.
 - [ ] **An MCP server**, so an agent can read the queue and write to it
       without shelling out. Stdio is the shape that matters — an agent spawns
       the process — and localhost is fine as a second transport, where `todo

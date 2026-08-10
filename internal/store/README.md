@@ -17,6 +17,7 @@ sequence.go  identifier prefixes and the entity registry
 subject.go   resolving an identifier to whatever it names
 predicate.go how a verb decides its work is done
 verb.go      the vocabulary, and the check that every predicate resolves
+pipeline.go  what closing a verb instantiates
 project.go  action.go  pr.go  repo.go  calendar.go   the entities
 ```
 

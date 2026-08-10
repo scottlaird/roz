@@ -7,6 +7,8 @@ schema.sql              hand-written description of the current schema
 migrations/
   0001_initial.sql      the schema as first shipped
   0002_github_repo.sql  github_repo, and the pr rebuild that points at it
+  ...
+  0006_action_pipeline.sql  the pipelines, and the column on github_repo
 schema.go               embeds both, and orders the migrations
 ```
 
@@ -18,10 +20,10 @@ database and an upgraded one cannot end up different.
 
 `schema.sql` is documentation. It is never run except by two tests, which
 build a database each way and compare them: `TestSchemaMatchesMigrations` over
-the normalised contents of `sqlite_schema`, and `TestSeededVocabulary` over
-the `actionverb` rows, which `sqlite_schema` does not carry. Those are what
-allow the file to stay hand-written: without them, documentation would rot
-silently.
+the normalised contents of `sqlite_schema`, and `TestSeededVocabulary` and
+`TestSeededPipelines` over the seeded rows, which `sqlite_schema` does not
+carry. Those are what allow the file to stay hand-written: without them,
+documentation would rot silently.
 
 That is also the rule for putting anything else in it. Content in this file is
 only worth having if something checks it — seed data included.
@@ -63,6 +65,13 @@ nullability is not supported at all. Any of those needs the table rebuilt:
 create `<table>_new`, copy the rows, `DROP` the old one, rename. Given how
 much this schema leans on `CHECK` constraints, expect to do that often.
 `0002` is a worked example.
+
+**A rebuild is not always the answer.** `ADD COLUMN` does carry a
+`REFERENCES` clause, provided the column defaults to NULL — the one case
+SQLite allows with foreign keys on — and `DROP COLUMN` copes with a column
+that has its own `CHECK`. `0006` replaces `github_repo.review_policy` that
+way, and has to: `pr.repo` references `github_repo`, so dropping the old table
+would count a deferred violation for every pull request.
 
 Two things that will bite during a rebuild, both learned the hard way:
 

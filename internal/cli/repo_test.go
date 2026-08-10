@@ -39,18 +39,18 @@ func TestRepoListEmpty(t *testing.T) {
 }
 
 // TestRepoTrackWithPolicy is the case that prompted the entity: a repository
-// that needs no review, stated at the point of tracking it.
+// nobody reviews for you, stated at the point of tracking it.
 func TestRepoTrackWithPolicy(t *testing.T) {
 	db := initDB(t)
 
 	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/scratch",
-		"--review-policy", "none", "--disposition", "mine alone"); err != nil {
+		"--pipeline", "direct", "--disposition", "mine alone"); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
 
 	object := repoJSON(t, db, "scottlaird/scratch")
-	if object["review_policy"] != "none" {
-		t.Errorf("review_policy = %#v, want none", object["review_policy"])
+	if object["pipeline"] != "direct" {
+		t.Errorf("pipeline = %#v, want direct", object["pipeline"])
 	}
 	if object["disposition"] != "mine alone" {
 		t.Errorf("disposition = %#v, want the stated one", object["disposition"])
@@ -79,18 +79,18 @@ func TestRepoSet(t *testing.T) {
 	trackRepo(t, db, "scottlaird/todo")
 
 	out, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo",
-		"--review-policy", "required", "--announce-channel", "#reviews")
+		"--pipeline", "direct", "--announce-channel", "#reviews")
 	if err != nil {
 		t.Fatalf("repo set returned error: %v", err)
 	}
-	for _, want := range []string{"review_policy", "required", "announce_channel"} {
+	for _, want := range []string{"pipeline", "direct", "announce_channel"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("set output does not mention %q:\n%s", want, out)
 		}
 	}
 
 	object := repoJSON(t, db, "scottlaird/todo")
-	if object["review_policy"] != "required" || object["announce_channel"] != "#reviews" {
+	if object["pipeline"] != "direct" || object["announce_channel"] != "#reviews" {
 		t.Errorf("repository = %#v, want the values set", object)
 	}
 }
@@ -98,28 +98,28 @@ func TestRepoSet(t *testing.T) {
 func TestRepoSetClearsPolicy(t *testing.T) {
 	db := initDB(t)
 	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/todo",
-		"--review-policy", "none"); err != nil {
+		"--pipeline", "direct"); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
 
 	if _, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo",
-		"--review-policy", ""); err != nil {
+		"--pipeline", ""); err != nil {
 		t.Fatalf("repo set returned error: %v", err)
 	}
-	if got := repoJSON(t, db, "scottlaird/todo")["review_policy"]; got != nil {
-		t.Errorf("review_policy = %#v, want null after clearing", got)
+	if got := repoJSON(t, db, "scottlaird/todo")["pipeline"]; got != nil {
+		t.Errorf("pipeline = %#v, want null after clearing", got)
 	}
 }
 
-// TestSyncMayNotSetReviewPolicy is the rule the entity exists to encode.
-func TestSyncMayNotSetReviewPolicy(t *testing.T) {
+// TestSyncMayNotSetThePipeline is the rule the entity exists to encode.
+func TestSyncMayNotSetThePipeline(t *testing.T) {
 	db := initDB(t)
 	trackRepo(t, db, "scottlaird/todo")
 
 	_, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo",
-		"--review-policy", "none", "--actor", "sync:github")
+		"--pipeline", "direct", "--actor", "sync:github")
 	if err == nil {
-		t.Fatal("sync set review_policy through the CLI, want an error")
+		t.Fatal("sync set the pipeline through the CLI, want an error")
 	}
 	// The CLI refuses a sync actor before the store even sees it.
 	if !strings.Contains(err.Error(), "not allowed") {
@@ -139,9 +139,9 @@ func TestRepoRejections(t *testing.T) {
 		{name: "too many parts", args: []string{"repo", "track", "a/b/c"}, wantErr: "more than one"},
 		{name: "pull request key", args: []string{"repo", "track", "owner/repo#1"}, wantErr: "pull request key"},
 		{
-			name:    "unknown review policy",
-			args:    []string{"repo", "track", "scottlaird/todo", "--review-policy", "maybe"},
-			wantErr: "not recognised",
+			name:    "unknown pipeline",
+			args:    []string{"repo", "track", "scottlaird/todo", "--pipeline", "maybe"},
+			wantErr: "is not a pipeline",
 		},
 		{name: "show untracked", args: []string{"repo", "show", "nobody/nothing"}, wantErr: "no such item"},
 		{name: "set untracked", args: []string{"repo", "set", "nobody/nothing", "--disposition", "x"}, wantErr: "no such item"},

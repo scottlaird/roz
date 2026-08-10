@@ -11,23 +11,16 @@ import (
 // schema's CHECK (id = owner || '/' || name).
 const repoSeparator = "/"
 
-// Review policies. NULL — an empty ReviewPolicy — means unstated.
-const (
-	ReviewRequired = "required"
-	ReviewNone     = "none"
-)
-
 // GitHubRepo is a tracked repository.
 //
 // It exists because a repository carries policy a pull request cannot. Chief
-// among them is whether review is required at all: a pull request against a
-// repository that needs no review wants a different set of actions from one
-// that does.
+// among them is Pipeline: what happens to a pull request between written and
+// merged, which is not the same everywhere.
 //
-// ReviewPolicy is authored rather than observed, which cuts against the usual
+// Pipeline is authored rather than observed, which cuts against the usual
 // rule for anything GitHub knows. Reading branch protection needs admin on
 // the repository, so it is unavailable exactly where the repository is not
-// yours — and "these repositories do not need review" is a statement about
+// yours — and "these repositories do not get reviewed" is a statement about
 // how someone works, not a fact retrieved from an API. Making it observed
 // would let a sync overwrite it with a shrug.
 type GitHubRepo struct {
@@ -35,7 +28,6 @@ type GitHubRepo struct {
 	Owner string `db:"owner" kind:"identity"`
 	Name  string `db:"name" kind:"identity"`
 
-	ReviewPolicy    sql.NullString `db:"review_policy"`
 	AnnounceChannel sql.NullString `db:"announce_channel"`
 	Disposition     string         `db:"disposition"`
 
@@ -46,6 +38,11 @@ type GitHubRepo struct {
 
 	TrackedSince string         `db:"tracked_since" kind:"created"`
 	LastSyncedAt sql.NullString `db:"last_synced_at" kind:"observed"`
+
+	// Pipeline is last because ADD COLUMN put the column there. NULL means
+	// unstated: a repository tracked before anyone said how its pull requests
+	// get merged.
+	Pipeline sql.NullString `db:"pipeline"`
 }
 
 func (r *GitHubRepo) table() string       { return "github_repo" }

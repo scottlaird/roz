@@ -36,6 +36,11 @@ type ActionVerb struct {
 	RequiresPR   bool           `db:"requires_pr"`
 	Active       bool           `db:"active"`
 	Description  string         `db:"description"`
+
+	// StartsPipeline says whether closing an action with this verb opens the
+	// repository's pipeline. Having a subject pull request is not on its own
+	// a reason to: investigating one ends when you know the answer.
+	StartsPipeline bool `db:"starts_pipeline"`
 }
 
 func (v *ActionVerb) table() string       { return "actionverb" }

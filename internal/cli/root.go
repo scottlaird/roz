@@ -51,6 +51,7 @@ func NewRootCmd() *cobra.Command {
 		newNoteCmd(),
 		newExceptionCmd(),
 		newRenderCmd(),
+		newServeCmd(),
 		newWatchCmd(),
 	)
 	return root

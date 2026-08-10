@@ -28,10 +28,10 @@ In dependency order. Nothing later can be finished first.
 - [ ] **A real `todo render`.** What exists is three `<pre>` blocks and no
       design worth the name. Templates, the ranking, and the status page the
       whole thing exists to regenerate are still ahead.
-- [ ] **A web server for the rendered page**, at which point `todo serve`
-      running sync, watch and the server together is the natural shape.
-      `internal/service` exists for this: `service.Run(ctx, syncer, server,
-      tailer)`, first failure cancels the rest.
+- [ ] **Push the page to an open browser.** `todo serve` builds the page per
+      request, so a reload is current but a browser left open is not.
+      Websockets or a hanging GET; either way the change signal is the event
+      log, which `todo watch` already tails.
 
 ## What dogfooding needs
 
@@ -66,6 +66,11 @@ them.
       in creation order until it exists.
 - [ ] `action show -o json` omits the edges, which the table shows. They are
       not columns of `action`, and a record marshals from its own columns.
+- [ ] `--db` is a package-level variable in `internal/cli`, written by flag
+      parsing. Harmless for one-shot commands and for `serve`, which opens the
+      store once before any service starts, but it means two commands cannot
+      safely run in one process — a puzzling test flake in waiting. Thread the
+      flag through instead.
 - [ ] `todo db backup` and `todo db restore` — thin wrappers over SQLite, so
       the syntax does not have to be remembered. `VACUUM INTO` is the backup:
       it is consistent against a live database, which a file copy is not.
@@ -75,6 +80,14 @@ them.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
+- [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
+      `project` name one tracker in the schema, in the entity, and in `todo
+      project jira`. Home projects use GitHub issues, and the reader for them
+      already exists — `gh api graphql` and the batching that polls pull
+      requests. The refactor is generalising the columns to a tracker and a
+      key, which is a table rebuild and a decision: one set of columns with a
+      `tracker` discriminator, or a child table so a project can carry both.
+      Worth doing before there is much data to migrate.
 - [ ] Tracking a pull request assigned to us rather than authored by us has
       nowhere to record *why* it is tracked. That is a schema change, and it is
       what `review` needs before it can close on a predicate.
@@ -164,6 +177,11 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - **Blocking cycles are refused, not just self-edges.** The `CHECK` catches
   `A → A`; a recursive query catches the rest. A cycle is a set of actions
   that never unblocks.
+- **One renderer, used twice.** `todo serve` calls the same function `todo
+  render` writes to a file, per request. Two ways of building the page would
+  eventually be two different pages.
+- **The server listens on loopback and has no authentication.** It is a
+  personal queue; making it reachable should take a deliberate act.
 - Calendar kinds are free text; capacity is not. Nothing branches on kind,
   while the sort reads capacity.
 - **What a verb instantiates is a named pipeline, not a `review_policy` enum.**

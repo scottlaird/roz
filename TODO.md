@@ -60,10 +60,12 @@ them.
 
 - [ ] `todo verify` — still stubbed, though no longer for want of a design:
       `todo pr announce` set the pattern. See the open question.
-- [ ] Ranking — `rank_class`, then `unblocks_count`, then `effort`, with
-      `rank_pin` as the override. `rank_class` is already on every verb; the
-      rest needs the dependency graph. `render` and `action list` both print
-      in creation order until it exists.
+- [ ] Ranking — `rank_class`, then `unblocks_count`, then `effort`. The page
+      now sorts by `rank_pin`, then the priority of the project an action
+      advances, then creation order, which is a first step and not the sketch's
+      ranking: `rank_class` is on every verb already and `unblocks_count`
+      needs the dependency graph. `action list` and `project list` still print
+      in creation order, and could take a `--sort priority` cheaply.
 - [ ] `action show -o json` omits the edges, which the table shows. They are
       not columns of `action`, and a record marshals from its own columns.
 - [ ] `--db` is a package-level variable in `internal/cli`, written by flag
@@ -195,6 +197,11 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - **Blocking cycles are refused, not just self-edges.** The `CHECK` catches
   `A → A`; a recursive query catches the rest. A cycle is a set of actions
   that never unblocks.
+- **The page is the one place that does not print in creation order.** An
+  action has no priority of its own, so it inherits the priority of the
+  project it advances; `rank_pin` overrides that, because overriding is what
+  it is for. Anything unprioritised sorts last — unstated is not the same as
+  low, but it has to go somewhere, and behind the stated ones does no harm.
 - **One renderer, used twice.** `todo serve` calls the same function `todo
   render` writes to a file, per request. Two ways of building the page would
   eventually be two different pages.

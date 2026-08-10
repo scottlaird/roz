@@ -150,6 +150,17 @@ func (t *Tx) LoadVerb(ctx context.Context, verb string) (*ActionVerb, error) {
 	return &v, nil
 }
 
+// Orderings a list can be returned in.
+//
+// The default everywhere is creation order, which is honest about being
+// arbitrary. OrderPriority is the first step towards the ranking the sketch
+// describes; it is not that ranking, which also wants rank_class,
+// unblocks_count and effort.
+const (
+	OrderCreated  = ""
+	OrderPriority = "priority"
+)
+
 // ActionFilter narrows ListActions. The zero value selects everything.
 type ActionFilter struct {
 	// State keeps actions in one state.
@@ -167,17 +178,19 @@ type ActionFilter struct {
 	// recomputed from the open blockers wherever an edge or a closure moves
 	// it — two ways of answering the same question would be one too many.
 	Unblocked bool
+	// Order is how the results come back. Empty is creation order.
+	Order string
 	// Expired keeps snoozed actions whose date has passed — the query the
 	// sketch calls the highest value in the system, because a snooze nobody
 	// is watching is how work goes quiet.
 	Expired bool
 }
 
-// ListActions returns actions matching the filter, ordered by number.
+// ListActions returns actions matching the filter.
 //
-// Ordering is on n rather than id, which is the reason n exists: NA100 sorts
-// before NA41 lexically. This is creation order, not queue order — ranking
-// needs the dependency graph and comes with the queue.
+// Creation order by default, and ordering is on n rather than id, which is
+// the reason n exists: NA100 sorts before NA41 lexically. OrderPriority sorts
+// by what the action advances instead — see actionOrder.
 func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action, error) {
 	fields, err := fieldsOfStruct(&Action{})
 	if err != nil {
@@ -185,15 +198,20 @@ func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action
 	}
 	columns := make([]string, len(fields))
 	for i, f := range fields {
-		columns[i] = f.column
+		columns[i] = "a." + f.column
 	}
 
+	// The table is aliased and its columns qualified because ordering by
+	// priority joins project, and both tables have a snooze_until.
 	where, args := filter.clauses(s.now().UTC().Format(timeFormat))
-	query := fmt.Sprintf("SELECT %s FROM action", strings.Join(columns, ", "))
+	query := fmt.Sprintf("SELECT %s FROM action a", strings.Join(columns, ", "))
+	if filter.Order == OrderPriority {
+		query += " LEFT JOIN project p ON p.id = a.project_id"
+	}
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY n"
+	query += " ORDER BY " + actionOrder(filter.Order)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -219,31 +237,46 @@ func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action
 	return actions, nil
 }
 
+// actionOrder is the ORDER BY for a listing.
+//
+// Under OrderPriority: rank_pin first, because it exists to override whatever
+// the system worked out; then the priority of the project the action
+// advances, since an action inherits its urgency from what it is for; then
+// creation order. Anything without a priority sorts after everything with
+// one — unstated is not the same as low, but it has to go somewhere, and
+// behind the stated ones is the reading that does no harm.
+func actionOrder(order string) string {
+	if order != OrderPriority {
+		return "a.n"
+	}
+	return "a.rank_pin IS NULL, a.rank_pin, p.priority IS NULL, p.priority, a.n"
+}
+
 func (f ActionFilter) clauses(now string) ([]string, []any) {
 	var where []string
 	var args []any
 
 	if f.State != "" {
-		where = append(where, "state = ?")
+		where = append(where, "a.state = ?")
 		args = append(args, f.State)
 	}
 	if f.Verb != "" {
-		where = append(where, "verb = ?")
+		where = append(where, "a.verb = ?")
 		args = append(args, f.Verb)
 	}
 	if f.Project != "" {
-		where = append(where, "project_id = ?")
+		where = append(where, "a.project_id = ?")
 		args = append(args, f.Project)
 	}
 	if f.Open {
-		where = append(where, "closed_at IS NULL")
+		where = append(where, "a.closed_at IS NULL")
 	}
 	if f.Unblocked {
-		where = append(where, "closed_at IS NULL", "state = ?", "hidden_behind IS NULL")
+		where = append(where, "a.closed_at IS NULL", "a.state = ?", "a.hidden_behind IS NULL")
 		args = append(args, ActionReady)
 	}
 	if f.Expired {
-		where = append(where, "state = ? AND snooze_until IS NOT NULL AND snooze_until < ?")
+		where = append(where, "a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_until < ?")
 		args = append(args, ActionSnoozed, now)
 	}
 	return where, args

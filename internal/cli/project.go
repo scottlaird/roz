@@ -29,6 +29,7 @@ func newProjectCmd() *cobra.Command {
 		newProjectWakeCmd(),
 		newProjectSupersedeCmd(),
 		newProjectListCmd(),
+		newProjectJiraCmd(),
 	)
 	return cmd
 }

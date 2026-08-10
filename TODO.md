@@ -133,8 +133,15 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   value alone rather than clearing it.
 - **Absence is not completion either.** Every predicate is false where nothing
   has been observed, so an unsynced pull request closes nothing.
-- Hand-entered observations get their own actor — `sync:slack-manual` — so the
-  log never claims an integration reported something typed in.
+- Hand-entered observations get their own actor — `sync:slack-manual` and
+  `sync:jira-manual` — so the log never claims an integration reported
+  something typed in. The actor is fixed by the command rather than taken from
+  `--actor`, which keeps the exception to one named verb instead of a hole in
+  the rule.
+- **Jira observations are keyed on the issue, not the project.** An
+  integration has `CDSS-1744`, not `SL106`. Every project carrying the key
+  gets the observation, and a key nobody carries is reported rather than
+  refused: this tracks a subset of what Jira holds.
 - A verb naming a predicate the build lacks is refused when the store opens.
   Retired verbs are skipped; rows are deactivated, never deleted.
 - `review` is seeded human-closed, against the sketch, until there is somewhere
@@ -192,6 +199,7 @@ From the sketch, and still true:
   for whether it belongs.
 
 Jira and Slack sync remain out for scheduling reasons rather than design ones.
-`todo pr announce` covers the one Slack signal anything depends on, by hand.
+`todo pr announce` and `todo project jira` cover both by hand, which is enough
+to work with and enough to know what the real sync has to produce.
 Without it, `send_for_review` cannot close on its own — that verb is the only
 predicate GitHub cannot satisfy.

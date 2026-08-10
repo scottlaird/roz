@@ -27,6 +27,11 @@ const (
 	// exactly this: a note claiming a broken integration had recovered,
 	// recorded as state rather than as an unverified report.
 	ActorSlackManual Actor = "sync:slack-manual"
+
+	// ActorJiraManual is the same arrangement for Jira: a person entering
+	// what Jira sync would have observed, kept distinct so the log does not
+	// claim Jira said it.
+	ActorJiraManual Actor = "sync:jira-manual"
 )
 
 // syncPrefix marks an actor as a sync. New sync sources are named

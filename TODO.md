@@ -80,6 +80,16 @@ them.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
+- [ ] **An MCP server**, so an agent can read the queue and write to it
+      without shelling out. Stdio is the shape that matters — an agent spawns
+      the process — and localhost is fine as a second transport, where `todo
+      serve` is the obvious host. Two things to settle first: whether the
+      transport is hand-rolled JSON-RPC over stdin and stdout, which the
+      standard library can do, or the official Go SDK, which would be the
+      first dependency here that is not `cobra` or the driver; and that every
+      write is attributed `agent:<name>`, never `human` and never a `sync:`
+      actor, so the log keeps saying who did what. The tool surface is roughly
+      the read commands plus `action add`, `close`, `snooze` and `note`.
 - [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
       `project` name one tracker in the schema, in the entity, and in `todo
       project jira`. Home projects use GitHub issues, and the reader for them

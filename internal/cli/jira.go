@@ -43,6 +43,7 @@ func newProjectJiraCmd() *cobra.Command {
 		RunE: runProjectJira,
 	}
 	f := cmd.Flags()
+	f.String("summary", "", "the issue's title, so a key is legible without opening Jira")
 	f.String(flagStatus, "", "Jira's status, e.g. In Progress; Jira's vocabulary, not ours")
 	f.String(flagSprint, "", "the sprint it is in")
 	f.String(flagAssignee, "", "who it is assigned to; empty means unassigned")
@@ -110,6 +111,7 @@ func jiraObservations(cmd *cobra.Command, args []string) ([]store.JiraObservatio
 		flag   string
 		target *sql.NullString
 	}{
+		{"summary", &observation.Summary},
 		{flagStatus, &observation.Status},
 		{flagSprint, &observation.Sprint},
 		{flagAssignee, &observation.Assignee},
@@ -124,8 +126,9 @@ func jiraObservations(cmd *cobra.Command, args []string) ([]store.JiraObservatio
 		*field.target = sql.NullString{String: value, Valid: true}
 	}
 
-	if !observation.Status.Valid && !observation.Sprint.Valid && !observation.Assignee.Valid {
-		return nil, fmt.Errorf("nothing observed: pass --%s, --%s or --%s",
+	if !observation.Summary.Valid && !observation.Status.Valid &&
+		!observation.Sprint.Valid && !observation.Assignee.Valid {
+		return nil, fmt.Errorf("nothing observed: pass --summary, --%s, --%s or --%s",
 			flagStatus, flagSprint, flagAssignee)
 	}
 	return []store.JiraObservation{observation}, nil
@@ -138,6 +141,7 @@ func jiraObservations(cmd *cobra.Command, args []string) ([]store.JiraObservatio
 // the flags make by being given or not.
 type jiraFeedEntry struct {
 	Key      string  `json:"key"`
+	Summary  *string `json:"summary"`
 	Status   *string `json:"status"`
 	Sprint   *string `json:"sprint"`
 	Assignee *string `json:"assignee"`
@@ -176,6 +180,7 @@ func readJiraFeed(cmd *cobra.Command, path string) ([]store.JiraObservation, err
 		}
 		observations[i] = store.JiraObservation{
 			Key:      entry.Key,
+			Summary:  optional(entry.Summary),
 			Status:   optional(entry.Status),
 			Sprint:   optional(entry.Sprint),
 			Assignee: optional(entry.Assignee),

@@ -237,3 +237,26 @@ func TestJiraRejections(t *testing.T) {
 		})
 	}
 }
+
+// TestJiraSummaryCanBeSet: the column existed with no way to fill it, which
+// made it dead surface. Both paths reach it — the flag and the feed.
+func TestJiraSummaryCanBeSet(t *testing.T) {
+	db := initDB(t)
+	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
+
+	if _, err := runCLI(t, "project", "jira", "--db", db, "CDSS-1744",
+		"--summary", "Move Walker nodepool definitions"); err != nil {
+		t.Fatalf("project jira --summary returned error: %v", err)
+	}
+	if got := issueJSON(t, db, "CDSS-1744")["summary"]; got != "Move Walker nodepool definitions" {
+		t.Errorf("summary = %#v, want it set by the flag", got)
+	}
+
+	if _, err := runCLIWithInput(t, `{"key": "CDSS-1750", "summary": "from the feed"}`,
+		"project", "jira", "--db", db, "--feed", "-"); err != nil {
+		t.Fatalf("project jira --feed returned error: %v", err)
+	}
+	if got := issueJSON(t, db, "CDSS-1750")["summary"]; got != "from the feed" {
+		t.Errorf("summary = %#v, want it set by the feed", got)
+	}
+}

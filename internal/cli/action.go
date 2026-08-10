@@ -526,8 +526,10 @@ func newActionListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Actions, in the order they were created",
-		Long: "Creation order, not queue order: ranking needs the dependency graph,\n" +
-			"which arrives with the queue.",
+		Long: "Creation order by default. --sort priority uses what the status page\n" +
+			"uses: any rank_pin first, then the priority of the project the action\n" +
+			"advances, then creation order. Neither is the ranking the design\n" +
+			"describes, which also wants rank_class and the dependency graph.",
 		Args: cobra.NoArgs,
 		RunE: runActionList,
 	}
@@ -538,6 +540,7 @@ func newActionListCmd() *cobra.Command {
 	f.String(flagStatus, "", "filter to one state")
 	f.String(flagVerb, "", "filter to one verb")
 	f.String(flagProject, "", "filter to one project")
+	addSortFlag(cmd)
 	addOutputFlag(cmd)
 	return cmd
 }
@@ -602,9 +605,13 @@ func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
 	if err != nil {
 		return store.ActionFilter{}, err
 	}
+	order, err := sortFrom(cmd)
+	if err != nil {
+		return store.ActionFilter{}, err
+	}
 	return store.ActionFilter{
 		State: state, Verb: verb, Project: project,
-		Open: open, Unblocked: unblocked, Expired: expired,
+		Open: open, Unblocked: unblocked, Expired: expired, Order: order,
 	}, nil
 }
 

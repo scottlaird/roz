@@ -231,3 +231,73 @@ func TestListsStillPrintInCreationOrder(t *testing.T) {
 	}
 	assertOrder(t, actions, "action list", "slow work", "urgent work")
 }
+
+// TestListSortFlag: the lists default to creation order and take priority on
+// request, which is the whole of the flag.
+func TestListSortFlag(t *testing.T) {
+	db := initDB(t)
+	later := addProject(t, db, "the later one", "--priority", "4")
+	urgent := addProject(t, db, "the urgent one", "--priority", "1")
+	addAction(t, db, "--title", "slow work", "--verb", "write", "--project", later)
+	addAction(t, db, "--title", "urgent work", "--verb", "write", "--project", urgent)
+
+	tests := []struct {
+		name  string
+		args  []string
+		first string
+		then  string
+	}{
+		{"projects, default", []string{"project", "list"}, "the later one", "the urgent one"},
+		{"projects, priority", []string{"project", "list", "--sort", "priority"},
+			"the urgent one", "the later one"},
+		{"actions, default", []string{"action", "list"}, "slow work", "urgent work"},
+		{"actions, priority", []string{"action", "list", "--sort", "priority"},
+			"urgent work", "slow work"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runCLI(t, append(tt.args, "--db", db)...)
+			if err != nil {
+				t.Fatalf("%v returned error: %v", tt.args, err)
+			}
+			assertOrder(t, out, tt.name, tt.first, tt.then)
+		})
+	}
+}
+
+func TestListSortRejectsAnUnknownOrder(t *testing.T) {
+	db := initDB(t)
+
+	for _, args := range [][]string{
+		{"action", "list", "--sort", "whenever"},
+		{"project", "list", "--sort", "whenever"},
+	} {
+		_, err := runCLI(t, append(args, "--db", db)...)
+		if err == nil {
+			t.Fatalf("%v accepted an unknown order, want an error", args)
+		}
+		if !strings.Contains(err.Error(), "is not an order") {
+			t.Errorf("error = %v", err)
+		}
+	}
+}
+
+// TestSortPriorityStillFilters: the ordering must not change which rows come
+// back, only their order.
+func TestSortPriorityStillFilters(t *testing.T) {
+	db := initDB(t)
+	ready := addAction(t, db, "--title", "ready work", "--verb", "write")
+	blocked := addAction(t, db, "--title", "blocked work", "--verb", "run")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db, "--from", blocked, "--to", ready); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "action", "list", "--db", db, "--unblocked", "--sort", "priority")
+	if err != nil {
+		t.Fatalf("action list returned error: %v", err)
+	}
+	if !strings.Contains(out, "ready work") || strings.Contains(out, "blocked work") {
+		t.Errorf("--unblocked --sort priority returned the wrong rows:\n%s", out)
+	}
+}

@@ -114,3 +114,34 @@ func openStore() (*store.Store, error) {
 	}
 	return st, nil
 }
+
+// Sort orders a list command accepts. The default everywhere is creation
+// order, which is honest about being arbitrary; asking for priority is a
+// choice the caller makes.
+const (
+	sortFlag     = "sort"
+	sortCreated  = "created"
+	sortPriority = "priority"
+)
+
+// addSortFlag registers --sort on a list command.
+func addSortFlag(cmd *cobra.Command) {
+	cmd.Flags().String(sortFlag, sortCreated, "order: created or priority")
+}
+
+// sortFrom resolves --sort into the store's ordering.
+func sortFrom(cmd *cobra.Command) (string, error) {
+	value, err := cmd.Flags().GetString(sortFlag)
+	if err != nil {
+		return "", err
+	}
+	switch value {
+	case sortCreated:
+		return store.OrderCreated, nil
+	case sortPriority:
+		return store.OrderPriority, nil
+	default:
+		return "", fmt.Errorf("--%s %q is not an order: use %s or %s",
+			sortFlag, value, sortCreated, sortPriority)
+	}
+}

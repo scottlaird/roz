@@ -70,7 +70,7 @@ directory.
 | `todo exception` | Record an exception for a monitor to surface. |
 | **other** | |
 | `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
-| `todo render` | Regenerate the status page: three `<pre>` blocks, ordered by priority, no design worth the name. |
+| `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. GitHub and Jira identifiers become links, including ones written into prose; Jira needs `--jira-base-url` and `--jira-prefix`. |
 | `todo verify` | Stamp `last_verified_at`. *Not implemented yet.* |
 
 ## A walkthrough

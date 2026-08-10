@@ -125,6 +125,22 @@ them.
       the last time someone *looked at it and was satisfied* is not recorded
       anywhere. Staleness is the second one — an item nobody has changed for a
       month is fine if it was reviewed on Friday, and alarming if it was not.
+- [ ] **Push events into an agent's session, as an MCP channel.** The MCP
+      server answers when asked; nothing reaches an agent between turns. A
+      Claude Code *channel* is the mechanism for that — a server declaring
+      `experimental: {"claude/channel": {}}` and emitting
+      `notifications/claude/channel` has its events injected into the session,
+      and the agent reacts. The contract is a capability key and a
+      notification, so this server can do it without the Node SDK the
+      documentation's examples use.
+
+      Worth knowing before building it: the transport is not where the delay
+      is. A merge reaches the queue when the syncer next polls, so the
+      interval dominates anything the notification path costs, and the lever
+      for a faster round trip is that interval or a GitHub webhook. Channels
+      are a research preview and need
+      `--dangerously-load-development-channels`, so this buys reach into
+      sessions nobody is watching rather than speed.
 - [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
       `project` name one tracker in the schema, in the entity, and in `todo
       project jira`. Home projects use GitHub issues, and the reader for them
@@ -245,6 +261,10 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   calling a tool runs that command, so validation, the actor rule and the
   cascade are the same code rather than a second implementation. What cannot
   be derived is which commands make sense to an agent, which is a list.
+- **`watch` is exposed to MCP bounded, not excluded.** Following would never
+  return, so the tool is the read-once form with the filters left to the
+  caller: an agent asks what has happened since a sequence number, and asks
+  again. `--once` and `--interval` are the server's, not arguments.
 - **An MCP write is `agent:<client>`**, taken from what the client calls
   itself at initialize and falling back to `--agent`. `--actor` is not offered
   as a tool argument, so there is no way to write as a person from there.

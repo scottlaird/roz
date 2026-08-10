@@ -39,15 +39,33 @@ type mcpTools struct {
 // skipped are the commands an agent has no business calling.
 //
 // init creates a database, which is a decision about where state lives.
-// serve, syncer and watch never return. completion and help are cobra's.
+// serve and syncer never return. completion and help are cobra's.
 var skipped = map[string]bool{
 	"init":       true,
 	"serve":      true,
 	"syncer":     true,
-	"watch":      true,
 	"completion": true,
 	"help":       true,
 	"mcp":        true,
+}
+
+// forced are flags the server always passes, keyed by tool.
+//
+// watch follows by default and would never return, so what is offered here is
+// the bounded read: everything the command can filter and window, answered
+// once. An agent asking "what has happened since sequence N" is the useful
+// question, and it can ask again.
+var forced = map[string][]string{"watch": {"--once"}}
+
+// hiddenPerTool are flags one tool does not offer, because the server has
+// already decided them. --interval only means something while following.
+var hiddenPerTool = map[string]map[string]bool{
+	"watch": {"once": true, "interval": true},
+}
+
+// hidden reports whether a flag is the server's rather than the caller's.
+func hidden(tool, flag string) bool {
+	return hiddenFlags[flag] || hiddenPerTool[tool][flag]
 }
 
 // hiddenFlags are handled by the server rather than offered to the caller.
@@ -112,8 +130,9 @@ func describeCommand(cmd *cobra.Command) mcp.Tool {
 		}
 	}
 
+	name := toolName(cmd)
 	cmd.Flags().VisitAll(func(f *pflagFlag) {
-		if hiddenFlags[f.Name] {
+		if hidden(name, f.Name) {
 			return
 		}
 		properties[f.Name] = schemaForFlag(f)
@@ -129,7 +148,7 @@ func describeCommand(cmd *cobra.Command) mcp.Tool {
 	}
 
 	return mcp.Tool{
-		Name:        toolName(cmd),
+		Name:        name,
 		Description: describe(cmd),
 		InputSchema: schema,
 	}
@@ -257,6 +276,7 @@ func (m *mcpTools) find(name string) (*cobra.Command, bool) {
 // flag. An argument the command does not have is refused rather than dropped,
 // since silently ignoring it would look like it had been applied.
 func (m *mcpTools) argv(ctx context.Context, cmd *cobra.Command, arguments map[string]any) ([]string, error) {
+	name := toolName(cmd)
 	path := strings.Fields(cmd.CommandPath())[1:]
 	argv := append([]string{}, path...)
 
@@ -265,13 +285,13 @@ func (m *mcpTools) argv(ctx context.Context, cmd *cobra.Command, arguments map[s
 		known[arg.name] = true
 	}
 	cmd.Flags().VisitAll(func(f *pflagFlag) {
-		if !hiddenFlags[f.Name] {
+		if !hidden(name, f.Name) {
 			known[f.Name] = true
 		}
 	})
 	for given := range arguments {
 		if !known[given] {
-			return nil, fmt.Errorf("%s takes no argument called %q", toolName(cmd), given)
+			return nil, fmt.Errorf("%s takes no argument called %q", name, given)
 		}
 	}
 
@@ -281,7 +301,7 @@ func (m *mcpTools) argv(ctx context.Context, cmd *cobra.Command, arguments map[s
 	// separate each flag from its value.
 	var flags []string
 	cmd.Flags().VisitAll(func(f *pflagFlag) {
-		if hiddenFlags[f.Name] {
+		if hidden(name, f.Name) {
 			return
 		}
 		value, ok := arguments[f.Name]
@@ -293,13 +313,14 @@ func (m *mcpTools) argv(ctx context.Context, cmd *cobra.Command, arguments map[s
 	argv = append(argv, flags...)
 
 	argv = append(argv, m.fixedFlags(cmd, m.actor(ctx))...)
+	argv = append(argv, forced[name]...)
 
 	var positionals []string
 	for _, arg := range positionalsOf(cmd) {
 		value, ok := arguments[arg.name]
 		if !ok {
 			if arg.required {
-				return nil, fmt.Errorf("%s needs %q", toolName(cmd), arg.name)
+				return nil, fmt.Errorf("%s needs %q", name, arg.name)
 			}
 			continue
 		}

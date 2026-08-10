@@ -31,6 +31,8 @@ func newProjectCmd() *cobra.Command {
 		newProjectCloseCmd(),
 		newProjectListCmd(),
 		newProjectJiraCmd(),
+		newProjectLinkJiraCmd(),
+		newProjectUnlinkJiraCmd(),
 	)
 	return cmd
 }
@@ -74,7 +76,7 @@ func newProjectAddCmd() *cobra.Command {
 // records it with the checks that belong to it.
 var projectFieldFlags = []string{
 	flagTitle, flagSummary, flagStatus, flagPriority, flagEffort,
-	flagSnoozeUntil, flagSnoozeReason, flagDesignRef, flagJiraKey,
+	flagSnoozeUntil, flagSnoozeReason, flagDesignRef,
 }
 
 func addProjectFieldFlags(cmd *cobra.Command) {
@@ -87,7 +89,7 @@ func addProjectFieldFlags(cmd *cobra.Command) {
 	f.String(flagSnoozeUntil, "", "ISO-8601 date or timestamp; requires status snoozed")
 	f.String(flagSnoozeReason, "", "why it is deferred")
 	f.StringArray(flagDesignRef, nil, "path to a design note; repeatable")
-	f.String(flagJiraKey, "", "e.g. CDSS-1744")
+	f.StringArray(flagJiraKey, nil, "issue to track, e.g. CDSS-1744; repeatable")
 	f.String(flagJSON, "", "authored columns as a JSON object, keyed by column name")
 }
 
@@ -142,6 +144,17 @@ func runProjectAdd(cmd *cobra.Command, _ []string) error {
 
 	if err := tx.Insert(ctx, p); err != nil {
 		return err
+	}
+	// Linking happens here rather than in applyProjectFlags because it is a
+	// row in another table, not a column on this one.
+	keys, err := cmd.Flags().GetStringArray(flagJiraKey)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := tx.LinkProjectJira(ctx, p.ID, key); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -212,13 +225,6 @@ func applyProjectFlags(cmd *cobra.Command, p *store.Project) error {
 			return err
 		}
 		p.SnoozeReason = v
-	}
-	if f.Changed(flagJiraKey) {
-		v, err := f.GetString(flagJiraKey)
-		if err != nil {
-			return err
-		}
-		p.JiraKey = nullString(v)
 	}
 	if f.Changed(flagDesignRef) {
 		refs, err := f.GetStringArray(flagDesignRef)

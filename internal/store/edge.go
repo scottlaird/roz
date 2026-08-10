@@ -15,8 +15,9 @@ import (
 // action.state, which the diff already logs; a second event saying the same
 // thing would only be a second thing to keep true.
 const (
-	eventBlocked = "blocked"
-	eventLinked  = "linked"
+	eventBlocked  = "blocked"
+	eventLinked   = "linked"
+	eventUnlinked = "unlinked"
 )
 
 // How a pull request relates to an action.

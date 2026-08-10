@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// withJiraKey gives a project a Jira issue key.
-func withJiraKey(t *testing.T, st *Store, title, key string) *Project {
+// linkJira gives a project a Jira issue, creating the issue if it is new.
+func linkJira(t *testing.T, st *Store, title string, keys ...string) *Project {
 	t.Helper()
 	ctx := context.Background()
 
@@ -20,15 +20,14 @@ func withJiraKey(t *testing.T, st *Store, title, key string) *Project {
 	}
 	defer tx.Rollback()
 
-	after := p.Clone()
-	after.JiraKey = sql.NullString{String: key, Valid: true}
-	if _, err := tx.Update(ctx, p, after); err != nil {
-		t.Fatalf("Update() returned error: %v", err)
+	for _, key := range keys {
+		if err := tx.LinkProjectJira(ctx, p.ID, key); err != nil {
+			t.Fatalf("LinkProjectJira() returned error: %v", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
-	*p = *after
 	return p
 }
 
@@ -42,28 +41,7 @@ func observeJira(t *testing.T, st *Store, observations ...JiraObservation) *Jira
 	return result
 }
 
-func TestObserveJira(t *testing.T) {
-	st := newStore(t)
-	ctx := context.Background()
-	p := withJiraKey(t, st, "Split the nodepool", "CDSS-1744")
-
-	observeJira(t, st, JiraObservation{
-		Key:      "CDSS-1744",
-		Status:   sql.NullString{String: "In Progress", Valid: true},
-		Assignee: sql.NullString{String: "scott", Valid: true},
-	})
-
-	loaded := reload(t, st, p.ID)
-	if loaded.JiraStatus.String != "In Progress" || loaded.JiraAssignee.String != "scott" {
-		t.Errorf("project = %+v, want the observation applied", loaded)
-	}
-	if !loaded.JiraSyncedAt.Valid {
-		t.Error("jira_synced_at was not stamped")
-	}
-	_ = ctx
-}
-
-func reload(t *testing.T, st *Store, id string) *Project {
+func loadIssue(t *testing.T, st *Store, key string) *JiraIssue {
 	t.Helper()
 	ctx := context.Background()
 
@@ -73,41 +51,80 @@ func reload(t *testing.T, st *Store, id string) *Project {
 	}
 	defer tx.Rollback()
 
-	p, err := tx.LoadProject(ctx, id)
+	issue, err := tx.LoadJiraIssue(ctx, key)
 	if err != nil {
-		t.Fatalf("LoadProject(%s) returned error: %v", id, err)
+		t.Fatalf("LoadJiraIssue(%s) returned error: %v", key, err)
 	}
-	return p
+	return issue
 }
 
-// TestUnreportedFieldsAreLeftAlone is the sketch's rule: absence is not a
-// fact. A sync that says nothing about the sprint has not emptied it.
+func TestObserveJira(t *testing.T) {
+	st := newStore(t)
+	linkJira(t, st, "Split the nodepool", "CDSS-1744")
+
+	observeJira(t, st, JiraObservation{
+		Key:      "CDSS-1744",
+		Status:   sql.NullString{String: "In Progress", Valid: true},
+		Assignee: sql.NullString{String: "scott", Valid: true},
+	})
+
+	issue := loadIssue(t, st, "CDSS-1744")
+	if issue.Status.String != "In Progress" || issue.Assignee.String != "scott" {
+		t.Errorf("issue = %+v, want the observation applied", issue)
+	}
+	if !issue.SyncedAt.Valid {
+		t.Error("synced_at was not stamped")
+	}
+}
+
+// TestAProjectMayTrackSeveralIssues is why this is an entity at all: one piece
+// of work maps to "allow scaling up" and "allow scaling down", and the column
+// this replaced could hold one of them.
+func TestAProjectMayTrackSeveralIssues(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	p := linkJira(t, st, "Walker resizing", "CDSS-1392", "CDSS-1393")
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	keys, err := tx.JiraKeysForProject(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("JiraKeysForProject() returned error: %v", err)
+	}
+	if !equalStrings(keys, []string{"CDSS-1392", "CDSS-1393"}) {
+		t.Errorf("JiraKeysForProject() = %v, want both issues", keys)
+	}
+}
+
+// TestUnreportedFieldsAreLeftAlone: absence is not a fact.
 func TestUnreportedFieldsAreLeftAlone(t *testing.T) {
 	st := newStore(t)
-	p := withJiraKey(t, st, "Split the nodepool", "CDSS-1744")
+	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
 	observeJira(t, st, JiraObservation{
 		Key:    "CDSS-1744",
-		Status: sql.NullString{String: "In Progress", Valid: true},
-		Sprint: sql.NullString{String: "Sprint 41", Valid: true},
+		Sprint: sql.NullString{String: "Sprint 42", Valid: true},
 	})
 	observeJira(t, st, JiraObservation{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "Done", Valid: true},
 	})
 
-	loaded := reload(t, st, p.ID)
-	if loaded.JiraSprint.String != "Sprint 41" {
-		t.Errorf("jira_sprint = %q, want it left alone by a report that omitted it",
-			loaded.JiraSprint.String)
+	issue := loadIssue(t, st, "CDSS-1744")
+	if issue.Sprint.String != "Sprint 42" {
+		t.Errorf("sprint = %q, want it left alone by an observation that did not mention it",
+			issue.Sprint.String)
 	}
 }
 
-// TestAnEmptyValueIsAFact is the other side of it: unassigning an issue is
-// something Jira says, not something it fails to say.
+// TestAnEmptyValueIsAFact: unassigning an issue is something Jira said.
 func TestAnEmptyValueIsAFact(t *testing.T) {
 	st := newStore(t)
-	p := withJiraKey(t, st, "Split the nodepool", "CDSS-1744")
+	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
 	observeJira(t, st, JiraObservation{
 		Key:      "CDSS-1744",
@@ -118,106 +135,133 @@ func TestAnEmptyValueIsAFact(t *testing.T) {
 		Assignee: sql.NullString{String: "", Valid: true},
 	})
 
-	if got := reload(t, st, p.ID).JiraAssignee.String; got != "" {
-		t.Errorf("jira_assignee = %q, want it cleared by an explicit empty value", got)
+	if got := loadIssue(t, st, "CDSS-1744").Assignee.String; got != "" {
+		t.Errorf("assignee = %q, want it cleared by an explicit empty value", got)
 	}
 }
 
 // TestSyncedAtMovesWithoutOtherChanges: "nothing has changed since Tuesday"
-// and "nobody has looked since Tuesday" are different things.
+// and "nobody has looked since Tuesday" are different questions.
 func TestSyncedAtMovesWithoutOtherChanges(t *testing.T) {
 	st := newStore(t)
-	p := withJiraKey(t, st, "Split the nodepool", "CDSS-1744")
+	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	observation := JiraObservation{
+	observeJira(t, st, JiraObservation{
 		Key:    "CDSS-1744",
-		Status: sql.NullString{String: "In Progress", Valid: true},
-	}
-	observeJira(t, st, observation)
-	first := reload(t, st, p.ID).JiraSyncedAt.String
+		Status: sql.NullString{String: "To Do", Valid: true},
+	})
+	first := loadIssue(t, st, "CDSS-1744").SyncedAt.String
 
-	observeJira(t, st, observation)
-	second := reload(t, st, p.ID).JiraSyncedAt.String
+	observeJira(t, st, JiraObservation{
+		Key:      "CDSS-1744",
+		Status:   sql.NullString{String: "To Do", Valid: true},
+		SyncedAt: "2027-01-01T00:00:00.000Z",
+	})
 
-	if first == second {
-		t.Errorf("jira_synced_at stayed at %s across two reads", first)
+	if got := loadIssue(t, st, "CDSS-1744").SyncedAt.String; got == first {
+		t.Error("synced_at did not move when nothing else changed")
 	}
 }
 
-func TestObserveJiraSpreadsAcrossProjectsSharingAKey(t *testing.T) {
+// TestAnIssueNothingTracksIsStillRecorded: an issue is a record in its own
+// right, so an observation about one nobody has claimed is stored rather than
+// discarded. It was reported as unmatched and dropped before.
+func TestAnIssueNothingTracksIsStillRecorded(t *testing.T) {
 	st := newStore(t)
 
-	first := withJiraKey(t, st, "one half", "CDSS-1744")
-	second := withJiraKey(t, st, "the other half", "CDSS-1744")
+	result := observeJira(t, st, JiraObservation{
+		Key:    "CDSS-9999",
+		Status: sql.NullString{String: "To Do", Valid: true},
+	})
+
+	if len(result.Applied) != 1 || !result.Applied[0].Created {
+		t.Fatalf("Applied = %+v, want one newly created issue", result.Applied)
+	}
+	if len(result.Applied[0].Projects) != 0 {
+		t.Errorf("Projects = %v, want none", result.Applied[0].Projects)
+	}
+	if got := loadIssue(t, st, "CDSS-9999").Status.String; got != "To Do" {
+		t.Errorf("status = %q, want it stored even with nothing tracking it", got)
+	}
+}
+
+// TestObserveJiraReportsEveryProjectSharingAKey: two projects watching one
+// epic is reasonable, and both should be named.
+func TestObserveJiraReportsEveryProjectSharingAKey(t *testing.T) {
+	st := newStore(t)
+	first := linkJira(t, st, "one half", "CDSS-1744")
+	second := linkJira(t, st, "the other half", "CDSS-1744")
 
 	result := observeJira(t, st, JiraObservation{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "In Progress", Valid: true},
 	})
-	if len(result.Applied) != 2 {
-		t.Fatalf("applied to %d projects, want both", len(result.Applied))
+
+	if len(result.Applied) != 1 {
+		t.Fatalf("Applied = %+v, want one issue", result.Applied)
 	}
-	for _, p := range []*Project{first, second} {
-		if got := reload(t, st, p.ID).JiraStatus.String; got != "In Progress" {
-			t.Errorf("%s jira_status = %q, want the observation", p.ID, got)
-		}
+	if !equalStrings(result.Applied[0].Projects, []string{first.ID, second.ID}) {
+		t.Errorf("Projects = %v, want both %s and %s",
+			result.Applied[0].Projects, first.ID, second.ID)
 	}
 }
 
-// TestUnmatchedKeysAreReportedNotRefused: this tracks a subset of what Jira
-// holds, so a key nobody claims is normal.
-func TestUnmatchedKeysAreReportedNotRefused(t *testing.T) {
+// TestUnlinkKeepsTheIssue: what Jira said is not invalidated by nobody
+// tracking it any more.
+func TestUnlinkKeepsTheIssue(t *testing.T) {
 	st := newStore(t)
-	withJiraKey(t, st, "Split the nodepool", "CDSS-1744")
+	ctx := context.Background()
+	p := linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	result := observeJira(t, st,
-		JiraObservation{Key: "CDSS-1744", Status: sql.NullString{String: "Done", Valid: true}},
-		JiraObservation{Key: "CDSS-9999", Status: sql.NullString{String: "To Do", Valid: true}})
-
-	if !equalStrings(result.Unmatched, []string{"CDSS-9999"}) {
-		t.Errorf("Unmatched = %v, want [CDSS-9999]", result.Unmatched)
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
 	}
-	if len(result.Applied) != 1 {
-		t.Errorf("Applied = %+v, want the one that matched", result.Applied)
+	if err := tx.UnlinkProjectJira(ctx, p.ID, "CDSS-1744"); err != nil {
+		t.Fatalf("UnlinkProjectJira() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	if loadIssue(t, st, "CDSS-1744") == nil {
+		t.Error("the issue went away with the link")
 	}
 }
 
 // TestHumansMayNotObserveJira: the whole reason for a separate actor is that
-// these are observed columns, and a person writing them has to be doing it
-// deliberately, as a sync.
+// observed columns are not a person's to write.
 func TestHumansMayNotObserveJira(t *testing.T) {
 	st := newStore(t)
-	withJiraKey(t, st, "Split the nodepool", "CDSS-1744")
+	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
 	_, err := st.ObserveJira(context.Background(), ActorHuman, []JiraObservation{{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "Done", Valid: true},
 	}})
-	if err == nil || !strings.Contains(err.Error(), "observed fields") {
-		t.Errorf("error = %v, want a human refused", err)
+	if err == nil {
+		t.Fatal("ObserveJira() as a human was accepted")
+	}
+	if !strings.Contains(err.Error(), "observed") {
+		t.Errorf("error = %v, want it to say the fields are observed", err)
 	}
 }
 
 // TestJiraObservationsAreLoggedAsManual: the log must not claim Jira said
-// something a person typed.
+// something that was typed in by hand.
 func TestJiraObservationsAreLoggedAsManual(t *testing.T) {
 	st := newStore(t)
-	ctx := context.Background()
-	withJiraKey(t, st, "Split the nodepool", "CDSS-1744")
+	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
 	observeJira(t, st, JiraObservation{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "Done", Valid: true},
 	})
 
-	events, err := st.Events(ctx, EventQuery{})
-	if err != nil {
-		t.Fatalf("Events() returned error: %v", err)
-	}
-
+	logged := events(t, st)
 	var found bool
-	for _, e := range events {
-		if e.Field == "jira_status" {
+	for _, e := range logged {
+		if e.SubjectID == "CDSS-1744" && e.Field == "status" {
 			found = true
 			if e.Actor != string(ActorJiraManual) {
 				t.Errorf("actor = %q, want %q", e.Actor, ActorJiraManual)
@@ -225,6 +269,6 @@ func TestJiraObservationsAreLoggedAsManual(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("no event for jira_status")
+		t.Error("no status event was written against the issue")
 	}
 }

@@ -176,7 +176,7 @@ func TestProjectAddRejections(t *testing.T) {
 		},
 		{
 			name:    "observed column via json",
-			args:    []string{"--json", `{"jira_status":"Done"}`},
+			args:    []string{"--json", `{"last_verified_at":"2026-08-10T00:00:00.000Z"}`},
 			wantErr: "observed",
 		},
 		{

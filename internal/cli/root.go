@@ -46,6 +46,7 @@ func NewRootCmd() *cobra.Command {
 		newSyncCmd(),
 		newSyncerCmd(),
 		newVerbCmd(),
+		newJiraCmd(),
 		newPipelineCmd(),
 		newVerifyCmd(),
 		newNoteCmd(),

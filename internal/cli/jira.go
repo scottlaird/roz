@@ -211,18 +211,25 @@ func optional(value *string) sql.NullString {
 	return sql.NullString{String: *value, Valid: true}
 }
 
+// writeJiraResult reports per issue, and says which projects track it.
+//
+// An issue nothing tracks is reported rather than warned about: it is a record
+// in its own right now, so storing what Jira said about it is the right
+// outcome, not a miss. What is worth remarking on is that nobody is watching.
 func writeJiraResult(out io.Writer, result *store.JiraResult) error {
 	for _, applied := range result.Applied {
-		if len(applied.Changes) == 0 {
-			fmt.Fprintf(out, "%s unchanged\n", applied.ProjectID)
-			continue
+		switch {
+		case applied.Created:
+			fmt.Fprintf(out, "%s recorded\n", applied.Key)
+		case len(applied.Changes) == 0:
+			fmt.Fprintf(out, "%s unchanged\n", applied.Key)
 		}
 		for _, change := range applied.Changes {
-			fmt.Fprintf(out, "%s %s\n", applied.ProjectID, change)
+			fmt.Fprintf(out, "%s %s\n", applied.Key, change)
 		}
-	}
-	for _, key := range result.Unmatched {
-		fmt.Fprintf(out, "%s matches no project\n", key)
+		if len(applied.Projects) == 0 {
+			fmt.Fprintf(out, "%s is tracked by no project\n", applied.Key)
+		}
 	}
 	return nil
 }

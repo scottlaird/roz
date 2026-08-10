@@ -42,12 +42,10 @@ type Project struct {
 	SnoozeReason string         `db:"snooze_reason"`
 	SupersededBy sql.NullString `db:"superseded_by"`
 	DesignRefs   string         `db:"design_refs" format:"json"` // JSON array of file paths
-	JiraKey      sql.NullString `db:"jira_key"`
 
-	JiraStatus     sql.NullString `db:"jira_status" kind:"observed"`
-	JiraSprint     sql.NullString `db:"jira_sprint" kind:"observed"`
-	JiraAssignee   sql.NullString `db:"jira_assignee" kind:"observed"`
-	JiraSyncedAt   sql.NullString `db:"jira_synced_at" kind:"observed"`
+	// Jira lives in jira_issue, reached through project_jira. It was five
+	// columns here until one piece of work turned out to need two issues,
+	// which a column cannot hold.
 	LastVerifiedAt sql.NullString `db:"last_verified_at" kind:"observed"`
 
 	CreatedAt string `db:"created_at" kind:"created"`

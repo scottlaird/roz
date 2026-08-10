@@ -403,13 +403,13 @@ func TestActorPermissions(t *testing.T) {
 		{
 			name:    "human writes an observed field",
 			actor:   ActorHuman,
-			mutate:  func(p *Project) { p.JiraStatus = sql.NullString{String: "Done", Valid: true} },
+			mutate:  func(p *Project) { p.LastVerifiedAt = sql.NullString{String: "2026-08-10T00:00:00.000Z", Valid: true} },
 			wantErr: true,
 		},
 		{
 			name:   "sync writes an observed field",
 			actor:  ActorSyncJira,
-			mutate: func(p *Project) { p.JiraStatus = sql.NullString{String: "Done", Valid: true} },
+			mutate: func(p *Project) { p.LastVerifiedAt = sql.NullString{String: "2026-08-10T00:00:00.000Z", Valid: true} },
 		},
 		{
 			name:    "sync writes an authored field",

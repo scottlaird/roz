@@ -16,6 +16,8 @@ func (t *Tx) LoadSubject(ctx context.Context, s *Store, id string) (Record, erro
 		switch entity {
 		case EntityProject:
 			return t.LoadProject(ctx, id)
+		case EntityAction:
+			return t.LoadAction(ctx, id)
 		default:
 			// Reached when an entity gains a sequence before it gains a loader.
 			return nil, fmt.Errorf("no loader for %s yet", entity)

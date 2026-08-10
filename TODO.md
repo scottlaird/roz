@@ -64,8 +64,8 @@ them.
       now sorts by `rank_pin`, then the priority of the project an action
       advances, then creation order, which is a first step and not the sketch's
       ranking: `rank_class` is on every verb already and `unblocks_count`
-      needs the dependency graph. `action list` and `project list` still print
-      in creation order, and could take a `--sort priority` cheaply.
+      needs the dependency graph. `action list` and `project list` default to
+      creation order and take `--sort priority` for the same ordering.
 - [ ] `action show -o json` omits the edges, which the table shows. They are
       not columns of `action`, and a record marshals from its own columns.
 - [ ] `--db` is a package-level variable in `internal/cli`, written by flag

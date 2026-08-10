@@ -30,7 +30,7 @@ directory.
 | **projects** | |
 | `todo project add` | Allocate a project and print its id. |
 | `todo project show` | Print one project in full. |
-| `todo project list` | The projects table, with `--orphaned` and `--expired`. |
+| `todo project list` | The projects table, in creation order or `--sort priority`; with `--orphaned` and `--expired`. |
 | `todo project set` | Change authored columns. |
 | `todo project snooze` | Defer a project to a real date. |
 | `todo project wake` | Clear a snooze. |
@@ -40,7 +40,7 @@ directory.
 | **actions** | |
 | `todo action add` | Allocate an action and print its id. |
 | `todo action show` | Print one action, its blockers and its pull request. |
-| `todo action list` | Actions in creation order, with `--unblocked`, `--open`, `--expired` and filters. |
+| `todo action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--open`, `--expired` and filters. |
 | `todo action set` | Change authored columns. Closing is not one of them. |
 | `todo action snooze` | Defer an action to a real date. |
 | `todo action wake` | Clear a snooze. |

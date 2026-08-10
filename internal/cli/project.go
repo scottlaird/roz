@@ -589,13 +589,16 @@ func newProjectListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "The projects table",
-		Args:  cobra.NoArgs,
-		RunE:  runProjectList,
+		Long: "Creation order by default; --sort priority puts the highest first,\n" +
+			"with anything unprioritised last.",
+		Args: cobra.NoArgs,
+		RunE: runProjectList,
 	}
 	f := cmd.Flags()
 	f.Bool("orphaned", false, "no open action and no snooze — how live work goes quiet")
 	f.Bool("expired", false, "snoozed with a date that has passed")
 	f.String("status", "", "filter to one status")
+	addSortFlag(cmd)
 	addOutputFlag(cmd)
 	return cmd
 }
@@ -654,7 +657,13 @@ func projectFilterFrom(cmd *cobra.Command) (store.ProjectFilter, error) {
 	if err != nil {
 		return store.ProjectFilter{}, err
 	}
-	return store.ProjectFilter{Status: status, Expired: expired, Orphaned: orphaned}, nil
+	order, err := sortFrom(cmd)
+	if err != nil {
+		return store.ProjectFilter{}, err
+	}
+	return store.ProjectFilter{
+		Status: status, Expired: expired, Orphaned: orphaned, Order: order,
+	}, nil
 }
 
 func writeProjectTable(out io.Writer, projects []*store.Project) error {

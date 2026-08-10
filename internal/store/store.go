@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/scottlaird/todo/internal/schema"
 )
 
 // dirPerm applies to the directory Init creates. The database holds work
@@ -117,28 +119,9 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 
-	version, err := userVersion(db)
-	if err != nil {
+	if err := checkSchemaUpToDate(context.Background(), db, path); err != nil {
 		db.Close()
 		return nil, err
-	}
-	latest, err := LatestSchemaVersion()
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	switch {
-	case version == 0:
-		db.Close()
-		return nil, fmt.Errorf("%s: %w", path, ErrNotInitialised)
-	case version < latest:
-		db.Close()
-		return nil, fmt.Errorf("database %s is at schema version %d and this build expects %d; run `todo init` to migrate",
-			path, version, latest)
-	case version > latest:
-		db.Close()
-		return nil, fmt.Errorf("database %s is at schema version %d, ahead of this build's %d",
-			path, version, latest)
 	}
 
 	// A verb naming a predicate this build lacks is refused here rather than
@@ -154,6 +137,62 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	return st, nil
+}
+
+// checkSchemaUpToDate refuses a database that has not run every migration
+// this build carries, or that has run one this build does not have.
+//
+// It reads the record of what was applied rather than a version number, so a
+// migration numbered below one already applied still shows up as pending
+// instead of being passed over.
+func checkSchemaUpToDate(ctx context.Context, db *sql.DB, path string) error {
+	var exists int
+	err := db.QueryRowContext(ctx,
+		"SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'applied_migration'").Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	if exists == 0 {
+		// Either brand new, or old enough to predate the record. Either way
+		// init is what sorts it out.
+		if version, err := userVersion(db); err == nil && version > 0 {
+			return fmt.Errorf("database %s predates the migration record; run `todo init` to bring it up to date", path)
+		}
+		return fmt.Errorf("%s: %w", path, ErrNotInitialised)
+	}
+
+	applied, err := appliedVersions(ctx, db)
+	if err != nil {
+		return err
+	}
+	if len(applied) == 0 {
+		return fmt.Errorf("%s: %w", path, ErrNotInitialised)
+	}
+
+	pending, err := PendingMigrations(ctx, db)
+	if err != nil {
+		return err
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("database %s has not run %s; run `todo init` to migrate",
+			path, MigrationNames(pending))
+	}
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		return err
+	}
+	known := make(map[int]bool, len(migrations))
+	for _, m := range migrations {
+		known[m.Version] = true
+	}
+	for version := range applied {
+		if !known[version] {
+			return fmt.Errorf("database %s has run migration %d, which this build does not have",
+				path, version)
+		}
+	}
+	return nil
 }
 
 // Close releases the underlying database.

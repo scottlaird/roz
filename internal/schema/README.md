@@ -28,14 +28,22 @@ and loses the section headings and the notes above `sequence` and its trigger.
 
 ## Adding a migration
 
-1. Write `migrations/000N_short_description.sql`. The number is the value
-   `PRAGMA user_version` takes once it has applied, and must be unique;
-   gaps are fine, duplicates are an error.
+1. Write `migrations/000N_short_description.sql`. The number must be unique;
+   gaps are fine, duplicates are an error. It does not have to be higher than
+   every migration already merged — which migrations have run is recorded in
+   `applied_migration`, so one that arrives out of order is still applied.
 2. Make the same change to `schema.sql`.
 3. Run the tests. `TestSchemaMatchesMigrations` fails if the two disagree.
 
 **Never edit a migration once it has been merged.** A database that already
 ran it will not pick the change up, and will silently differ from a fresh one.
+
+`applied_migration` is the runner's own bookkeeping and is not itself a
+numbered migration — it is what the numbering is read against. `PRAGMA
+user_version` is still maintained, because it is what a `sqlite3` shell shows,
+but nothing decides anything from it: as a high-water mark it would skip a
+migration numbered below one already applied, which is exactly what two
+branches adding migrations produces.
 
 **Append new columns at the end of their table** in `schema.sql`, which is
 where `ALTER TABLE ADD COLUMN` puts them in the stored SQL. Otherwise the two

@@ -14,6 +14,20 @@
 -- end of their table, which is where ALTER TABLE ADD COLUMN puts them, so the
 -- two stay textually comparable.
 
+-- ── the migration record ─────────────────────────────────────────────
+-- Which migrations a database has run. Created by the runner rather than by
+-- a numbered migration, since it is what the numbering is read against.
+--
+-- It exists because PRAGMA user_version is only a high-water mark: a
+-- migration numbered below one already applied would be skipped and never
+-- noticed, which is what happens when two branches each add one and land in
+-- the other order.
+CREATE TABLE IF NOT EXISTS applied_migration (
+  version    INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+) STRICT;
+
 -- ── identity ─────────────────────────────────────────────────────────
 -- The registry of identifier namespaces as well as the counter. `entity` is
 -- ours and fixed; `kind` is the user's, chosen at init, and is the only place

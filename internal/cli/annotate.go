@@ -121,18 +121,3 @@ func annotate(cmd *cobra.Command, id string, write func(annotateContext) error) 
 	fmt.Fprintf(cmd.OutOrStdout(), "recorded against %s\n", id)
 	return nil
 }
-
-func newRenderCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "render",
-		Short: "Regenerate the status page from the database",
-		Long:  "The page is a view; the database is the truth.",
-		Args:  cobra.NoArgs,
-		Run:   stub,
-	}
-	f := cmd.Flags()
-	f.String("template", "", "template path, e.g. next-actions.html.tmpl (required)")
-	f.String("out", "-", "output path, or - for stdout")
-	_ = cmd.MarkFlagRequired("template")
-	return cmd
-}

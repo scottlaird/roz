@@ -230,3 +230,46 @@ func TestActionEventsAreLogged(t *testing.T) {
 		t.Errorf("the log does not carry the action's history:\n%s", out)
 	}
 }
+
+// TestActionListUnblocked is the queue: what could be picked up now.
+func TestActionListUnblocked(t *testing.T) {
+	db := initDB(t)
+	ready := addAction(t, db, "--title", "do this one", "--verb", "write")
+	blocked := addAction(t, db, "--title", "waits on the first", "--verb", "run")
+	hidden := addAction(t, db, "--title", "nothing to do about it", "--verb", "write")
+
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db, "--from", blocked, "--to", ready); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+	if _, err := runCLI(t, "action", "hide-behind", "--db", db, "--action", hidden, "--behind", ready); err != nil {
+		t.Fatalf("action hide-behind returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "action", "list", "--db", db, "--unblocked")
+	if err != nil {
+		t.Fatalf("action list --unblocked returned error: %v", err)
+	}
+	if !strings.Contains(out, "do this one") {
+		t.Errorf("--unblocked left out the one thing that is ready:\n%s", out)
+	}
+	for _, unwanted := range []string{"waits on the first", "nothing to do about it"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("--unblocked included %q:\n%s", unwanted, out)
+		}
+	}
+
+	// Closing the blocker puts the dependent in the queue and takes the
+	// hidden one out of hiding.
+	if _, err := runCLI(t, "action", "close", "--db", db, ready); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+	out, err = runCLI(t, "action", "list", "--db", db, "--unblocked")
+	if err != nil {
+		t.Fatalf("action list --unblocked returned error: %v", err)
+	}
+	for _, want := range []string{"waits on the first", "nothing to do about it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--unblocked does not include %q after the blocker closed:\n%s", want, out)
+		}
+	}
+}

@@ -11,12 +11,12 @@ entities — `project`, `action`, `pr`, `github_repo`, `calendar_window` and
 registry the verb vocabulary resolves against; and the pipelines a repository
 chooses between. `todo watch` tails the log.
 
-Six commands are still stubs that exit 1. Four of them are `action`; the other
-two are `render` and `verify`.
+Three commands are still stubs that exit 1: `action close`, `render` and
+`verify`.
 
-What is left of `action` is the half with edges in it. Until closing exists,
-`action list` is a list in creation order — which is what it says it is, and
-why the queue's core claim is still untested.
+The edges exist now — `action_blocks` and `action_pr`, with the commands that
+write them — so the graph closing has to walk is there. Closing itself is not,
+which is why the queue's core claim is still untested.
 
 ## The critical path
 
@@ -25,8 +25,6 @@ In dependency order. Nothing later can be finished first.
 - [ ] **`action close`, and the cascade.** The interesting one: closing
       instantiates the pipeline and unblocks dependents, all under one
       correlation id.
-- [ ] **`add-blocker`, `hide-behind`, `link-pr`.** The edges, which need
-      `action_blocks` and `action_pr`.
 - [ ] **Closing on predicates during sync.** The registry can answer "is this
       done", but nothing asks it yet. This is what makes the queue mechanical
       rather than merely modelled.
@@ -46,9 +44,6 @@ In dependency order. Nothing later can be finished first.
 The tables exist and migrate; there is no Go entity and no command for any of
 them.
 
-- [ ] `action_blocks` — the blocked-by edge.
-- [ ] `action_pr` — including the `action_one_subject` partial index, which the
-      sketch calls the most valuable line in the schema.
 - [ ] `priority` and `priority_target` — the dated priorities block. Authored,
       superseded rather than edited.
 - [ ] `review_rule` — routing policy. The sketch says implement it late.
@@ -61,6 +56,8 @@ them.
       with `rank_pin` as the override. `rank_class` is already on every verb;
       the rest needs the dependency graph.
 - [ ] The root `README.md` is two lines.
+- [ ] `action show -o json` omits the edges, which the table shows. They are
+      not columns of `action`, and a record marshals from its own columns.
 - [ ] `todo db backup` and `todo db restore` — thin wrappers over SQLite, so
       the syntax does not have to be remembered. `VACUUM INTO` is the backup:
       it is consistent against a live database, which a file copy is not.
@@ -125,6 +122,13 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   Retired verbs are skipped; rows are deactivated, never deleted.
 - `review` is seeded human-closed, against the sketch, until there is somewhere
   to record that a pull request is tracked because it is assigned to us.
+- **A closed blocker stops blocking, and no edge is ever removed.** The
+  blocked/ready state is recomputed from the open blockers in one place, so
+  adding an edge and closing one cannot disagree. A snooze outranks both: it
+  is a decision about time.
+- **Blocking cycles are refused, not just self-edges.** The `CHECK` catches
+  `A → A`; a recursive query catches the rest. A cycle is a set of actions
+  that never unblocks.
 - Calendar kinds are free text; capacity is not. Nothing branches on kind,
   while the sort reads capacity.
 - **What a verb instantiates is a named pipeline, not a `review_policy` enum.**

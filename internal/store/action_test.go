@@ -252,6 +252,9 @@ func attach(t *testing.T, st *Store, a *Action, change func(*Action)) {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
+	// Leave the caller holding what was committed, the way a command that
+	// reloads before its next step would.
+	*a = *after
 }
 
 // TestListActionsOrdersByNumber: NA100 sorts before NA41 as text, which is

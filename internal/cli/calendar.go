@@ -89,11 +89,10 @@ func runCalendarAdd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// The kind is only read here to derive the identifier; applying the
+	// flags below is what checks it, so it is not checked twice.
 	kind, err := f.GetString(flagKind)
 	if err != nil {
-		return err
-	}
-	if err := store.ValidateWindowKind(kind); err != nil {
 		return err
 	}
 	starts, err := calendarDate(cmd, flagStarts)
@@ -144,6 +143,23 @@ func runCalendarAdd(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// checkKind accepts any non-empty kind, remarking on an unfamiliar one.
+//
+// The column takes free text so a new kind costs nothing — no migration, no
+// release. That only helps if the command allows one too, so this warns
+// rather than refuses: a typo stays visible, and a fifth kind just works.
+func checkKind(cmd *cobra.Command, kind string) error {
+	if kind == "" {
+		return fmt.Errorf("--%s cannot be empty", flagKind)
+	}
+	if !store.IsSuggestedKind(kind) {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: %q is not one of the usual kinds (%s); recording it anyway\n",
+			kind, strings.Join(store.WindowKinds, ", "))
+	}
+	return nil
+}
+
 // calendarDate reads a date flag and insists it is a plain day.
 func calendarDate(cmd *cobra.Command, flag string) (string, error) {
 	value, err := cmd.Flags().GetString(flag)
@@ -161,7 +177,7 @@ func applyCalendarFlags(cmd *cobra.Command, w *store.CalendarWindow) error {
 		if err != nil {
 			return err
 		}
-		if err := store.ValidateWindowKind(v); err != nil {
+		if err := checkKind(cmd, v); err != nil {
 			return err
 		}
 		w.Kind = v
@@ -409,11 +425,6 @@ func calendarFilterFrom(cmd *cobra.Command) (store.WindowFilter, error) {
 	kind, err := f.GetString(flagKind)
 	if err != nil {
 		return store.WindowFilter{}, err
-	}
-	if kind != "" {
-		if err := store.ValidateWindowKind(kind); err != nil {
-			return store.WindowFilter{}, err
-		}
 	}
 
 	filter := store.WindowFilter{Current: current, Upcoming: upcoming, Kind: kind}

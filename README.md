@@ -281,6 +281,41 @@ Without `--once` it follows. Every row came from a diff between two versions
 of a record — nothing writes to the log by hand except the edge and lifecycle
 events, which have no column to diff.
 
+## For an agent
+
+`todo mcp` serves the same commands over the Model Context Protocol, on stdin
+and stdout, for an agent to call without shelling out.
+
+**The tools are the commands.** They are derived from the command tree rather
+than written out again, so the two cannot drift: the name is the command path
+with an underscore (`action add` → `action_add`), the description is that
+command's own help, and the arguments are its flags and whatever its usage
+line names. Thirty-eight of them:
+
+| | |
+|---|---|
+| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_jira` |
+| actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
+| GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_show` `pr_list` `pr_announce` `sync` |
+| the log | `note` `exception` |
+| other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
+
+**Left out**, because they are not an agent's to call: `init`, which decides
+where the database lives, and `serve`, `syncer` and `watch`, which never
+return.
+
+**Every change is recorded as `agent:<name>`**, taken from what the client
+calls itself when it connects — `Claude Code` becomes `agent:claude-code` —
+and falling back to `--agent` otherwise. Neither the actor nor the database is
+offered as a tool argument, so a call cannot write as a person or land in a
+different database.
+
+```jsonc
+// → {"jsonrpc":"2.0","id":1,"method":"tools/call",
+//    "params":{"name":"project_add","arguments":{"title":"from the agent","priority":2}}}
+// ← TD1
+```
+
 ## Where to read more
 
 - [`TODO.md`](TODO.md) — what is left, what is settled, and what is

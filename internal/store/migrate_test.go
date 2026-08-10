@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -116,6 +117,67 @@ func TestSchemaMatchesMigrations(t *testing.T) {
 			t.Errorf("%s is created by a migration but missing from schema.sql", name)
 		}
 	}
+}
+
+// TestSeededVocabulary compares the verb rows, which sqlite_schema does not
+// carry and TestSchemaMatchesMigrations therefore cannot see.
+//
+// The vocabulary is data, but it is data schema.sql describes, and content in
+// that file is only worth having if something checks it. Without this, the
+// verbs could drift from the migration and nothing would say so.
+func TestSeededVocabulary(t *testing.T) {
+	documented := verbRows(t, applyDocumentedSchema(t))
+	migrated := verbRows(t, applyMigrations(t))
+
+	if len(documented) == 0 {
+		t.Fatal("schema.sql seeds no verbs")
+	}
+	if len(documented) != len(migrated) {
+		t.Fatalf("schema.sql seeds %d verbs, the migrations seed %d", len(documented), len(migrated))
+	}
+	for verb, want := range documented {
+		got, ok := migrated[verb]
+		if !ok {
+			t.Errorf("%q is in schema.sql but no migration seeds it", verb)
+			continue
+		}
+		if got != want {
+			t.Errorf("%q differs.\nschema.sql:  %s\nmigrations:  %s", verb, want, got)
+		}
+	}
+	for verb := range migrated {
+		if _, ok := documented[verb]; !ok {
+			t.Errorf("%q is seeded by a migration but missing from schema.sql", verb)
+		}
+	}
+}
+
+// verbRows reads the vocabulary as comparable text, keyed by verb.
+func verbRows(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+
+	rows, err := db.Query(`SELECT verb, label, closes, coalesce(predicate_key, ''),
+	                              rank_class, requires_pr, active, description
+	                       FROM actionverb`)
+	if err != nil {
+		t.Fatalf("reading the vocabulary: %v", err)
+	}
+	defer rows.Close()
+
+	verbs := map[string]string{}
+	for rows.Next() {
+		var verb, label, closes, key, rank, description string
+		var requiresPR, active int
+		if err := rows.Scan(&verb, &label, &closes, &key, &rank, &requiresPR, &active, &description); err != nil {
+			t.Fatalf("scanning a verb: %v", err)
+		}
+		verbs[verb] = fmt.Sprintf("%s|%s|%s|%s|%d|%d|%s",
+			label, closes, key, rank, requiresPR, active, description)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the vocabulary: %v", err)
+	}
+	return verbs
 }
 
 func TestMigrationsAreWellFormed(t *testing.T) {

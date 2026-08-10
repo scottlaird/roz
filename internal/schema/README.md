@@ -16,10 +16,15 @@ schema.go               embeds both, and orders the migrations
 fresh `todo init` — there is no separate "create from scratch" path, so a new
 database and an upgraded one cannot end up different.
 
-`schema.sql` is documentation. It is never run except by
-`TestSchemaMatchesMigrations`, which builds a database each way and compares
-the normalised contents of `sqlite_schema`. That test is what allows the file
-to stay hand-written: without it, documentation would rot silently.
+`schema.sql` is documentation. It is never run except by two tests, which
+build a database each way and compare them: `TestSchemaMatchesMigrations` over
+the normalised contents of `sqlite_schema`, and `TestSeededVocabulary` over
+the `actionverb` rows, which `sqlite_schema` does not carry. Those are what
+allow the file to stay hand-written: without them, documentation would rot
+silently.
+
+That is also the rule for putting anything else in it. Content in this file is
+only worth having if something checks it — seed data included.
 
 It stays hand-written because regenerating it would lose most of the
 reasoning. SQLite preserves comments written *inside* a `CREATE` statement but
@@ -32,8 +37,9 @@ and loses the section headings and the notes above `sequence` and its trigger.
    gaps are fine, duplicates are an error. It does not have to be higher than
    every migration already merged — which migrations have run is recorded in
    `applied_migration`, so one that arrives out of order is still applied.
-2. Make the same change to `schema.sql`.
-3. Run the tests. `TestSchemaMatchesMigrations` fails if the two disagree.
+2. Make the same change to `schema.sql`. A migration that seeds rows goes
+   there too, if those rows are part of what a database is expected to hold.
+3. Run the tests. They fail if the two disagree.
 
 **Never edit a migration once it has been merged.** A database that already
 ran it will not pick the change up, and will silently differ from a fresh one.

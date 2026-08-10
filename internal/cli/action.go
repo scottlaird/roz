@@ -535,7 +535,7 @@ func newActionListCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.Bool("open", false, "not closed")
-	f.Bool("unblocked", false, "ready, not hidden, nothing in the way — the queue")
+	f.Bool("unblocked", false, "ready, not hidden, not waiting on anyone — the queue")
 	f.Bool("expired", false, "snoozed with a date that has passed")
 	f.String(flagStatus, "", "filter to one state")
 	f.String(flagVerb, "", "filter to one verb")

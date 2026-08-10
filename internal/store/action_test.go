@@ -333,6 +333,35 @@ func TestUnblockedIsTheQueue(t *testing.T) {
 	}
 }
 
+// TestUnblockedLeavesOutWaiting: a wait verb is ready and unhidden and still
+// not an answer to "what do I do now". Excluded by rank class, not by name, so
+// a wait verb added later needs no change here.
+func TestUnblockedLeavesOutWaiting(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	ready := addAction(t, st, "do this one", "write")
+	waiting := addAction(t, st, "nothing to do but wait", "wait_review")
+
+	got, err := st.ListActions(ctx, ActionFilter{Unblocked: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(got), []string{ready.ID}) {
+		t.Errorf("ListActions(unblocked) = %v, want [%s]", ids(got), ready.ID)
+	}
+
+	// It is still open, and --open is where you go to see it.
+	got, err = st.ListActions(ctx, ActionFilter{Open: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(got), []string{ready.ID, waiting.ID}) {
+		t.Errorf("ListActions(open) = %v, want both %s and %s",
+			ids(got), ready.ID, waiting.ID)
+	}
+}
+
 // TestUnblockedFollowsTheCascade: closing the blocker puts the dependent in
 // the queue, with nothing else asked to keep the two in step.
 func TestUnblockedFollowsTheCascade(t *testing.T) {

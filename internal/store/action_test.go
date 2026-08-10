@@ -353,3 +353,137 @@ func TestUnblockedFollowsTheCascade(t *testing.T) {
 		t.Errorf("ListActions(unblocked) = %v, want [%s]", ids(got), dependent.ID)
 	}
 }
+
+// TestPriorityOrderFollowsTheProject: an action inherits its urgency from
+// what it advances, since it has no priority of its own.
+func TestPriorityOrderFollowsTheProject(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	urgent := insertProject(t, st, "the urgent one")
+	later := insertProject(t, st, "the later one")
+	setPriority(t, st, urgent, 1)
+	setPriority(t, st, later, 4)
+
+	// Created in the wrong order on purpose.
+	slow := addAction(t, st, "advance the later one", "write")
+	quick := addAction(t, st, "advance the urgent one", "write")
+	loose := addAction(t, st, "advances nothing", "write")
+	attach(t, st, slow, func(a *Action) {
+		a.ProjectID = sql.NullString{String: later.ID, Valid: true}
+	})
+	attach(t, st, quick, func(a *Action) {
+		a.ProjectID = sql.NullString{String: urgent.ID, Valid: true}
+	})
+
+	got, err := st.ListActions(ctx, ActionFilter{Order: OrderPriority})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	// The one advancing nothing has no priority, so it sorts last.
+	want := []string{quick.ID, slow.ID, loose.ID}
+	if !equalStrings(ids(got), want) {
+		t.Errorf("ListActions(priority) = %v, want %v", ids(got), want)
+	}
+
+	// The default is still creation order, which nothing else should have
+	// quietly changed.
+	got, err = st.ListActions(ctx, ActionFilter{})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(got), []string{slow.ID, quick.ID, loose.ID}) {
+		t.Errorf("the default order changed: %v", ids(got))
+	}
+}
+
+func setPriority(t *testing.T, st *Store, p *Project, priority int64) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := p.Clone()
+	after.Priority = sql.NullInt64{Int64: priority, Valid: true}
+	if _, err := tx.Update(ctx, p, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	*p = *after
+}
+
+// TestRankPinOverridesPriority: rank_pin exists to override whatever the
+// system worked out, so it has to win.
+func TestRankPinOverridesPriority(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	urgent := insertProject(t, st, "the urgent one")
+	setPriority(t, st, urgent, 1)
+
+	high := addAction(t, st, "advance the urgent one", "write")
+	attach(t, st, high, func(a *Action) {
+		a.ProjectID = sql.NullString{String: urgent.ID, Valid: true}
+	})
+	pinned := addAction(t, st, "do this first, whatever the system thinks", "write")
+	attach(t, st, pinned, func(a *Action) {
+		a.RankPin = sql.NullInt64{Int64: 1, Valid: true}
+	})
+
+	got, err := st.ListActions(ctx, ActionFilter{Order: OrderPriority})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(got), []string{pinned.ID, high.ID}) {
+		t.Errorf("ListActions(priority) = %v, want the pin first", ids(got))
+	}
+}
+
+// TestPriorityOrderStillFilters: the join for the project's priority must not
+// change which actions come back, only their order.
+func TestPriorityOrderStillFilters(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	ready := addAction(t, st, "ready", "write")
+	blocked := addAction(t, st, "blocked", "run")
+	blockOn(t, st, blocked, ready)
+
+	got, err := st.ListActions(ctx, ActionFilter{Unblocked: true, Order: OrderPriority})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(got), []string{ready.ID}) {
+		t.Errorf("ListActions(unblocked, priority) = %v, want [%s]", ids(got), ready.ID)
+	}
+}
+
+func TestProjectPriorityOrder(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	third := insertProject(t, st, "no priority at all")
+	first := insertProject(t, st, "the urgent one")
+	second := insertProject(t, st, "the middling one")
+	setPriority(t, st, first, 1)
+	setPriority(t, st, second, 3)
+
+	got, err := st.ListProjects(ctx, ProjectFilter{Order: OrderPriority})
+	if err != nil {
+		t.Fatalf("ListProjects() returned error: %v", err)
+	}
+
+	var listed []string
+	for _, p := range got {
+		listed = append(listed, p.ID)
+	}
+	if !equalStrings(listed, []string{first.ID, second.ID, third.ID}) {
+		t.Errorf("ListProjects(priority) = %v, want the unprioritised one last", listed)
+	}
+}

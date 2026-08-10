@@ -98,11 +98,17 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	actions, err := st.ListActions(ctx, store.ActionFilter{Unblocked: true})
+	// The page is what gets read at a glance, so it is the one place that
+	// does not print in creation order.
+	actions, err := st.ListActions(ctx, store.ActionFilter{
+		Unblocked: true, Order: store.OrderPriority,
+	})
 	if err != nil {
 		return nil, err
 	}
-	projects, err := st.ListProjects(ctx, store.ProjectFilter{Status: store.ProjectActive})
+	projects, err := st.ListProjects(ctx, store.ProjectFilter{
+		Status: store.ProjectActive, Order: store.OrderPriority,
+	})
 	if err != nil {
 		return nil, err
 	}

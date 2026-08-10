@@ -167,3 +167,67 @@ func TestTemplateIsTheOneOnDisk(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderSortsByPriority is the point of the page: the top of it should be
+// what matters most, not what was typed first.
+func TestRenderSortsByPriority(t *testing.T) {
+	db := initDB(t)
+
+	// Added in the wrong order on purpose.
+	low := addProject(t, db, "the later one", "--priority", "4")
+	addProject(t, db, "nobody said")
+	high := addProject(t, db, "the urgent one", "--priority", "1")
+
+	addAction(t, db, "--title", "slow work", "--verb", "write", "--project", low)
+	addAction(t, db, "--title", "loose work", "--verb", "write")
+	addAction(t, db, "--title", "urgent work", "--verb", "write", "--project", high)
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+
+	assertOrder(t, out, "the queue", "urgent work", "slow work", "loose work")
+	assertOrder(t, out, "the projects", "the urgent one", "the later one", "nobody said")
+}
+
+// assertOrder checks the wanted strings appear in the given order.
+func assertOrder(t *testing.T, page, what string, want ...string) {
+	t.Helper()
+
+	at := -1
+	for _, s := range want {
+		i := strings.Index(page, s)
+		if i < 0 {
+			t.Errorf("%s: %q is not on the page:\n%s", what, s, page)
+			return
+		}
+		if i < at {
+			t.Errorf("%s: %q comes too late:\n%s", what, s, page)
+			return
+		}
+		at = i
+	}
+}
+
+// TestListsStillPrintInCreationOrder: only the page is ranked, so nothing
+// else should have moved.
+func TestListsStillPrintInCreationOrder(t *testing.T) {
+	db := initDB(t)
+	low := addProject(t, db, "the later one", "--priority", "4")
+	addProject(t, db, "the urgent one", "--priority", "1")
+	addAction(t, db, "--title", "slow work", "--verb", "write", "--project", low)
+	addAction(t, db, "--title", "urgent work", "--verb", "write")
+
+	projects, err := runCLI(t, "project", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("project list returned error: %v", err)
+	}
+	assertOrder(t, projects, "project list", "the later one", "the urgent one")
+
+	actions, err := runCLI(t, "action", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("action list returned error: %v", err)
+	}
+	assertOrder(t, actions, "action list", "slow work", "urgent work")
+}

@@ -114,12 +114,24 @@ type ProjectFilter struct {
 	// Orphaned keeps projects with no open action and no snooze: live work
 	// that is on no surface anyone reads.
 	Orphaned bool
+	// Order is how the results come back. Empty is creation order.
+	Order string
 }
 
-// ListProjects returns projects matching the filter, ordered by number.
+// projectOrder is the ORDER BY for a listing. Under OrderPriority the
+// unprioritised sort last: unstated is not the same as low, but it has to go
+// somewhere, and behind the stated ones is the reading that does no harm.
+func projectOrder(order string) string {
+	if order != OrderPriority {
+		return "n"
+	}
+	return "priority IS NULL, priority, n"
+}
+
+// ListProjects returns projects matching the filter.
 //
-// Ordering is on n rather than id, which is the reason n exists: SL100 sorts
-// before SL41 lexically.
+// Creation order by default, and ordering is on n rather than id, which is
+// the reason n exists: SL100 sorts before SL41 lexically.
 func (s *Store) ListProjects(ctx context.Context, filter ProjectFilter) ([]*Project, error) {
 	fields, err := fieldsOf(&Project{})
 	if err != nil {
@@ -135,7 +147,7 @@ func (s *Store) ListProjects(ctx context.Context, filter ProjectFilter) ([]*Proj
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY n"
+	query += " ORDER BY " + projectOrder(filter.Order)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

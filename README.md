@@ -66,7 +66,7 @@ directory.
 | `todo exception` | Record an exception for a monitor to surface. |
 | **other** | |
 | `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
-| `todo render` | Regenerate the status page: three `<pre>` blocks, no design worth the name. |
+| `todo render` | Regenerate the status page: three `<pre>` blocks, ordered by priority, no design worth the name. |
 | `todo verify` | Stamp `last_verified_at`. *Not implemented yet.* |
 
 ## A walkthrough

@@ -28,8 +28,8 @@ func newServeCmd() *cobra.Command {
 			"stops the others rather than leaving a half-working system that looks\n" +
 			"fine. Ctrl-C stops all three.\n\n" +
 			"The page is built per request, so it is never staler than the request\n" +
-			"that asked for it — but nothing pushes it, so a browser left open shows\n" +
-			"what it showed when it loaded.\n\n" +
+			"that asked for it, and a browser left open reloads itself when the log\n" +
+			"moves — the server streams a line on /events and the page listens.\n\n" +
 			"It listens on loopback and has no authentication. Do not put it on an\n" +
 			"interface anyone else can reach.",
 		Args: cobra.NoArgs,
@@ -70,7 +70,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	services := []service.Service{
-		server.New(options.addr, pageFor(st), cmd.ErrOrStderr()),
+		server.New(options.addr, pageFor(st), st.LatestEventSeq, cmd.ErrOrStderr()),
 	}
 	if !options.noSync {
 		services = append(services, &ghsync.Syncer{
@@ -90,9 +90,11 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 // pageFor builds the same page `todo render` writes, per request. One
 // renderer rather than two, since two would eventually disagree.
+//
+// Live, because this one has a server behind it to tell it when to reload.
 func pageFor(st *store.Store) server.Page {
 	return func(ctx context.Context) ([]byte, error) {
-		return renderPage(ctx, st, time.Now())
+		return renderPage(ctx, st, time.Now(), true)
 	}
 }
 

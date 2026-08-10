@@ -28,10 +28,6 @@ In dependency order. Nothing later can be finished first.
 - [ ] **A real `todo render`.** What exists is three `<pre>` blocks and no
       design worth the name. Templates, the ranking, and the status page the
       whole thing exists to regenerate are still ahead.
-- [ ] **Push the page to an open browser.** `todo serve` builds the page per
-      request, so a reload is current but a browser left open is not.
-      Websockets or a hanging GET; either way the change signal is the event
-      log, which `todo watch` already tails.
 
 ## What dogfooding needs
 
@@ -221,6 +217,11 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   project it advances; `rank_pin` overrides that, because overriding is what
   it is for. Anything unprioritised sorts last — unstated is not the same as
   low, but it has to go somewhere, and behind the stated ones does no harm.
+- **The page reloads itself through server-sent events, not a websocket.**
+  The page only ever listens, the browser reconnects on its own, and it is a
+  few lines of the standard library against a dependency and a handshake. The
+  change signal is the log's head, since nothing changes here without an
+  event.
 - **One renderer, used twice.** `todo serve` calls the same function `todo
   render` writes to a file, per request. Two ways of building the page would
   eventually be two different pages.

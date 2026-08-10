@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -188,4 +189,73 @@ func (b *syncedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// TestServedPageIsLive: the page the server hands out knows to listen; the
+// one written to a file has nothing to listen to.
+func TestServedPageIsLive(t *testing.T) {
+	db := initDB(t)
+	withFetcher(t, stubFetcher{result: github.Result{}})
+	base := serving(t, db, "--no-sync", "--no-watch")
+
+	served := fetch(t, base+"/")
+	if !strings.Contains(served, "EventSource") {
+		t.Errorf("the served page does not listen for changes:\n%s", served)
+	}
+
+	written, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if strings.Contains(written, "EventSource") {
+		t.Errorf("a page written to a file listens to a server that is not there:\n%s", written)
+	}
+}
+
+// TestServeStreamsWhenTheLogMoves is the whole of SL16 end to end: something
+// happens, and a page left open is told.
+func TestServeStreamsWhenTheLogMoves(t *testing.T) {
+	db := initDB(t)
+	withFetcher(t, stubFetcher{result: github.Result{}})
+	base := serving(t, db, "--no-sync", "--no-watch")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/events", nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events returned error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	arrived := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "data: ") {
+				arrived <- scanner.Text()
+				return
+			}
+		}
+		close(arrived)
+	}()
+
+	// Anything at all: every change writes an event.
+	addAction(t, db, "--title", "something happened", "--verb", "write")
+
+	select {
+	case got, ok := <-arrived:
+		if !ok {
+			t.Fatal("the stream ended without telling us anything")
+		}
+		if !strings.HasPrefix(got, "data: ") {
+			t.Errorf("event = %q", got)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the log moved and the stream said nothing")
+	}
 }

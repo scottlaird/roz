@@ -56,6 +56,7 @@ directory.
 | `todo pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync. |
 | `todo sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
 | `todo syncer` | The same on a loop, backing off as rate limit heads down. |
+| `todo mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
 | `todo serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
 | **vocabulary** | |
 | `todo verb list` | The verbs, how each closes, and its rank class. |

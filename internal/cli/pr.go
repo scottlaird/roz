@@ -64,7 +64,7 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 	}
 	defer tx.Rollback()
 
-	// The repository has to be tracked first: its review policy decides which
+	// The repository has to be tracked first: its pipeline decides which
 	// actions a pull request against it will want, so tracking one without
 	// having said anything about the repository would start from a guess.
 	switch _, err := tx.LoadGitHubRepo(ctx, repo); {

@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	flagReviewPolicy    = "review-policy"
+	flagPipeline        = "pipeline"
 	flagAnnounceChannel = "announce-channel"
 	flagDisposition     = "disposition"
 )
@@ -23,9 +23,9 @@ func newRepoCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repo",
 		Short: "Tracked GitHub repositories, keyed owner/name",
-		Long: "A repository carries policy a pull request cannot — chiefly whether\n" +
-			"review is required at all, which decides what a pull request against it\n" +
-			"will need doing to it.",
+		Long: "A repository carries policy a pull request cannot — chiefly its\n" +
+			"pipeline, which is what happens to a pull request between written and\n" +
+			"merged. `todo pipeline list` shows the choices.",
 	}
 	cmd.AddCommand(
 		newRepoTrackCmd(),
@@ -52,7 +52,7 @@ func newRepoTrackCmd() *cobra.Command {
 // default branch, merge queue, archived — belong to sync.
 func addRepoPolicyFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
-	f.String(flagReviewPolicy, "", "required or none; unset means not yet stated")
+	f.String(flagPipeline, "", "how its pull requests reach merge; see `todo pipeline list`")
 	f.String(flagAnnounceChannel, "", "Slack channel its pull requests are announced in")
 	f.String(flagDisposition, "", "e.g. another team's area unless they ask directly")
 }
@@ -78,6 +78,11 @@ func runRepoTrack(cmd *cobra.Command, args []string) error {
 	if err := applyRepoFlags(cmd, r); err != nil {
 		return err
 	}
+	if !cmd.Flags().Changed(flagPipeline) {
+		if err := applyDefaultPipeline(ctx, st, r); err != nil {
+			return err
+		}
+	}
 
 	tx, err := st.Begin(ctx, actor)
 	if err != nil {
@@ -92,6 +97,9 @@ func runRepoTrack(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := checkPipelineUsable(ctx, tx, r.Pipeline); err != nil {
+		return err
+	}
 	if err := tx.Insert(ctx, r); err != nil {
 		return err
 	}
@@ -109,7 +117,7 @@ func newRepoSetCmd() *cobra.Command {
 		Short: "Change a repository's policy",
 		Long: "Only the authored columns. The default branch and the rest are\n" +
 			"observed, and belong to sync.\n\n" +
-			"An empty value clears a column: --review-policy \"\" returns it to\n" +
+			"An empty value clears a column: --pipeline \"\" returns it to\n" +
 			"unstated.",
 		Args: cobra.ExactArgs(1),
 		RunE: runRepoSet,
@@ -121,28 +129,28 @@ func newRepoSetCmd() *cobra.Command {
 
 func runRepoSet(cmd *cobra.Command, args []string) error {
 	f := cmd.Flags()
-	if !f.Changed(flagReviewPolicy) && !f.Changed(flagAnnounceChannel) && !f.Changed(flagDisposition) {
+	if !f.Changed(flagPipeline) && !f.Changed(flagAnnounceChannel) && !f.Changed(flagDisposition) {
 		return fmt.Errorf("nothing to set: pass --%s, --%s or --%s",
-			flagReviewPolicy, flagAnnounceChannel, flagDisposition)
+			flagPipeline, flagAnnounceChannel, flagDisposition)
 	}
 
-	return updateRepo(cmd, args[0], func(_ context.Context, _ *store.Tx, r *store.GitHubRepo) error {
-		return applyRepoFlags(cmd, r)
+	return updateRepo(cmd, args[0], func(ctx context.Context, tx *store.Tx, r *store.GitHubRepo) error {
+		if err := applyRepoFlags(cmd, r); err != nil {
+			return err
+		}
+		return checkPipelineUsable(ctx, tx, r.Pipeline)
 	})
 }
 
 func applyRepoFlags(cmd *cobra.Command, r *store.GitHubRepo) error {
 	f := cmd.Flags()
 
-	if f.Changed(flagReviewPolicy) {
-		v, err := f.GetString(flagReviewPolicy)
+	if f.Changed(flagPipeline) {
+		v, err := f.GetString(flagPipeline)
 		if err != nil {
 			return err
 		}
-		if err := validateReviewPolicy(v); err != nil {
-			return err
-		}
-		r.ReviewPolicy = nullString(v)
+		r.Pipeline = nullString(v)
 	}
 	if f.Changed(flagAnnounceChannel) {
 		v, err := f.GetString(flagAnnounceChannel)
@@ -161,14 +169,45 @@ func applyRepoFlags(cmd *cobra.Command, r *store.GitHubRepo) error {
 	return nil
 }
 
-func validateReviewPolicy(v string) error {
-	switch v {
-	case "", store.ReviewRequired, store.ReviewNone:
+// applyDefaultPipeline gives a newly tracked repository the lowest-numbered
+// active pipeline.
+//
+// The default is resolved here, at track time, rather than read through a
+// NULL later: retiring a pipeline or adding one in front of it should not
+// silently change how repositories already tracked behave.
+//
+// A database with every pipeline retired leaves it unstated. That is someone
+// having emptied the table deliberately, and it is not this command's place
+// to argue.
+func applyDefaultPipeline(ctx context.Context, st *store.Store, r *store.GitHubRepo) error {
+	p, err := st.DefaultPipeline(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
-	default:
-		return fmt.Errorf("--%s %q is not recognised: use %s or %s, or an empty value to unset",
-			flagReviewPolicy, v, store.ReviewRequired, store.ReviewNone)
 	}
+	if err != nil {
+		return err
+	}
+	r.Pipeline = sql.NullString{String: p.Name, Valid: true}
+	return nil
+}
+
+// checkPipelineUsable reports an unknown or retired pipeline as itself,
+// rather than leaving the foreign key to report a constraint.
+func checkPipelineUsable(ctx context.Context, tx *store.Tx, name sql.NullString) error {
+	if !name.Valid {
+		return nil
+	}
+	p, err := tx.LoadPipeline(ctx, name.String)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%q is not a pipeline; see `todo pipeline list`", name.String)
+	}
+	if err != nil {
+		return err
+	}
+	if !p.Active {
+		return fmt.Errorf("%q is retired and cannot be used", name.String)
+	}
+	return nil
 }
 
 // updateRepo is the read-modify-write the repo verbs share, mirroring
@@ -314,10 +353,10 @@ func writeRepoTable(out io.Writer, repos []*store.GitHubRepo) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tREVIEW\tDEFAULT BRANCH\tANNOUNCE\tDISPOSITION")
+	fmt.Fprintln(w, "ID\tPIPELINE\tDEFAULT BRANCH\tANNOUNCE\tDISPOSITION")
 	for _, r := range repos {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			r.ID, nullText(r.ReviewPolicy), nullText(r.DefaultBranch),
+			r.ID, nullText(r.Pipeline), nullText(r.DefaultBranch),
 			nullText(r.AnnounceChannel), orDash(r.Disposition))
 	}
 	return w.Flush()

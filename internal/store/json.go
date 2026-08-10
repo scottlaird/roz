@@ -99,7 +99,19 @@ func recordObject(r any) (map[string]any, error) {
 		}
 		object[f.column] = value
 	}
+	if extra, ok := r.(jsonExtra); ok {
+		for key, value := range extra.extraJSON() {
+			object[key] = value
+		}
+	}
 	return object, nil
+}
+
+// jsonExtra lets a record contribute values that are not columns of its own
+// table. A pipeline's steps are the case: they live in a child table, and a
+// pipeline printed without them says nothing.
+type jsonExtra interface {
+	extraJSON() map[string]any
 }
 
 // jsonValue converts a column value to something encoding/json renders the

@@ -45,10 +45,10 @@ func TestParseRepoID(t *testing.T) {
 	}
 }
 
-// TestReviewPolicyIsAuthored is the decision that cuts against the usual
-// rule: GitHub knows whether review is required, but reading it needs admin
-// on the repository, so this is a judgement and sync may not overwrite it.
-func TestReviewPolicyIsAuthored(t *testing.T) {
+// TestPipelineIsAuthored is the decision that cuts against the usual rule:
+// GitHub knows whether review is required, but reading it needs admin on the
+// repository, so this is a judgement and sync may not overwrite it.
+func TestPipelineIsAuthored(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	r := trackRepo(t, st, "scottlaird/todo")
@@ -60,13 +60,13 @@ func TestReviewPolicyIsAuthored(t *testing.T) {
 	defer sync.Rollback()
 
 	after := r.Clone()
-	after.ReviewPolicy = sql.NullString{String: ReviewNone, Valid: true}
+	after.Pipeline = sql.NullString{String: PipelineDirect, Valid: true}
 	if _, err := sync.Update(ctx, r, after); err == nil {
-		t.Error("sync set review_policy, want an error")
+		t.Error("sync set pipeline, want an error")
 	}
 }
 
-func TestHumanSetsReviewPolicyAndSyncSetsDefaultBranch(t *testing.T) {
+func TestHumanSetsPipelineAndSyncSetsDefaultBranch(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	r := trackRepo(t, st, "scottlaird/todo")
@@ -76,7 +76,7 @@ func TestHumanSetsReviewPolicyAndSyncSetsDefaultBranch(t *testing.T) {
 		t.Fatalf("Begin() returned error: %v", err)
 	}
 	stated := r.Clone()
-	stated.ReviewPolicy = sql.NullString{String: ReviewNone, Valid: true}
+	stated.Pipeline = sql.NullString{String: PipelineDirect, Valid: true}
 	if _, err := human.Update(ctx, r, stated); err != nil {
 		t.Fatalf("Update() as human returned error: %v", err)
 	}
@@ -107,8 +107,8 @@ func TestHumanSetsReviewPolicyAndSyncSetsDefaultBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGitHubRepo() returned error: %v", err)
 	}
-	if loaded.ReviewPolicy.String != ReviewNone {
-		t.Errorf("review_policy = %q, want %q", loaded.ReviewPolicy.String, ReviewNone)
+	if loaded.Pipeline.String != PipelineDirect {
+		t.Errorf("pipeline = %q, want %q", loaded.Pipeline.String, PipelineDirect)
 	}
 	if loaded.DefaultBranch.String != "main" {
 		t.Errorf("default_branch = %q, want main", loaded.DefaultBranch.String)

@@ -117,6 +117,56 @@ INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires
   ('review',           'review',            'human',     NULL,                'session', 1,
    'Review someone else''s pull request.');
 
+-- ── pipelines ────────────────────────────────────────────────────────
+-- What closing a verb instantiates. Closing a `write` action produces the
+-- actions that follow it, and that chain differs by repository, so it is a
+-- table joined to from github_repo rather than a branch on an enum.
+--
+-- Steps are still verbs: a pipeline names them in order, and can say nothing
+-- about a verb the vocabulary does not already say. Same limit actionverb
+-- draws around predicates -- names, never behaviour.
+CREATE TABLE action_pipeline (
+  -- n orders the table, and the lowest-numbered active pipeline is the
+  -- default a newly tracked repository takes. Order is a statement about
+  -- which is usual; adding one in front of the others is how that changes.
+  n           INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  label       TEXT NOT NULL,
+  active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+  description TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+-- A verb may appear more than once -- address_comments can come round again
+-- -- so position identifies a step, not the verb.
+CREATE TABLE pipeline_step (
+  pipeline TEXT NOT NULL REFERENCES action_pipeline(name),
+  position INTEGER NOT NULL,
+  verb     TEXT NOT NULL REFERENCES actionverb(verb),
+  PRIMARY KEY (pipeline, position)
+) STRICT;
+
+-- The pipelines as seeded, compared against the migration by
+-- TestSeededPipelines.
+--
+-- Two, because the difference between them is not expressible by skipping:
+-- wait_review closes on an approval a repository needing no review will never
+-- receive, so it has to be absent rather than satisfied. Skipping is for
+-- steps already true at instantiation -- undraft, where pull requests are not
+-- created as drafts.
+INSERT INTO action_pipeline (n, name, label, description) VALUES
+  (1, 'review', 'reviewed',
+   'The usual chain: undraft, announce, wait for review, merge.'),
+  (2, 'direct', 'no review',
+   'For repositories nobody reviews for you. Still announced nowhere and merged by hand.');
+
+INSERT INTO pipeline_step (pipeline, position, verb) VALUES
+  ('review', 1, 'undraft'),
+  ('review', 2, 'send_for_review'),
+  ('review', 3, 'wait_review'),
+  ('review', 4, 'merge'),
+  ('direct', 1, 'undraft'),
+  ('direct', 2, 'merge');
+
 -- ── project ──────────────────────────────────────────────────────────
 CREATE TABLE project (
   id               TEXT PRIMARY KEY,           -- 'SL106' with the default prefix
@@ -176,18 +226,14 @@ CREATE TABLE action (
 ) STRICT;
 
 -- ── github_repo ──────────────────────────────────────────────────────
--- A repository carries policy a pull request cannot: whether review is
--- required at all, where its pull requests get announced, and which branch is
+-- A repository carries policy a pull request cannot: how its pull requests
+-- get from written to merged, where they are announced, and which branch is
 -- the default -- the last of which is what stacked_on is defined against.
 CREATE TABLE github_repo (
   id                TEXT PRIMARY KEY,        -- 'scottlaird/todo'
   owner             TEXT NOT NULL,
   name              TEXT NOT NULL,
 
-  -- authored. review_policy is a judgement, not an observation: reading
-  -- branch protection needs admin on the repository, so it is unavailable
-  -- exactly where the repository is not yours. NULL means unstated.
-  review_policy     TEXT CHECK (review_policy IN ('required','none')),
   announce_channel  TEXT,                    -- Slack channel for its pull requests
   disposition       TEXT NOT NULL DEFAULT '',
 
@@ -199,6 +245,15 @@ CREATE TABLE github_repo (
 
   tracked_since     TEXT NOT NULL,
   last_synced_at    TEXT,
+
+  -- authored, and a judgement rather than an observation: reading branch
+  -- protection needs admin on the repository, so it is unavailable exactly
+  -- where the repository is not yours, and "these do not get reviewed" is a
+  -- statement about how someone works. NULL means unstated.
+  --
+  -- Last because ADD COLUMN put it there. It replaced a review_policy enum,
+  -- which said whether review happened but not what to do about it.
+  pipeline          TEXT REFERENCES action_pipeline(name),
   UNIQUE (owner, name),
   CHECK (id = owner || '/' || name)
 ) STRICT;

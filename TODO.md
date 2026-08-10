@@ -7,8 +7,9 @@ are ordered roughly by what blocks what, not by importance.
 
 Built: the schema and its migration machinery; the diff-and-emit layer; six
 entities — `project`, `action`, `pr`, `github_repo`, `calendar_window` and
-`actionverb`; GitHub sync, one-shot and as a polling loop; and the predicate
-registry the verb vocabulary resolves against. `todo watch` tails the log.
+`actionverb`; GitHub sync, one-shot and as a polling loop; the predicate
+registry the verb vocabulary resolves against; and the pipelines a repository
+chooses between. `todo watch` tails the log.
 
 Six commands are still stubs that exit 1. Four of them are `action`; the other
 two are `render` and `verify`.
@@ -21,13 +22,6 @@ why the queue's core claim is still untested.
 
 In dependency order. Nothing later can be finished first.
 
-- [ ] **`action_pipeline` and `pipeline_step`.** What a verb instantiates when
-      it closes, held as data rather than in code, with `pipeline_step.verb` a
-      foreign key into `actionverb`. `github_repo.review_policy` becomes a
-      reference to one. Default at track time is the lowest-numbered active
-      pipeline. Steps already satisfied at instantiation are skipped, which is
-      what makes a repository needing no review take the same path as one that
-      does.
 - [ ] **`action close`, and the cascade.** The interesting one: closing
       instantiates the pipeline and unblocks dependents, all under one
       correlation id.
@@ -67,6 +61,9 @@ them.
       with `rank_pin` as the override. `rank_class` is already on every verb;
       the rest needs the dependency graph.
 - [ ] The root `README.md` is two lines.
+- [ ] `todo db backup` and `todo db restore` — thin wrappers over SQLite, so
+      the syntax does not have to be remembered. `VACUUM INTO` is the backup:
+      it is consistent against a live database, which a file copy is not.
 - [ ] Nothing consumes `todo watch`. Sync raises a `pr_unresolvable` exception
       when a tracked pull request goes invisible, and today only a human
       watching would see it.
@@ -100,8 +97,8 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
-- `review_policy` is authored, not observed — reading branch protection needs
-  admin, and it is a statement about how someone works.
+- `github_repo.pipeline` is authored, not observed — reading branch protection
+  needs admin, and it is a statement about how someone works.
 - Migrations are the only thing executed; `schema.sql` is documentation with a
   test keeping it honest.
 - **Which migrations have run is recorded in `applied_migration`, not inferred
@@ -131,10 +128,16 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - Calendar kinds are free text; capacity is not. Nothing branches on kind,
   while the sort reads capacity.
 - **What a verb instantiates is a named pipeline, not a `review_policy` enum.**
-  The write chain is `undraft → send_for_review → wait_review → merge`, and a
-  repository needing no review runs the same one with the satisfied steps
-  skipped, rather than a second chain that has to be kept in step with the
-  first.
+  `action_pipeline` holds them and `pipeline_step` their verbs, so a chain is
+  rows rather than a branch in code. A repository takes the lowest-numbered
+  active pipeline when it is tracked, resolved once rather than read through a
+  NULL later.
+- **Two pipelines, not one with everything skipped.** `review` is `undraft →
+  send_for_review → wait_review → merge`; `direct` is `undraft → merge`.
+  `wait_review` closes on an approval a repository needing no review will
+  never receive, so it has to be absent rather than satisfied. Skipping is for
+  steps already true when the pipeline is instantiated — `undraft`, where pull
+  requests are not created as drafts.
 - An identifier is allocated only after the record validates, so a mistyped
   verb costs no number. Allocation still writes on its own connection, which
   means no read transaction may be open across it — SQLite answers the upgrade

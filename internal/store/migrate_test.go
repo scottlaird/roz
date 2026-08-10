@@ -119,6 +119,88 @@ func TestSchemaMatchesMigrations(t *testing.T) {
 	}
 }
 
+// TestSeededPipelines compares the pipelines and their steps, for the same
+// reason as the vocabulary below: they are rows, so the schema comparison
+// cannot see them, and a pipeline whose steps drift from the migration would
+// instantiate the wrong chain with nothing to say so.
+func TestSeededPipelines(t *testing.T) {
+	documented := pipelineRows(t, applyDocumentedSchema(t))
+	migrated := pipelineRows(t, applyMigrations(t))
+
+	if len(documented) == 0 {
+		t.Fatal("schema.sql seeds no pipelines")
+	}
+	compareSeeded(t, "pipeline", documented, migrated)
+}
+
+// pipelineRows reads the pipelines as comparable text, steps included, keyed
+// by name.
+func pipelineRows(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+
+	steps := map[string]string{}
+	stepRows, err := db.Query("SELECT pipeline, verb FROM pipeline_step ORDER BY pipeline, position")
+	if err != nil {
+		t.Fatalf("reading pipeline steps: %v", err)
+	}
+	defer stepRows.Close()
+	for stepRows.Next() {
+		var name, verb string
+		if err := stepRows.Scan(&name, &verb); err != nil {
+			t.Fatalf("scanning a step: %v", err)
+		}
+		steps[name] += " " + verb
+	}
+	if err := stepRows.Err(); err != nil {
+		t.Fatalf("reading pipeline steps: %v", err)
+	}
+
+	rows, err := db.Query("SELECT n, name, label, active, description FROM action_pipeline")
+	if err != nil {
+		t.Fatalf("reading pipelines: %v", err)
+	}
+	defer rows.Close()
+
+	pipelines := map[string]string{}
+	for rows.Next() {
+		var n, active int
+		var name, label, description string
+		if err := rows.Scan(&n, &name, &label, &active, &description); err != nil {
+			t.Fatalf("scanning a pipeline: %v", err)
+		}
+		pipelines[name] = fmt.Sprintf("%d|%s|%d|%s|%s", n, label, active, description, steps[name])
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading pipelines: %v", err)
+	}
+	return pipelines
+}
+
+// compareSeeded reports seeded rows that differ, are missing, or are extra.
+func compareSeeded(t *testing.T, what string, documented, migrated map[string]string) {
+	t.Helper()
+
+	if len(documented) != len(migrated) {
+		t.Fatalf("schema.sql seeds %d %ss, the migrations seed %d",
+			len(documented), what, len(migrated))
+	}
+	for key, want := range documented {
+		got, ok := migrated[key]
+		if !ok {
+			t.Errorf("%s %q is in schema.sql but no migration seeds it", what, key)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s %q differs.\nschema.sql:  %s\nmigrations:  %s", what, key, want, got)
+		}
+	}
+	for key := range migrated {
+		if _, ok := documented[key]; !ok {
+			t.Errorf("%s %q is seeded by a migration but missing from schema.sql", what, key)
+		}
+	}
+}
+
 // TestSeededVocabulary compares the verb rows, which sqlite_schema does not
 // carry and TestSchemaMatchesMigrations therefore cannot see.
 //
@@ -132,24 +214,7 @@ func TestSeededVocabulary(t *testing.T) {
 	if len(documented) == 0 {
 		t.Fatal("schema.sql seeds no verbs")
 	}
-	if len(documented) != len(migrated) {
-		t.Fatalf("schema.sql seeds %d verbs, the migrations seed %d", len(documented), len(migrated))
-	}
-	for verb, want := range documented {
-		got, ok := migrated[verb]
-		if !ok {
-			t.Errorf("%q is in schema.sql but no migration seeds it", verb)
-			continue
-		}
-		if got != want {
-			t.Errorf("%q differs.\nschema.sql:  %s\nmigrations:  %s", verb, want, got)
-		}
-	}
-	for verb := range migrated {
-		if _, ok := documented[verb]; !ok {
-			t.Errorf("%q is seeded by a migration but missing from schema.sql", verb)
-		}
-	}
+	compareSeeded(t, "verb", documented, migrated)
 }
 
 // verbRows reads the vocabulary as comparable text, keyed by verb.

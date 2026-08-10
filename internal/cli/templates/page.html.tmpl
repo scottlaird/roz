@@ -12,3 +12,10 @@
 
 <h2>projects — active</h2>
 <pre>{{.Projects}}</pre>
+{{if .Live}}
+{{/* The server streams a line on /events whenever the log moves. Reloading
+     whole is crude and correct: the page is cheap to build and holds no state
+     worth keeping. Comments inside <script> are stripped by html/template,
+     which is why this one is out here. */}}
+<script>new EventSource("/events").onmessage = () => location.reload();</script>
+{{end}}

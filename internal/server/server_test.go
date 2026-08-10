@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -18,7 +19,7 @@ import (
 func running(t *testing.T, page Page, log io.Writer) string {
 	t.Helper()
 
-	s := New("127.0.0.1:0", page, log)
+	s := New("127.0.0.1:0", page, nil, log)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
@@ -163,7 +164,7 @@ func (b *lockedBuffer) String() string {
 func TestCancellationIsNotAFailure(t *testing.T) {
 	s := New("127.0.0.1:0", func(context.Context) ([]byte, error) {
 		return []byte("the page"), nil
-	}, nil)
+	}, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -187,7 +188,7 @@ func TestCancellationIsNotAFailure(t *testing.T) {
 }
 
 func TestRunNeedsAPage(t *testing.T) {
-	s := New("127.0.0.1:0", nil, nil)
+	s := New("127.0.0.1:0", nil, nil, nil)
 	if err := s.Run(context.Background()); err == nil {
 		t.Error("Run() with no page returned nil, want an error")
 	}
@@ -200,8 +201,174 @@ func TestAddressInUseIsReported(t *testing.T) {
 	base := running(t, page, nil)
 	addr := strings.TrimPrefix(base, "http://")
 
-	second := New(addr, page, nil)
+	second := New(addr, page, nil, nil)
 	if err := second.Run(context.Background()); err == nil {
 		t.Error("the second server started on a taken address, want an error")
+	}
+}
+
+// runningLive is running with an event stream behind it.
+func runningLive(t *testing.T, changes Changes, log io.Writer) string {
+	t.Helper()
+
+	page := func(context.Context) ([]byte, error) { return []byte("the page"), nil }
+	s := New("127.0.0.1:0", page, changes, log)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("the server did not stop")
+		}
+	})
+
+	waiting, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	addr, err := s.Addr(waiting)
+	if err != nil {
+		t.Fatalf("Addr() returned error: %v", err)
+	}
+	return "http://" + addr.String()
+}
+
+// version is a change source a test can move.
+type version struct {
+	mu sync.Mutex
+	at int64
+	// failing makes the next read fail, standing in for a busy database.
+	failing bool
+}
+
+func (v *version) read(context.Context) (int64, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.failing {
+		return 0, errors.New("busy")
+	}
+	return v.at, nil
+}
+
+func (v *version) move() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.at++
+}
+
+func (v *version) fail(failing bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.failing = failing
+}
+
+// TestEventsStreamOnChange is what makes a page left open worth leaving open.
+func TestEventsStreamOnChange(t *testing.T) {
+	v := &version{at: 7}
+	base := runningLive(t, v.read, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/events", nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events returned error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", got)
+	}
+
+	// Nothing has moved, so nothing should arrive; then something moves.
+	v.move()
+
+	line := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "data: ") {
+				line <- scanner.Text()
+				return
+			}
+		}
+		close(line)
+	}()
+
+	select {
+	case got, ok := <-line:
+		if !ok {
+			t.Fatal("the stream ended without an event")
+		}
+		if got != "data: 8" {
+			t.Errorf("event = %q, want the new version", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no event arrived after the version moved")
+	}
+}
+
+// TestEventsSurviveAFailedRead: the database being busy for a moment is not a
+// reason to drop a connection the browser would then have to rebuild.
+func TestEventsSurviveAFailedRead(t *testing.T) {
+	v := &version{at: 1}
+	base := runningLive(t, v.read, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events returned error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	v.fail(true)
+	time.Sleep(2 * pollInterval)
+	v.fail(false)
+	v.move()
+
+	line := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "data: ") {
+				line <- scanner.Text()
+				return
+			}
+		}
+		close(line)
+	}()
+
+	select {
+	case got, ok := <-line:
+		if !ok {
+			t.Fatal("the stream ended after a failed read")
+		}
+		if got != "data: 2" {
+			t.Errorf("event = %q, want the version after the failure", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no event arrived after the read recovered")
+	}
+}
+
+// TestNoEventsWithoutAChangeSource: `todo render` has no server, and a server
+// with nothing to watch should say so rather than hold a connection open
+// promising events that cannot come.
+func TestNoEventsWithoutAChangeSource(t *testing.T) {
+	base := running(t, func(context.Context) ([]byte, error) {
+		return []byte("the page"), nil
+	}, nil)
+
+	resp, _ := get(t, base+"/events")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 }

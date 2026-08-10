@@ -34,6 +34,9 @@ type pageContent struct {
 	Calendar    string
 	Queue       string
 	Projects    string
+	// Live adds the script that reloads when the server says something
+	// moved. A page written to a file has no server to listen to.
+	Live bool
 }
 
 // horizon is how far ahead the calendar block looks. Two weeks is what a
@@ -69,7 +72,7 @@ func runRender(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	page, err := renderPage(cmd.Context(), st, time.Now())
+	page, err := renderPage(cmd.Context(), st, time.Now(), false)
 	if err != nil {
 		return err
 	}
@@ -90,7 +93,7 @@ func runRender(cmd *cobra.Command, _ []string) error {
 // In memory rather than streamed so that a failure half way through leaves
 // the previous page in place: a status page that is truncated looks like an
 // empty queue, which is the one wrong answer that matters.
-func renderPage(ctx context.Context, st *store.Store, now time.Time) ([]byte, error) {
+func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) ([]byte, error) {
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
 		Upcoming: true,
 		Through:  now.Add(horizon).UTC().Format(store.DateFormat),
@@ -113,7 +116,7 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time) ([]byte, er
 		return nil, err
 	}
 
-	content := pageContent{GeneratedAt: now.UTC().Format(time.RFC3339)}
+	content := pageContent{GeneratedAt: now.UTC().Format(time.RFC3339), Live: live}
 	blocks := []struct {
 		into  *string
 		write func(io.Writer) error

@@ -29,12 +29,29 @@ const shutdownGrace = 5 * time.Second
 // served is never staler than the request that asked for it.
 type Page func(ctx context.Context) ([]byte, error)
 
+// Changes reports a version of the world that moves whenever something a
+// page would show has changed. The server does not care what the number
+// means, only that it differs; `todo serve` passes the log's head, since
+// nothing changes in this system without an event.
+type Changes func(ctx context.Context) (int64, error)
+
+// pollInterval is how often a live connection asks whether anything moved.
+// The same second `todo watch` uses, for the same reason: it is the shortest
+// gap that is not really polling.
+const pollInterval = time.Second
+
+// keepalive stops an idle stream from looking dead to anything between the
+// server and the browser. On loopback nothing needs it; it costs one line a
+// minute and means the endpoint behaves the same behind a proxy.
+const keepalive = 30 * time.Second
+
 // Server serves the status page. It satisfies service.Service, so `todo
 // serve` runs it beside the syncer and the log tailer.
 type Server struct {
-	addr string
-	page Page
-	log  io.Writer
+	addr    string
+	page    Page
+	changes Changes
+	log     io.Writer
 
 	// ready is closed once the listener is up, which is how a caller that
 	// asked for port 0 finds out what it got.
@@ -42,12 +59,19 @@ type Server struct {
 	listenOn net.Addr
 }
 
-// New returns a server. An empty addr means DefaultAddr; log may be nil.
-func New(addr string, page Page, log io.Writer) *Server {
+// New returns a server.
+//
+// An empty addr means DefaultAddr, and log may be nil. changes may be nil
+// too, in which case there is no event stream and a page served from here
+// does not know when to reload.
+func New(addr string, page Page, changes Changes, log io.Writer) *Server {
 	if addr == "" {
 		addr = DefaultAddr
 	}
-	return &Server{addr: addr, page: page, log: log, ready: make(chan struct{})}
+	return &Server{
+		addr: addr, page: page, changes: changes, log: log,
+		ready: make(chan struct{}),
+	}
 }
 
 func (s *Server) Name() string { return "server" }
@@ -69,6 +93,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handle)
+	mux.HandleFunc("/events", s.handleEvents)
 	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
 	failed := make(chan error, 1)
@@ -125,6 +150,69 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if _, err := w.Write(page); err != nil {
 		s.logf("writing the page: %v\n", err)
+	}
+}
+
+// handleEvents streams a line whenever the world moves, so a page left open
+// can reload itself.
+//
+// Server-sent events rather than a websocket: the page only ever listens, the
+// browser reconnects on its own, and it is a few lines of the standard
+// library against a dependency and a handshake.
+//
+// Each connection polls on its own. That is one query a second per open tab,
+// which is the wrong shape at scale and entirely fine for a personal queue on
+// loopback; sharing one poller between connections is the fix if it ever
+// stops being fine.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if s.changes == nil {
+		http.NotFound(w, r)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming is not supported here", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	flusher.Flush()
+
+	ctx := r.Context()
+	last, err := s.changes(ctx)
+	if err != nil {
+		s.logf("reading the version: %v\n", err)
+		return
+	}
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	idle := time.NewTicker(keepalive)
+	defer idle.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-idle.C:
+			fmt.Fprint(w, ": still here\n\n")
+			flusher.Flush()
+		case <-ticker.C:
+			current, err := s.changes(ctx)
+			if err != nil {
+				// A failed read is not a reason to drop the connection: the
+				// database may be busy, and the next tick will try again.
+				continue
+			}
+			if current == last {
+				continue
+			}
+			last = current
+			fmt.Fprintf(w, "data: %d\n\n", current)
+			flusher.Flush()
+		}
 	}
 }
 

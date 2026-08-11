@@ -101,6 +101,27 @@ func (p *Project) Clone() *Project {
 	return &clone
 }
 
+// closedProjectStatuses are the statuses that mean a project is over.
+//
+// Stated as the closed set rather than the open one so that a status added
+// later counts as live by default, which is the safer side of the question:
+// something new showing up in a list of work is a nuisance, and something new
+// silently missing from one is how work goes quiet.
+//
+// IsOpen and the orphaned query both read this, so they cannot disagree.
+var closedProjectStatuses = []string{ProjectDone, ProjectRetired, ProjectSuperseded}
+
+// IsOpen reports whether the project is still live work. Action has the same
+// method for the same reason.
+func (p *Project) IsOpen() bool {
+	for _, closed := range closedProjectStatuses {
+		if p.Status == closed {
+			return false
+		}
+	}
+	return true
+}
+
 // ProjectFilter narrows ListProjects. The zero value selects everything.
 type ProjectFilter struct {
 	// Status keeps only projects in one status.
@@ -109,8 +130,12 @@ type ProjectFilter struct {
 	// value query in the system, per the sketch, because a snooze nobody is
 	// watching is how work goes quiet.
 	Expired bool
-	// Orphaned keeps projects with no open action and no snooze: live work
+	// Orphaned keeps live projects with no open action and no snooze: work
 	// that is on no surface anyone reads.
+	//
+	// Live is load-bearing. A finished project trivially has no open action,
+	// so without that condition every one of them matches and the result is a
+	// list nobody scans — which is the whole use of the query.
 	Orphaned bool
 	// Order is how the results come back. Empty is creation order.
 	Order string
@@ -187,7 +212,13 @@ func (f ProjectFilter) clauses(now string) ([]string, []any) {
 		args = append(args, ProjectSnoozed, now)
 	}
 	if f.Orphaned {
+		placeholders := make([]string, len(closedProjectStatuses))
+		for i, status := range closedProjectStatuses {
+			placeholders[i] = "?"
+			args = append(args, status)
+		}
 		where = append(where,
+			fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ", ")),
 			"snooze_until IS NULL AND id NOT IN (SELECT project_id FROM action WHERE closed_at IS NULL AND project_id IS NOT NULL)")
 	}
 	return where, args

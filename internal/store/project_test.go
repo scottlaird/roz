@@ -529,3 +529,160 @@ func TestRollbackDiscardsEvents(t *testing.T) {
 		t.Errorf("got %d events after rollback, want only the original created event", len(got))
 	}
 }
+
+// addProject inserts a project with nothing but a title.
+func addProject(t *testing.T, st *Store, title string) *Project {
+	t.Helper()
+	ctx := context.Background()
+
+	p := NewProject(title)
+	if err := st.AllocateProject(ctx, p); err != nil {
+		t.Fatalf("AllocateProject() returned error: %v", err)
+	}
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	if err := tx.Insert(ctx, p); err != nil {
+		t.Fatalf("Insert() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return p
+}
+
+func setProjectStatus(t *testing.T, st *Store, p *Project, status string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := p.Clone()
+	after.Status = status
+	if _, err := tx.Update(ctx, p, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	*p = *after
+}
+
+func assignProject(t *testing.T, st *Store, a *Action, projectID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := a.Clone()
+	after.ProjectID = sql.NullString{String: projectID, Valid: true}
+	if _, err := tx.Update(ctx, a, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+// TestOrphanedIsLiveWorkOnly is what the query is for: work with nothing open
+// on it and no snooze holding it, so it appears on no surface anyone reads.
+//
+// It had no test, which is how it shipped matching every finished project as
+// well — and a list of everything ever done is not one anybody scans.
+func TestOrphanedIsLiveWorkOnly(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	orphaned := addProject(t, st, "nothing open on it")
+	blocked := addProject(t, st, "blocked, and quiet with it")
+	setProjectStatus(t, st, blocked, ProjectBlocked)
+
+	worked := addProject(t, st, "has an open action")
+	assignProject(t, st, addAction(t, st, "do the thing", "write"), worked.ID)
+
+	for _, status := range closedProjectStatuses {
+		setProjectStatus(t, st, addProject(t, st, "finished: "+status), status)
+	}
+
+	found, err := st.ListProjects(ctx, ProjectFilter{Orphaned: true})
+	if err != nil {
+		t.Fatalf("ListProjects() returned error: %v", err)
+	}
+	listed := map[string]bool{}
+	for _, p := range found {
+		listed[p.ID] = true
+	}
+
+	// Blocked counts as live, and is exactly where work goes quiet.
+	for _, want := range []*Project{orphaned, blocked} {
+		if !listed[want.ID] {
+			t.Errorf("%s (%s) is missing, want it listed", want.ID, want.Title)
+		}
+	}
+	if listed[worked.ID] {
+		t.Errorf("%s has an open action and should not be orphaned", worked.ID)
+	}
+	if len(found) != 2 {
+		t.Errorf("listed %d projects, want 2: %v", len(found), projectIDs(found))
+	}
+}
+
+// TestOrphanedIgnoresASnooze: a snooze is somebody having decided when to look
+// again, which is the opposite of work nobody is watching.
+func TestOrphanedIgnoresASnooze(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	deferred := addProject(t, st, "deferred on purpose")
+	snoozeProject(t, st, deferred, "2099-01-01")
+
+	found, err := st.ListProjects(ctx, ProjectFilter{Orphaned: true})
+	if err != nil {
+		t.Fatalf("ListProjects() returned error: %v", err)
+	}
+	if len(found) != 0 {
+		t.Errorf("listed %v, want nothing: the only project is snoozed", projectIDs(found))
+	}
+}
+
+// TestOrphanedComposesWithStatus: the conditions must AND, or asking for one
+// status would widen the result rather than narrow it.
+func TestOrphanedComposesWithStatus(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	active := addProject(t, st, "active and quiet")
+	setProjectStatus(t, st, addProject(t, st, "blocked and quiet"), ProjectBlocked)
+
+	found, err := st.ListProjects(ctx, ProjectFilter{Orphaned: true, Status: ProjectActive})
+	if err != nil {
+		t.Fatalf("ListProjects() returned error: %v", err)
+	}
+	if len(found) != 1 || found[0].ID != active.ID {
+		t.Errorf("listed %v, want only %s", projectIDs(found), active.ID)
+	}
+}
+
+func TestProjectIsOpen(t *testing.T) {
+	for _, status := range []string{ProjectActive, ProjectBlocked, ProjectSnoozed} {
+		if !(&Project{Status: status}).IsOpen() {
+			t.Errorf("%s should be open", status)
+		}
+	}
+	for _, status := range closedProjectStatuses {
+		if (&Project{Status: status}).IsOpen() {
+			t.Errorf("%s should not be open", status)
+		}
+	}
+}

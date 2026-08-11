@@ -316,3 +316,34 @@ func TestWatchToolFilters(t *testing.T) {
 		t.Errorf("watch kind=changed returned a created event:\n%s", changes)
 	}
 }
+
+// TestWatchToolSaysItDoesNotFollow: the description is derived from the
+// command's help, and watch's help opens "Follow the event log" — which is
+// what the server has specifically taken away by forcing --once.
+func TestWatchToolSaysItDoesNotFollow(t *testing.T) {
+	tools := (&mcpTools{}).List()
+
+	var watch *mcp.Tool
+	for i := range tools {
+		if tools[i].Name == "watch" {
+			watch = &tools[i]
+		}
+	}
+	if watch == nil {
+		t.Fatal("watch is not exposed as a tool")
+	}
+
+	for _, want := range []string{"bounded read", "--once"} {
+		if !strings.Contains(watch.Description, want) {
+			t.Errorf("the description does not mention %q:\n%s", want, watch.Description)
+		}
+	}
+
+	// The flags the server has already decided are not the caller's to pass.
+	properties, _ := watch.InputSchema["properties"].(map[string]any)
+	for _, unwanted := range []string{"once", "interval"} {
+		if _, offered := properties[unwanted]; offered {
+			t.Errorf("watch offers --%s, which the server decides", unwanted)
+		}
+	}
+}

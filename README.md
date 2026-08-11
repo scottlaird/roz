@@ -397,8 +397,13 @@ line names. Forty-five of them:
 | other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
 
 **Left out**, because they are not an agent's to call: `init`, which decides
-where the database lives, and `serve`, `syncer` and `watch`, which never
-return.
+where the database lives, and `serve`, `syncer` and `mcp`, which never return.
+
+`watch` **is** offered, as the bounded read: the server forces `--once` and
+hides `--interval`, so it answers with the events matching the filters and
+returns rather than following. "What has happened since" is the useful
+question, and an agent can ask it again — `--since`, or `-n` for a backlog
+count.
 
 **Every change is recorded as `agent:<name>`**, taken from what the client
 calls itself when it connects — `Claude Code` becomes `agent:claude-code` —

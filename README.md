@@ -1,5 +1,7 @@
 # roz
 
+<img src="assets/roz-256.png" alt="" width="128" align="right">
+
 A work queue that stays correct mechanically.
 
 Projects (`ROZ`) are what you plan from; actions (`NA`) are what you read. An
@@ -786,6 +788,33 @@ Stop anything holding the database first. SQLite has no way to tell a running
 process that its file was replaced underneath it, so a `roz serve` left
 running would carry on reading the database that is no longer there — unlike a
 migration, which [it does notice](#upgrading-while-something-is-running).
+
+## The logo
+
+`assets/roz.svg` is the master; `assets/roz-mark.svg` is the same drawing with
+the chain dropped, the frame thickened and the head replaced by a filled tile,
+because at 16px the beads are noise and a hairline frame smears into a grey
+band. Everything else in `assets/` is generated from those two.
+
+The page carries the 32px icon inline as a data URI rather than linking a
+file. The page is one file by design — `roz render` writes it to disk as
+readily as `roz serve` serves it — and an icon fetched over a second request
+is one more thing that can fail, or simply not be there when the file is
+opened from disk.
+
+There is no rasteriser with an alpha channel on a stock macOS box, so
+`assets/unmatte.py` renders each size twice through Quick Look, once over
+white and once over black, and recovers the alpha:
+
+    over white:  Cw = C*a + (1-a)
+    over black:  Cb = C*a
+    so           a  = 1 - (Cw - Cb)  and  C = Cb / a
+
+Standard library only, about three seconds for the whole set. Regenerate with:
+
+```console
+$ python3 assets/unmatte.py assets/roz-mark.svg 32 assets/roz-32.png
+```
 
 ## Where to read more
 

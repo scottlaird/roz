@@ -68,7 +68,7 @@ func runRepoTrack(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -219,7 +219,7 @@ func updateRepo(cmd *cobra.Command, id string, change func(context.Context, *sto
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func runRepoShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -324,7 +324,7 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

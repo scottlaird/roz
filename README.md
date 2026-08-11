@@ -345,7 +345,10 @@ keys render as plain text, because the shape of a key is not distinctive —
 `UTF-8`, `SHA-256` and `CVE-2024-1234` all match it, and a link that goes
 confidently to the wrong place is worse than no link.
 
-`--db` stays a flag, since it says which database to open. `TODO_JIRA_BASE_URL`
+`--db` stays a flag, since it says which database to open. Its value lives on
+the command tree that parsed it rather than in a package variable, so two
+command trees in one process — which is what `todo mcp` builds, one per tool
+call — cannot end up pointed at each other's database. `TODO_JIRA_BASE_URL`
 and `TODO_JIRA_PREFIXES` override the stored values for a single run.
 
 ## Ranking

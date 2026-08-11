@@ -14,9 +14,6 @@ import (
 	"github.com/scottlaird/todo/internal/store"
 )
 
-// dbPath is the SQLite file every command will operate on.
-var dbPath string
-
 // NewRootCmd builds the full command tree.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -29,7 +26,12 @@ func NewRootCmd() *cobra.Command {
 
 	// --db is the one setting that cannot live in the database, since it says
 	// which database to open. Everything else is `todo config`.
-	root.PersistentFlags().StringVar(&dbPath, "db", defaultDBPath(),
+	// Bound to the flag rather than to a package variable, so the value lives
+	// on this command tree and not on the process. Two trees in one process
+	// then cannot tread on each other — which `todo mcp` does, building a
+	// fresh tree per tool call, and would do concurrently the moment it is
+	// served over anything but stdio.
+	root.PersistentFlags().String("db", defaultDBPath(),
 		"path to the SQLite database (env: TODO_DB)")
 
 	root.AddCommand(

@@ -99,7 +99,7 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -429,7 +429,7 @@ func updateAction(cmd *cobra.Command, id string, change func(context.Context, *s
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -488,7 +488,7 @@ func runActionShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -544,7 +544,7 @@ func runActionList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -811,7 +811,7 @@ func withActionTx(cmd *cobra.Command, body func(context.Context, *store.Tx) erro
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -875,7 +875,7 @@ func runActionClose(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

@@ -53,7 +53,7 @@ func runRender(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

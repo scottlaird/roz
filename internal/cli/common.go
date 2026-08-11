@@ -99,11 +99,28 @@ func outputFrom(cmd *cobra.Command) (string, error) {
 	}
 }
 
+// dbPathFrom reads --db off the command rather than a package variable.
+//
+// Cobra keeps a parsed flag's value on the flag, and a subcommand's FlagSet
+// includes the persistent flags of its parents, so this reaches the root's
+// --db from anywhere in the tree — and reaches *this* tree's copy of it.
+func dbPathFrom(cmd *cobra.Command) (string, error) {
+	path, err := cmd.Flags().GetString("db")
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", errors.New("no database path: pass --db or set TODO_DB")
+	}
+	return path, nil
+}
+
 // openStore opens the database named by --db, translating an uninitialised
 // database into advice rather than a missing-table error.
-func openStore() (*store.Store, error) {
-	if dbPath == "" {
-		return nil, errors.New("no database path: pass --db or set TODO_DB")
+func openStore(cmd *cobra.Command) (*store.Store, error) {
+	dbPath, err := dbPathFrom(cmd)
+	if err != nil {
+		return nil, err
 	}
 	st, err := store.OpenStore(dbPath)
 	if err != nil {

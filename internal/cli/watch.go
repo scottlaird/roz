@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/service"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/service"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -82,7 +82,7 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 }
 
 // watcher is the follow loop as a service, so it can be run beside the schema
-// guard. `todo serve` has its own tailer, which starts at the end of the log
+// guard. `roz serve` has its own tailer, which starts at the end of the log
 // rather than replaying a backlog.
 type watcher struct {
 	store   *store.Store

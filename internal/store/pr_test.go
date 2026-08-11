@@ -14,7 +14,7 @@ func TestParsePRKey(t *testing.T) {
 		wantErr    bool
 	}{
 		{key: "owner/myrepo#812", wantRepo: "owner/myrepo", wantNumber: 812},
-		{key: "scottlaird/todo#11", wantRepo: "scottlaird/todo", wantNumber: 11},
+		{key: "scottlaird/roz#11", wantRepo: "scottlaird/roz", wantNumber: 11},
 		{key: "", wantErr: true},
 		// A bare repository name is no longer enough: pr.repo is a foreign key
 		// into github_repo, which is keyed owner/name.
@@ -334,8 +334,8 @@ func TestTrackedBecauseIsAuthored(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 
 	tx, err := st.Begin(ctx, ActorSyncGitHub)
 	if err != nil {
@@ -356,8 +356,8 @@ func TestTheSchemaRefusesAnUnknownReason(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 
 	_, err := st.db.ExecContext(ctx,
 		"UPDATE pr SET tracked_because = 'curious' WHERE id = ?", pr.ID)

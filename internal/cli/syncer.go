@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/ghsync"
-	"github.com/scottlaird/todo/internal/service"
+	"github.com/scottlaird/roz/internal/ghsync"
+	"github.com/scottlaird/roz/internal/service"
 )
 
 // flagInterval is shared with watch, which polls for the same reason.
@@ -21,9 +21,9 @@ func newSyncerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "syncer",
 		Short: "Poll GitHub on a loop until interrupted",
-		Long: "`todo sync github` on a timer. Quiet by design: a poll that changes\n" +
+		Long: "`roz sync github` on a timer. Quiet by design: a poll that changes\n" +
 			"nothing prints nothing, and what did change is in the log, where\n" +
-			"`todo watch` will show it. Only the exceptional is reported here —\n" +
+			"`roz watch` will show it. Only the exceptional is reported here —\n" +
 			"slowing down for the rate limit, backing off, giving up.\n\n" +
 			"Below --rate-limit-floor the remaining budget is spread across the time\n" +
 			"until it resets, so polling slows exactly enough to last rather than by\n" +
@@ -67,7 +67,7 @@ func runSyncer(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	// Ctrl-C stops the loop cleanly, the way `todo watch` does.
+	// Ctrl-C stops the loop cleanly, the way `roz watch` does.
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 

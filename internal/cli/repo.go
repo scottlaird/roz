@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -25,7 +25,7 @@ func newRepoCmd() *cobra.Command {
 		Short: "Tracked GitHub repositories, keyed owner/name",
 		Long: "A repository carries policy a pull request cannot — chiefly its\n" +
 			"pipeline, which is what happens to a pull request between written and\n" +
-			"merged. `todo pipeline list` shows the choices.",
+			"merged. `roz pipeline list` shows the choices.",
 	}
 	cmd.AddCommand(
 		newRepoTrackCmd(),
@@ -52,7 +52,7 @@ func newRepoTrackCmd() *cobra.Command {
 // default branch, merge queue, archived — belong to sync.
 func addRepoPolicyFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
-	f.String(flagPipeline, "", "how its pull requests reach merge; see `todo pipeline list`")
+	f.String(flagPipeline, "", "how its pull requests reach merge; see `roz pipeline list`")
 	f.String(flagAnnounceChannel, "", "Slack channel its pull requests are announced in")
 	f.String(flagDisposition, "", "e.g. another team's area unless they ask directly")
 }
@@ -199,7 +199,7 @@ func checkPipelineUsable(ctx context.Context, tx *store.Tx, name sql.NullString)
 	}
 	p, err := tx.LoadPipeline(ctx, name.String)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%q is not a pipeline; see `todo pipeline list`", name.String)
+		return fmt.Errorf("%q is not a pipeline; see `roz pipeline list`", name.String)
 	}
 	if err != nil {
 		return err

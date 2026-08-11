@@ -137,7 +137,7 @@ func TestPipelineStepNeedsAKnownVerb(t *testing.T) {
 func TestRepoNeedsAKnownPipeline(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	r := trackRepo(t, st, "scottlaird/todo")
+	r := trackRepo(t, st, "scottlaird/roz")
 
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {

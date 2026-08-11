@@ -1,4 +1,4 @@
-module github.com/scottlaird/todo
+module github.com/scottlaird/roz
 
 go 1.26.2
 

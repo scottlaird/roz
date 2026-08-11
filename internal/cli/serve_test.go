@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scottlaird/todo/internal/github"
+	"github.com/scottlaird/roz/internal/github"
 )
 
 // TestServeServesTheRenderedPage is the join: what the server hands out is
-// what `todo render` writes, because it is the same function.
+// what `roz render` writes, because it is the same function.
 func TestServeServesTheRenderedPage(t *testing.T) {
 	db := renderedFixture(t)
 	withFetcher(t, stubFetcher{result: github.Result{}})
@@ -95,7 +95,7 @@ func TestServeRejectsANonPositiveInterval(t *testing.T) {
 	}
 }
 
-// serving starts `todo serve` on a port the operating system picks and
+// serving starts `roz serve` on a port the operating system picks and
 // returns its base URL, stopping it when the test ends.
 func serving(t *testing.T, db string, extra ...string) string {
 	t.Helper()

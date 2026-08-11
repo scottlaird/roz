@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scottlaird/todo/internal/mcp"
+	"github.com/scottlaird/roz/internal/mcp"
 )
 
 func tools(t *testing.T, db string) *mcpTools {
@@ -128,12 +128,12 @@ func TestCallRunsTheCommand(t *testing.T) {
 
 	if got := call(t, m, "claude-code", "project_add", map[string]any{
 		"title": "from the agent", "priority": float64(2),
-	}); got != "TD1" {
-		t.Errorf("project_add printed %q, want TD1", got)
+	}); got != "ROZ1" {
+		t.Errorf("project_add printed %q, want ROZ1", got)
 	}
 
 	// A number arrives as a float and must not reach the command line as 2e+00.
-	shown := call(t, m, "claude-code", "project_show", map[string]any{"project": "TD1"})
+	shown := call(t, m, "claude-code", "project_show", map[string]any{"project": "ROZ1"})
 	if !strings.Contains(shown, "priority") || !strings.Contains(shown, "2") {
 		t.Errorf("project_show = %q", shown)
 	}
@@ -264,7 +264,7 @@ func TestWatchIsBounded(t *testing.T) {
 
 	select {
 	case out := <-done:
-		if !strings.Contains(out, "created") || !strings.Contains(out, "TD1") {
+		if !strings.Contains(out, "created") || !strings.Contains(out, "ROZ1") {
 			t.Errorf("watch = %q, want the log", out)
 		}
 	case <-time.After(10 * time.Second):

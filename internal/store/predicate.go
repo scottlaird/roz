@@ -50,7 +50,7 @@ var predicates = map[string]Predicate{
 	},
 
 	// The Slack announcement, which GitHub cannot supply. Recorded either by
-	// a Slack sync or by hand with `todo pr announce`.
+	// a Slack sync or by hand with `roz pr announce`.
 	PredicateAnnounced: func(pr *PR) bool {
 		return pr.AnnouncedAt.Valid && pr.AnnouncedAt.String != ""
 	},

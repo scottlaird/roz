@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 func newVerifyCmd() *cobra.Command {
@@ -16,7 +16,7 @@ func newVerifyCmd() *cobra.Command {
 		Long: "Records that an item was checked against reality, as distinct from\n" +
 			"when it was last edited. Projects and actions carry the timestamp;\n" +
 			"nothing else does.\n\n" +
-			"`todo action list --sort staleness` then answers what has gone longest\n" +
+			"`roz action list --sort staleness` then answers what has gone longest\n" +
 			"without anyone looking, which updated_at cannot: every write moves\n" +
 			"that one, so an item nobody has touched for a month looks identical\n" +
 			"whether it was reviewed on Friday or never.\n\n" +

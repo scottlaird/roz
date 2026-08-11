@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 func newPRCmd() *cobra.Command {
@@ -58,7 +58,7 @@ func newPRTrackCmd() *cobra.Command {
 func addPRPipelineFlag(cmd *cobra.Command) {
 	cmd.Flags().String(flagPipeline, "",
 		"how this one reaches merge, when it differs from its repository; "+
-			"see `todo pipeline list`")
+			"see `roz pipeline list`")
 }
 
 const flagBecause = "because"
@@ -116,7 +116,7 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 	// having said anything about the repository would start from a guess.
 	switch _, err := tx.LoadGitHubRepo(ctx, repo); {
 	case errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("%s is not tracked; run `todo repo track %s` first", repo, repo)
+		return fmt.Errorf("%s is not tracked; run `roz repo track %s` first", repo, repo)
 	case err != nil:
 		return err
 	}
@@ -139,7 +139,7 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// The same check `todo repo track` makes, and for the same reason: an
+	// The same check `roz repo track` makes, and for the same reason: an
 	// unknown pipeline should be reported as itself rather than as a foreign
 	// key constraint. Unlike a repository, no default is filled in — unset
 	// means the repository's.

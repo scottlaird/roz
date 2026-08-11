@@ -202,7 +202,7 @@ INSERT INTO pipeline_step (pipeline, position, verb) VALUES
 
 -- ── project ──────────────────────────────────────────────────────────
 CREATE TABLE project (
-  id               TEXT PRIMARY KEY,           -- 'TD106' with the default prefix
+  id               TEXT PRIMARY KEY,           -- 'ROZ106' with the default prefix
   kind             TEXT NOT NULL,              -- = sequence.kind for 'project'
   n                INTEGER NOT NULL,
   title            TEXT NOT NULL,
@@ -247,7 +247,7 @@ CREATE TABLE action (
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   -- observed: when this was last checked against reality, as distinct from
-  -- updated_at, which every write moves. Written only by `todo verify`, which
+  -- updated_at, which every write moves. Written only by `roz verify`, which
   -- the sketch groups with sync as a writer of observed fields. Last because
   -- ADD COLUMN put it there. See 0011.
   last_verified_at TEXT,
@@ -266,7 +266,7 @@ CREATE TABLE action (
 -- get from written to merged, where they are announced, and which branch is
 -- the default -- the last of which is what stacked_on is defined against.
 CREATE TABLE github_repo (
-  id                TEXT PRIMARY KEY,        -- 'scottlaird/todo'
+  id                TEXT PRIMARY KEY,        -- 'scottlaird/roz'
   owner             TEXT NOT NULL,
   name              TEXT NOT NULL,
 
@@ -296,7 +296,7 @@ CREATE TABLE github_repo (
 
 -- ── pr ───────────────────────────────────────────────────────────────
 CREATE TABLE pr (
-  id                 TEXT PRIMARY KEY,         -- 'scottlaird/todo#11'
+  id                 TEXT PRIMARY KEY,         -- 'scottlaird/roz#11'
   repo               TEXT NOT NULL REFERENCES github_repo(id),
   number             INTEGER NOT NULL,
   title              TEXT NOT NULL DEFAULT '',
@@ -434,7 +434,7 @@ CREATE TABLE event (
                  CHECK (severity IN ('info','notice','exception')),
 
   -- informal FK, not enforced (polymorphic). vocab and target:
-  --   'project'          -> project.id           e.g. 'TD106'
+  --   'project'          -> project.id           e.g. 'ROZ106'
   --   'action'           -> action.id            e.g. 'NA57'
   --   'pr'               -> pr.id                e.g. 'saas-infra-plane#4174'
   --   'calendar_window'  -> calendar_window.id
@@ -483,7 +483,7 @@ CREATE TABLE priority (
 
 CREATE TABLE priority_target (
   priority_id  TEXT NOT NULL REFERENCES priority(id),
-  -- same informal-FK pair as `event`: 'project'->'TD106', 'action'->'NA57'
+  -- same informal-FK pair as `event`: 'project'->'ROZ106', 'action'->'NA57'
   subject_type TEXT NOT NULL,
   subject_id   TEXT NOT NULL,
   note         TEXT NOT NULL DEFAULT '',

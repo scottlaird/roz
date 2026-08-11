@@ -74,7 +74,7 @@ func TestProjectJira(t *testing.T) {
 			t.Errorf("output does not mention %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "TD1") {
+	if strings.Contains(out, "ROZ1") {
 		t.Errorf("output names a project; the observation is about the issue:\n%s", out)
 	}
 	_ = id

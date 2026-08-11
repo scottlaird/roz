@@ -14,13 +14,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 func newProjectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "project",
-		Short: "Bodies of work, allocated a TD identifier",
+		Short: "Bodies of work, allocated a ROZ identifier",
 	}
 	cmd.AddCommand(
 		newProjectAddCmd(),
@@ -518,8 +518,8 @@ func newProjectSupersedeCmd() *cobra.Command {
 		RunE: runProjectSupersede,
 	}
 	f := cmd.Flags()
-	f.String("from", "", "project being superseded, e.g. TD32 (required)")
-	f.String("into", "", "project that replaces it, e.g. TD94 (required)")
+	f.String("from", "", "project being superseded, e.g. ROZ32 (required)")
+	f.String("into", "", "project that replaces it, e.g. ROZ94 (required)")
 	_ = cmd.MarkFlagRequired("from")
 	_ = cmd.MarkFlagRequired("into")
 	addActorFlag(cmd)
@@ -736,7 +736,7 @@ func newProjectCloseCmd() *cobra.Command {
 			"advanced — so its open actions are dropped as obsolete rather than left\n" +
 			"in the queue pointing at work nobody wants. Anything blocked behind one\n" +
 			"of them is released.\n\n" +
-			"--status retired is the abandoned case; `todo project supersede` is the\n" +
+			"--status retired is the abandoned case; `roz project supersede` is the\n" +
 			"one that records where the work went instead.",
 		Args: cobra.ExactArgs(1),
 		RunE: runProjectClose,

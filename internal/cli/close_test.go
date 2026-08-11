@@ -35,8 +35,8 @@ func TestActionCloseDropped(t *testing.T) {
 // somewhere else would be indistinguishable from a bug.
 func TestCloseCascadeIsReported(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#27"); err != nil {
+	trackRepo(t, db, "scottlaird/roz")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#27"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestCloseCascadeIsReported(t *testing.T) {
 		t.Fatalf("action hide-behind returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "action", "close", "--db", db, write, "--pr", "scottlaird/todo#27")
+	out, err := runCLI(t, "action", "close", "--db", db, write, "--pr", "scottlaird/roz#27")
 	if err != nil {
 		t.Fatalf("action close returned error: %v", err)
 	}
@@ -79,15 +79,15 @@ func TestCloseCascadeIsReported(t *testing.T) {
 // directly leaves its pipeline unstated, and nothing should be guessed.
 func TestCloseWithoutARepoPipeline(t *testing.T) {
 	db := initDB(t)
-	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/todo", "--pipeline", ""); err != nil {
+	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz", "--pipeline", ""); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#27"); err != nil {
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#27"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 	id := addAction(t, db, "--title", "write the endpoint", "--verb", "write")
 
-	out, err := runCLI(t, "action", "close", "--db", db, id, "--pr", "scottlaird/todo#27")
+	out, err := runCLI(t, "action", "close", "--db", db, id, "--pr", "scottlaird/roz#27")
 	if err != nil {
 		t.Fatalf("action close returned error: %v", err)
 	}

@@ -5,7 +5,7 @@
 -- the default -- the last of which is what stacked_on is defined against.
 
 CREATE TABLE github_repo (
-  id                TEXT PRIMARY KEY,        -- 'scottlaird/todo'
+  id                TEXT PRIMARY KEY,        -- 'scottlaird/roz'
   owner             TEXT NOT NULL,
   name              TEXT NOT NULL,
 
@@ -52,7 +52,7 @@ WHERE instr(repo, '/') > 0;
 -- referenced it, and renaming does not clear the count. PRAGMA
 -- foreign_key_check sees nothing wrong, because by then nothing is.
 CREATE TABLE pr_new (
-  id                 TEXT PRIMARY KEY,         -- 'scottlaird/todo#11'
+  id                 TEXT PRIMARY KEY,         -- 'scottlaird/roz#11'
   repo               TEXT NOT NULL REFERENCES github_repo(id),
   number             INTEGER NOT NULL,
   title              TEXT NOT NULL DEFAULT '',

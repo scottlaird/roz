@@ -10,7 +10,7 @@
 -- was read from Jira and discarded. An issue can be recorded before or after
 -- anything references it, because it no longer depends on a project existing.
 -- And the storage stops disagreeing with the command, which already keys on
--- the issue: a Jira issue does not know it is TD106.
+-- the issue: a Jira issue does not know it is ROZ106.
 
 CREATE TABLE jira_issue (
   id         TEXT PRIMARY KEY,          -- 'CDSS-1744'; Jira's identifier, not ours

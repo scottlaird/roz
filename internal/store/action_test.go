@@ -563,9 +563,9 @@ func TestStaleFindsAClaimGitHubContradicts(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	open := trackPR(t, st, "scottlaird/todo", 1)
-	merged := trackPR(t, st, "scottlaird/todo", 2)
+	trackRepo(t, st, "scottlaird/roz")
+	open := trackPR(t, st, "scottlaird/roz", 1)
+	merged := trackPR(t, st, "scottlaird/roz", 2)
 	observe(t, st, open, func(p *PR) {
 		p.State = sql.NullString{String: PRStateOpen, Valid: true}
 	})
@@ -615,8 +615,8 @@ func TestStaleSaysNothingAboutAnUnsyncedPullRequest(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	linkedAndClosed(t, st, "closed against an unsynced pull request", pr.ID, ClosedCompleted)
 
 	stale, err := st.ListActions(ctx, ActionFilter{Stale: true})

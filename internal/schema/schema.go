@@ -1,4 +1,4 @@
-// Package schema holds the SQLite DDL for the todo database.
+// Package schema holds the SQLite DDL for the roz database.
 //
 // The database is built by the numbered files in migrations/, which are the
 // only thing ever executed. schema.sql is a hand-written description of the

@@ -10,13 +10,13 @@ import (
 )
 
 const (
-	appDir      = "todo"
-	dbFile      = "todo.db"
+	appDir      = "roz"
+	dbFile      = "roz.db"
 	envDataHome = "XDG_DATA_HOME"
 )
 
 // DefaultDBPath returns where the database lives when neither the --db flag
-// nor TODO_DB is set: <data home>/todo/todo.db.
+// nor ROZ_DB is set: <data home>/roz/roz.db.
 //
 // The data home is $XDG_DATA_HOME when it is set to an absolute path, and
 // otherwise ~/.local/share on every Unix platform. macOS is included in that

@@ -1,7 +1,7 @@
 // Package server serves the status page over HTTP.
 //
 // It holds no opinion about what the page contains: the caller supplies a
-// function that produces one, and it is the same function `todo render`
+// function that produces one, and it is the same function `roz render`
 // writes to a file. Two ways of building the page would eventually be two
 // different pages.
 package server
@@ -31,12 +31,12 @@ type Page func(ctx context.Context) ([]byte, error)
 
 // Changes reports a version of the world that moves whenever something a
 // page would show has changed. The server does not care what the number
-// means, only that it differs; `todo serve` passes the log's head, since
+// means, only that it differs; `roz serve` passes the log's head, since
 // nothing changes in this system without an event.
 type Changes func(ctx context.Context) (int64, error)
 
 // pollInterval is how often a live connection asks whether anything moved.
-// The same second `todo watch` uses, for the same reason: it is the shortest
+// The same second `roz watch` uses, for the same reason: it is the shortest
 // gap that is not really polling.
 const pollInterval = time.Second
 
@@ -45,7 +45,7 @@ const pollInterval = time.Second
 // minute and means the endpoint behaves the same behind a proxy.
 const keepalive = 30 * time.Second
 
-// Server serves the status page. It satisfies service.Service, so `todo
+// Server serves the status page. It satisfies service.Service, so `roz
 // serve` runs it beside the syncer and the log tailer.
 type Server struct {
 	addr    string

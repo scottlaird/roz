@@ -55,9 +55,9 @@ func TestPipelineListJSONCarriesSteps(t *testing.T) {
 // repository is tracked, rather than read through a NULL later.
 func TestTrackTakesTheDefaultPipeline(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	if got := repoJSON(t, db, "scottlaird/todo")["pipeline"]; got != "review" {
+	if got := repoJSON(t, db, "scottlaird/roz")["pipeline"]; got != "review" {
 		t.Errorf("pipeline = %#v, want the lowest-numbered active one", got)
 	}
 }
@@ -67,19 +67,19 @@ func TestTrackTakesTheDefaultPipeline(t *testing.T) {
 func TestTrackWithAnEmptyPipelineStaysUnstated(t *testing.T) {
 	db := initDB(t)
 
-	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/todo", "--pipeline", ""); err != nil {
+	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz", "--pipeline", ""); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
-	if got := repoJSON(t, db, "scottlaird/todo")["pipeline"]; got != nil {
+	if got := repoJSON(t, db, "scottlaird/roz")["pipeline"]; got != nil {
 		t.Errorf("pipeline = %#v, want null", got)
 	}
 }
 
 func TestRepoSetRejectsAnUnknownPipeline(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	_, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo", "--pipeline", "nonesuch")
+	_, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/roz", "--pipeline", "nonesuch")
 	if err == nil {
 		t.Fatal("repo set accepted an unknown pipeline, want an error")
 	}

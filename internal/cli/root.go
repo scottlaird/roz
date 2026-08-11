@@ -1,8 +1,8 @@
-// Package cli defines the todo command tree.
+// Package cli defines the roz command tree.
 //
 // The tree is the surface: every leaf is implemented, and the shape of the
 // command line is settled here rather than emerging from the packages
-// underneath it. `todo mcp` derives its tools from this same tree, so a flag
+// underneath it. `roz mcp` derives its tools from this same tree, so a flag
 // added to a command is a tool argument without anything else being written.
 package cli
 
@@ -11,28 +11,28 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // NewRootCmd builds the full command tree.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "todo",
+		Use:   "roz",
 		Short: "Track projects, actions and pull requests",
-		Long: "todo keeps a work queue correct mechanically: projects (TD) are what you\n" +
+		Long: "roz keeps a work queue correct mechanically: projects (ROZ) are what you\n" +
 			"plan from, actions (NA) are what you read. Every mutation is an event.",
 		SilenceUsage: true,
 	}
 
 	// --db is the one setting that cannot live in the database, since it says
-	// which database to open. Everything else is `todo config`.
+	// which database to open. Everything else is `roz config`.
 	// Bound to the flag rather than to a package variable, so the value lives
 	// on this command tree and not on the process. Two trees in one process
-	// then cannot tread on each other — which `todo mcp` does, building a
+	// then cannot tread on each other — which `roz mcp` does, building a
 	// fresh tree per tool call, and would do concurrently the moment it is
 	// served over anything but stdio.
 	root.PersistentFlags().String("db", defaultDBPath(),
-		"path to the SQLite database (env: TODO_DB)")
+		"path to the SQLite database (env: ROZ_DB)")
 
 	root.AddCommand(
 		newInitCmd(),
@@ -59,12 +59,12 @@ func NewRootCmd() *cobra.Command {
 	return root
 }
 
-// defaultDBPath is the --db default: TODO_DB when set, otherwise the
+// defaultDBPath is the --db default: ROZ_DB when set, otherwise the
 // user-level data location. A resolution failure yields an empty default
 // rather than an error, so --help still works on a machine with no usable
 // home directory; commands report the problem when they open the database.
 func defaultDBPath() string {
-	if p := os.Getenv("TODO_DB"); p != "" {
+	if p := os.Getenv("ROZ_DB"); p != "" {
 		return p
 	}
 	p, err := store.DefaultDBPath()

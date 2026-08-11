@@ -221,9 +221,9 @@ func TestOneSubjectPR(t *testing.T) {
 	ctx := context.Background()
 
 	a := addAction(t, st, "write it", "write")
-	trackRepo(t, st, "scottlaird/todo")
-	first := trackPR(t, st, "scottlaird/todo", 1)
-	second := trackPR(t, st, "scottlaird/todo", 2)
+	trackRepo(t, st, "scottlaird/roz")
+	first := trackPR(t, st, "scottlaird/roz", 1)
+	second := trackPR(t, st, "scottlaird/roz", 2)
 
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {
@@ -263,7 +263,7 @@ func TestLinkPRRejectsAnUnknownRole(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	if err := tx.LinkPR(ctx, a, "scottlaird/todo#1", "vaguely related"); err == nil {
+	if err := tx.LinkPR(ctx, a, "scottlaird/roz#1", "vaguely related"); err == nil {
 		t.Error("an unknown role was accepted, want an error")
 	}
 }
@@ -272,8 +272,8 @@ func TestLinkedActions(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	subject := addAction(t, st, "write it", "write")
 	context_ := addAction(t, st, "read the other one", "investigate")
 

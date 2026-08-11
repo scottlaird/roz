@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scottlaird/todo/internal/github"
+	"github.com/scottlaird/roz/internal/github"
 )
 
 func TestPace(t *testing.T) {

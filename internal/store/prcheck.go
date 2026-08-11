@@ -150,7 +150,7 @@ func (t *Tx) deleteCheck(ctx context.Context, prID, name string) error {
 // logCheck writes the event for a check crossing into or out of trouble.
 //
 // The field is the check's name, so the log reads the way a column change
-// does — `checks/build: "SUCCESS" → "FAILURE"` — and `todo watch` needs to
+// does — `checks/build: "SUCCESS" → "FAILURE"` — and `roz watch` needs to
 // know nothing new to print it.
 func (t *Tx) logCheck(ctx context.Context, prID, name, from, to string) error {
 	return t.emit(ctx, &PR{ID: prID}, event{

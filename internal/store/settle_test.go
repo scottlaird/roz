@@ -12,9 +12,9 @@ import (
 func pipelineFor(t *testing.T, st *Store, pipeline string) (*PR, []*Action) {
 	t.Helper()
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", pipeline)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", pipeline)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	write := addAction(t, st, "write the endpoint", "write")
 
 	result := closeIt(t, st, CloseRequest{ID: write.ID, PR: pr.ID})
@@ -134,8 +134,8 @@ func TestSettleIgnoresHumanVerbs(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	observe(t, st, pr, func(p *PR) {
 		p.State = sql.NullString{String: PRStateMerged, Valid: true}
 		p.IsDraft = sql.NullBool{Bool: false, Valid: true}

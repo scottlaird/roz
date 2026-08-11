@@ -35,7 +35,7 @@ func exchange(t *testing.T, tools Tools, requests ...string) []map[string]any {
 
 	in := strings.NewReader(strings.Join(requests, "\n") + "\n")
 	var out strings.Builder
-	s := &Server{Name: "todo", Version: "test", Tools: tools}
+	s := &Server{Name: "roz", Version: "test", Tools: tools}
 	if err := s.Serve(context.Background(), in, &out); err != nil {
 		t.Fatalf("Serve() returned error: %v", err)
 	}

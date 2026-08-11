@@ -121,7 +121,7 @@ func TestProjectBlockRejections(t *testing.T) {
 	}{
 		{"a cycle", []string{"project", "block", "--from", first, "--to", second}, "never unblock"},
 		{"itself", []string{"project", "block", "--from", first, "--to", first}, "cannot block itself"},
-		{"an unknown project", []string{"project", "block", "--from", "TD99", "--to", first}, "TD99"},
+		{"an unknown project", []string{"project", "block", "--from", "ROZ99", "--to", first}, "ROZ99"},
 		{"an edge that is not there", []string{"project", "unblock", "--from", first, "--to", second}, "does not block"},
 	}
 	for _, tt := range tests {

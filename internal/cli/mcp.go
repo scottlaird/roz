@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/mcp"
-	"github.com/scottlaird/todo/internal/service"
+	"github.com/scottlaird/roz/internal/mcp"
+	"github.com/scottlaird/roz/internal/service"
 )
 
 const flagAgent = "agent"
@@ -71,7 +71,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	server := &mcp.Server{
-		Name:    "todo",
+		Name:    "roz",
 		Version: version,
 		Tools:   &mcpTools{db: dbPath, agent: actorName(agent)},
 		Log:     cmd.ErrOrStderr(),

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 func newJiraCmd() *cobra.Command {
@@ -153,7 +153,7 @@ func newProjectLinkJiraCmd() *cobra.Command {
 		RunE: runProjectLinkJira,
 	}
 	f := cmd.Flags()
-	f.String(flagProject, "", "project, e.g. TD106 (required)")
+	f.String(flagProject, "", "project, e.g. ROZ106 (required)")
 	f.String("issue", "", "issue, e.g. CDSS-1744 (required)")
 	_ = cmd.MarkFlagRequired(flagProject)
 	_ = cmd.MarkFlagRequired("issue")
@@ -175,7 +175,7 @@ func newProjectUnlinkJiraCmd() *cobra.Command {
 		RunE: runProjectUnlinkJira,
 	}
 	f := cmd.Flags()
-	f.String(flagProject, "", "project, e.g. TD106 (required)")
+	f.String(flagProject, "", "project, e.g. ROZ106 (required)")
 	f.String("issue", "", "issue, e.g. CDSS-1744 (required)")
 	_ = cmd.MarkFlagRequired(flagProject)
 	_ = cmd.MarkFlagRequired("issue")

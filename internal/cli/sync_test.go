@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scottlaird/todo/internal/ghsync"
-	"github.com/scottlaird/todo/internal/github"
+	"github.com/scottlaird/roz/internal/ghsync"
+	"github.com/scottlaird/roz/internal/github"
 )
 
 // stubFetcher stands in for GitHub so these tests touch no network.

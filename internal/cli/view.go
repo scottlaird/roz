@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scottlaird/todo/internal/markdown"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/markdown"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // prose is everything the page needs in order to turn stored text into
@@ -42,8 +42,8 @@ func newProse(jiraBase string, jiraPrefixes []string) *prose {
 // to be clicked: an identifier that is not a link costs a copy, a search and
 // a guess about which repository it was in. The template escapes every field.
 type pageContent struct {
-	// Owner is whose queue this is, from `todo config`. Empty is normal and
-	// the heading simply reads "todo".
+	// Owner is whose queue this is, from `roz config`. Empty is normal and
+	// the heading simply reads "roz".
 	Owner       string
 	GeneratedAt string
 	Stamp       string

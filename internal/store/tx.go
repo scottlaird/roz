@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/scottlaird/todo/internal/markdown"
+	"github.com/scottlaird/roz/internal/markdown"
 )
 
 // timeFormat is ISO-8601 UTC at millisecond precision: sorts correctly as

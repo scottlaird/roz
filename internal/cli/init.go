@@ -5,13 +5,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // The only place the conventional prefixes appear. Everywhere else reads them
 // back from the database they were seeded into.
 const (
-	defaultProjectPrefix = "TD"
+	defaultProjectPrefix = "ROZ"
 	defaultActionPrefix  = "NA"
 )
 

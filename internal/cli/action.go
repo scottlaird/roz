@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -29,7 +29,7 @@ func newActionCmd() *cobra.Command {
 		Long: "An action's verb decides how it closes. A predicate verb closes when\n" +
 			"GitHub says the work is done; a human verb closes when you say so, and\n" +
 			"those are the only ones that reach the queue as thinking work.\n\n" +
-			"`todo verb list` shows the vocabulary.",
+			"`roz verb list` shows the vocabulary.",
 	}
 	cmd.AddCommand(
 		newActionAddCmd(),
@@ -57,8 +57,8 @@ var actionFieldFlags = []string{
 func addActionFieldFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.String(flagTitle, "", "what to do")
-	f.String(flagVerb, "", "from the vocabulary; see `todo verb list`")
-	f.String(flagProject, "", "project this advances, e.g. TD200; omit if it advances nothing")
+	f.String(flagVerb, "", "from the vocabulary; see `roz verb list`")
+	f.String(flagProject, "", "project this advances, e.g. ROZ200; omit if it advances nothing")
 	f.String(flagWhy, "", "what it unblocks; one sentence maximum")
 	f.String(flagStatus, "", strings.Join(store.ActionStates, ", "))
 	f.Int(flagRankPin, 0, "manual sort override; 0 clears it")
@@ -165,7 +165,7 @@ func checkActionReferences(ctx context.Context, st *store.Store, actor store.Act
 func checkVerbUsable(ctx context.Context, tx *store.Tx, verb string) error {
 	v, err := tx.LoadVerb(ctx, verb)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%q is not a verb; see `todo verb list`", verb)
+		return fmt.Errorf("%q is not a verb; see `roz verb list`", verb)
 	}
 	if err != nil {
 		return err
@@ -283,10 +283,10 @@ func checkActionConsistency(a *store.Action) error {
 
 	switch {
 	case snoozed && !dated:
-		return fmt.Errorf("state %s needs a date: use `todo action snooze %s --%s <date>`",
+		return fmt.Errorf("state %s needs a date: use `roz action snooze %s --%s <date>`",
 			store.ActionSnoozed, a.ID, flagSnoozeUntil)
 	case dated && !snoozed:
-		return fmt.Errorf("a snooze date needs state %s: use `todo action snooze %s --%s <date>`",
+		return fmt.Errorf("a snooze date needs state %s: use `roz action snooze %s --%s <date>`",
 			store.ActionSnoozed, a.ID, flagSnoozeUntil)
 	}
 
@@ -294,7 +294,7 @@ func checkActionConsistency(a *store.Action) error {
 	closed := a.ClosedAt.Valid
 	finished := a.State == store.ActionDone || a.State == store.ActionDropped
 	if closed != finished {
-		return fmt.Errorf("state %s cannot be set here: use `todo action close %s`", a.State, a.ID)
+		return fmt.Errorf("state %s cannot be set here: use `roz action close %s`", a.State, a.ID)
 	}
 	return nil
 }
@@ -304,7 +304,7 @@ func newActionSetCmd() *cobra.Command {
 		Use:   "set <action>",
 		Short: "Change authored columns on an existing action",
 		Long: "Only the columns given are touched. Closing is not one of them —\n" +
-			"`todo action close` does that, with the cascade that belongs to it.",
+			"`roz action close` does that, with the cascade that belongs to it.",
 		Args: cobra.ExactArgs(1),
 		RunE: runActionSet,
 	}
@@ -348,7 +348,7 @@ func newActionSnoozeCmd() *cobra.Command {
 		Short: "Defer an action to a real date",
 		Long: "--snooze-until must be a date or timestamp. \"Next week\" is not one,\n" +
 			"and that is the point: a snooze nobody can act on is how work goes\n" +
-			"quiet. `todo action list --expired` is what finds them again.",
+			"quiet. `roz action list --expired` is what finds them again.",
 		Args: cobra.ExactArgs(1),
 		RunE: runActionSnooze,
 	}

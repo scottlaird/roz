@@ -13,7 +13,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/scottlaird/todo/internal/schema"
+	"github.com/scottlaird/roz/internal/schema"
 )
 
 // dirPerm applies to the directory Init creates. The database holds work
@@ -112,7 +112,7 @@ func seedInTransaction(ctx context.Context, db *sql.DB, prefixes map[Entity]stri
 }
 
 // ErrNotInitialised means the database has not been through Init. Callers
-// should test for it with errors.Is and point the user at `todo init` rather
+// should test for it with errors.Is and point the user at `roz init` rather
 // than reporting a missing table.
 var ErrNotInitialised = errors.New("database is not initialised")
 
@@ -173,7 +173,7 @@ func checkSchemaUpToDate(ctx context.Context, db *sql.DB, path string) error {
 		// Either brand new, or old enough to predate the record. Either way
 		// init is what sorts it out.
 		if version, err := userVersion(db); err == nil && version > 0 {
-			return fmt.Errorf("database %s predates the migration record; run `todo init` to bring it up to date", path)
+			return fmt.Errorf("database %s predates the migration record; run `roz init` to bring it up to date", path)
 		}
 		return fmt.Errorf("%s: %w", path, ErrNotInitialised)
 	}
@@ -191,7 +191,7 @@ func checkSchemaUpToDate(ctx context.Context, db *sql.DB, path string) error {
 		return err
 	}
 	if len(pending) > 0 {
-		return fmt.Errorf("database %s has not run %s; run `todo init` to migrate",
+		return fmt.Errorf("database %s has not run %s; run `roz init` to migrate",
 			path, MigrationNames(pending))
 	}
 

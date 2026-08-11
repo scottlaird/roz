@@ -148,9 +148,9 @@ func TestClosingWriteInstantiatesThePipeline(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineReview)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	a := addAction(t, st, "write the endpoint", "write")
 
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
@@ -236,9 +236,9 @@ func setPipeline(t *testing.T, st *Store, repo, pipeline string) {
 func TestSatisfiedStepsAreSkipped(t *testing.T) {
 	st := newStore(t)
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineDirect)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineDirect)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	observe(t, st, pr, func(p *PR) {
 		p.IsDraft = sql.NullBool{Bool: false, Valid: true}
 	})
@@ -286,9 +286,9 @@ func observe(t *testing.T, st *Store, pr *PR, change func(*PR)) {
 func TestOnlyPipelineStartingVerbsInstantiate(t *testing.T) {
 	st := newStore(t)
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineReview)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	a := addAction(t, st, "work out what it does", "investigate")
 
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
@@ -302,8 +302,8 @@ func TestOnlyPipelineStartingVerbsInstantiate(t *testing.T) {
 func TestNoPipelineInstantiatesNothing(t *testing.T) {
 	st := newStore(t)
 
-	trackRepo(t, st, "scottlaird/todo") // tracked directly, so pipeline is NULL
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz") // tracked directly, so pipeline is NULL
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	a := addAction(t, st, "write the endpoint", "write")
 
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
@@ -319,9 +319,9 @@ func TestCloseIsOneCorrelation(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineDirect)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineDirect)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	a := addAction(t, st, "write the endpoint", "write")
 	dependent := addAction(t, st, "deploy it", "run")
 	blockOn(t, st, dependent, a)
@@ -355,9 +355,9 @@ func TestLinkingSomethingElseAtCloseIsRefused(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	first := trackPR(t, st, "scottlaird/todo", 1)
-	second := trackPR(t, st, "scottlaird/todo", 2)
+	trackRepo(t, st, "scottlaird/roz")
+	first := trackPR(t, st, "scottlaird/roz", 1)
+	second := trackPR(t, st, "scottlaird/roz", 2)
 	a := addAction(t, st, "write the endpoint", "write")
 
 	tx, err := st.Begin(ctx, ActorHuman)
@@ -421,9 +421,9 @@ func TestOnlyCompletingIsDone(t *testing.T) {
 func TestAbandoningWorkInstantiatesNothing(t *testing.T) {
 	st := newStore(t)
 	pr, _ := func() (*PR, []*Action) {
-		trackRepo(t, st, "scottlaird/todo")
-		setPipeline(t, st, "scottlaird/todo", PipelineReview)
-		return trackPR(t, st, "scottlaird/todo", 1), nil
+		trackRepo(t, st, "scottlaird/roz")
+		setPipeline(t, st, "scottlaird/roz", PipelineReview)
+		return trackPR(t, st, "scottlaird/roz", 1), nil
 	}()
 	a := addAction(t, st, "write the endpoint", "write")
 
@@ -640,9 +640,9 @@ func createdVerbs(created []*Action) []string {
 func TestPRPipelineOverridesTheRepository(t *testing.T) {
 	st := newStore(t)
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineReview)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	setPRPipeline(t, st, pr.ID, sql.NullString{String: PipelineDirect, Valid: true})
 	a := addAction(t, st, "hotfix the endpoint", "write")
 
@@ -663,9 +663,9 @@ func TestPRPipelineOverridesTheRepository(t *testing.T) {
 func TestPRWithoutAPipelineFollowsTheRepository(t *testing.T) {
 	st := newStore(t)
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineReview)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	a := addAction(t, st, "write the endpoint", "write")
 
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
@@ -682,12 +682,12 @@ func TestPRWithoutAPipelineFollowsTheRepository(t *testing.T) {
 func TestPRPipelineIsReadAtCloseNotAtTrack(t *testing.T) {
 	st := newStore(t)
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineReview)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 
 	// The policy changes after the pull request was tracked.
-	setPipeline(t, st, "scottlaird/todo", PipelineDirect)
+	setPipeline(t, st, "scottlaird/roz", PipelineDirect)
 
 	a := addAction(t, st, "write the endpoint", "write")
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
@@ -702,9 +702,9 @@ func TestPRPipelineIsReadAtCloseNotAtTrack(t *testing.T) {
 func TestClearingAPRPipelineReturnsItToTheRepository(t *testing.T) {
 	st := newStore(t)
 
-	trackRepo(t, st, "scottlaird/todo")
-	setPipeline(t, st, "scottlaird/todo", PipelineReview)
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	setPipeline(t, st, "scottlaird/roz", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	setPRPipeline(t, st, pr.ID, sql.NullString{String: PipelineDirect, Valid: true})
 	setPRPipeline(t, st, pr.ID, sql.NullString{})
 
@@ -723,8 +723,8 @@ func TestPRPipelineIsAuthored(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 
 	tx, err := st.Begin(ctx, ActorSyncGitHub)
 	if err != nil {

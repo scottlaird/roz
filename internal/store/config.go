@@ -50,7 +50,7 @@ func (c *Config) Clone() *Config {
 // Config reads the settings.
 //
 // It reads them afresh each time rather than caching on the Store, because
-// `todo serve` outlives a `todo config set` in another terminal and should
+// `roz serve` outlives a `roz config set` in another terminal and should
 // render the page the way it is configured now.
 func (s *Store) Config(ctx context.Context) (*Config, error) {
 	return scanConfig(ctx, s.db)

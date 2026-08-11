@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const actorFlag = "actor"
@@ -21,7 +21,7 @@ func addActorFlag(cmd *cobra.Command) {
 
 // actorFrom reads and validates --actor.
 //
-// sync: actors are refused here. They are set by `todo sync`, and letting a
+// sync: actors are refused here. They are set by `roz sync`, and letting a
 // person pass one by hand would turn the authored/observed rule into a
 // suggestion — the whole point is that sync cannot overwrite a judgement.
 func actorFrom(cmd *cobra.Command) (store.Actor, error) {
@@ -35,7 +35,7 @@ func actorFrom(cmd *cobra.Command) (store.Actor, error) {
 	case strings.HasPrefix(value, "agent:") && len(value) > len("agent:"):
 		return store.Actor(value), nil
 	case strings.HasPrefix(value, "sync:"):
-		return "", fmt.Errorf("--actor %s is not allowed: sync actors are set by `todo sync`, "+
+		return "", fmt.Errorf("--actor %s is not allowed: sync actors are set by `roz sync`, "+
 			"because only they may write observed fields", value)
 	default:
 		return "", fmt.Errorf("--actor %q is not recognised: use human or agent:<name>", value)
@@ -110,7 +110,7 @@ func dbPathFrom(cmd *cobra.Command) (string, error) {
 		return "", err
 	}
 	if path == "" {
-		return "", errors.New("no database path: pass --db or set TODO_DB")
+		return "", errors.New("no database path: pass --db or set ROZ_DB")
 	}
 	return path, nil
 }
@@ -125,7 +125,7 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 	st, err := store.OpenStore(dbPath)
 	if err != nil {
 		if errors.Is(err, store.ErrNotInitialised) {
-			return nil, fmt.Errorf("%w; run `todo init` first", err)
+			return nil, fmt.Errorf("%w; run `roz init` first", err)
 		}
 		return nil, err
 	}

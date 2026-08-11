@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -25,13 +25,13 @@ func newProjectJiraCmd() *cobra.Command {
 		Short: "Record by hand what Jira says about a project",
 		Long: "Stands in for Jira sync, which does not exist yet.\n\n" +
 			"Keyed on the issue rather than on the project, because that is what an\n" +
-			"integration would have: a Jira issue does not know it is TD106. Every\n" +
+			"integration would have: a Jira issue does not know it is ROZ106. Every\n" +
 			"project carrying the key is updated, and a key no project carries is\n" +
 			"reported rather than treated as an error — this tracks a subset of\n" +
 			"what Jira holds.\n\n" +
 			"--feed takes the same thing in bulk, as JSON, so faking a sync run is\n" +
 			"one command:\n\n" +
-			"  todo project jira --feed - <<'JSON'\n" +
+			"  roz project jira --feed - <<'JSON'\n" +
 			"  [{\"key\":\"CDSS-1744\",\"status\":\"In Progress\",\"assignee\":\"scott\"}]\n" +
 			"  JSON\n\n" +
 			"A field not given is left alone, because absence is not a fact. A field\n" +

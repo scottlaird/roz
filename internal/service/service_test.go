@@ -98,7 +98,7 @@ func (f *finished) Run(ctx context.Context) error {
 }
 
 // TestAServiceFinishingStopsTheRest: without this, a process whose only real
-// service has ended is held open forever by the ones supporting it. `todo mcp`
+// service has ended is held open forever by the ones supporting it. `roz mcp`
 // stopped exiting at EOF the moment it gained a second service, which is how
 // this was found.
 func TestAServiceFinishingStopsTheRest(t *testing.T) {

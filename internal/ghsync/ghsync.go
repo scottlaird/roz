@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/scottlaird/todo/internal/github"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // Fetcher is the part of github.Client this package needs, so a test can

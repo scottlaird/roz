@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scottlaird/todo/internal/schema"
+	"github.com/scottlaird/roz/internal/schema"
 )
 
 // objectSQL is every table, index and trigger a database holds, keyed by
@@ -310,7 +310,7 @@ func TestMigrationsAreWellFormed(t *testing.T) {
 
 func TestMigrateIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -336,7 +336,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 func TestMigrateRefusesANewerDatabase(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -371,7 +371,7 @@ func TestMigrateRefusesANewerDatabase(t *testing.T) {
 // will take, which the single embedded migration cannot reach on its own.
 func TestApplyMigrationRunsArbitrarySQL(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -403,7 +403,7 @@ func TestApplyMigrationRunsArbitrarySQL(t *testing.T) {
 // migration impossible: the version moves inside the same transaction.
 func TestFailedMigrationLeavesVersionAlone(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -442,7 +442,7 @@ func TestFailedMigrationLeavesVersionAlone(t *testing.T) {
 // and then migrates the rest of the way.
 func TestRebuildMigrationPreservesData(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -521,7 +521,7 @@ func TestRebuildMigrationPreservesData(t *testing.T) {
 // become an owner/name key, so the migration fails rather than inventing one.
 func TestRebuildMigrationRejectsUnsplittableRepo(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -565,7 +565,7 @@ func TestRebuildMigrationRejectsUnsplittableRepo(t *testing.T) {
 // would be passed over and never noticed; the record makes it pending.
 func TestOutOfOrderMigrationIsStillApplied(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -623,7 +623,7 @@ func TestOutOfOrderMigrationIsStillApplied(t *testing.T) {
 // existed: what it already ran is inferred from the cursor it did keep.
 func TestBackfillFromUserVersion(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -677,7 +677,7 @@ func TestBackfillFromUserVersion(t *testing.T) {
 // migration did not fully apply.
 func TestMigrateStampsEachVersion(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)

@@ -9,7 +9,7 @@
 *.dylib
 
 # `go build ./...` writes the module-named binary here
-/todo
+/roz
 
 # Test binary, built with `go test -c`
 *.test

@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/ghsync"
-	"github.com/scottlaird/todo/internal/github"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/ghsync"
+	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // syncSources are the external systems this build can read.
@@ -31,7 +31,7 @@ func newSyncCmd() *cobra.Command {
 			"so the store refuses any attempt to touch an authored column.\n\n" +
 			"Pull requests are polled in batches through one GraphQL query each, so\n" +
 			"the cost is a handful of rate limit points however many are tracked.\n" +
-			"Only pull requests already tracked with `todo pr track` are polled.",
+			"Only pull requests already tracked with `roz pr track` are polled.",
 		Args: cobra.ExactArgs(1),
 		RunE: runSync,
 	}

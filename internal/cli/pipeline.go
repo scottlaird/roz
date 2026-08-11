@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 func newPipelineCmd() *cobra.Command {
@@ -17,7 +17,7 @@ func newPipelineCmd() *cobra.Command {
 		Short: "What closing a verb instantiates",
 		Long: "A pipeline is the chain of actions that follows a piece of work:\n" +
 			"undraft, announce, wait for review, merge. Repositories differ in\n" +
-			"which one they use, so `todo repo set --pipeline` picks per repository\n" +
+			"which one they use, so `roz repo set --pipeline` picks per repository\n" +
 			"and a newly tracked one takes the first active pipeline listed here.",
 	}
 	cmd.AddCommand(newPipelineListCmd())

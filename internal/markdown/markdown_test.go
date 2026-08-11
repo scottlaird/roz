@@ -80,7 +80,7 @@ func TestRenderMarkdown(t *testing.T) {
 		name, in, want string
 	}{
 		{"emphasis", "the *old* pipeline", "the <em>old</em> pipeline"},
-		{"a code span", "run `todo sync github`", "<code>todo sync github</code>"},
+		{"a code span", "run `roz sync github`", "<code>roz sync github</code>"},
 		{"a list", "- first\n- second", "<li>first</li>"},
 		{"an authored link", "see [the sketch](https://example.com/s)",
 			`<a href="https://example.com/s">the sketch</a>`},

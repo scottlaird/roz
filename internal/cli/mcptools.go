@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/scottlaird/todo/internal/mcp"
+	"github.com/scottlaird/roz/internal/mcp"
 )
 
 // pflagFlag is pflag.Flag under a shorter name, since it appears in every
@@ -112,10 +112,10 @@ func callableCommands(root *cobra.Command) []*cobra.Command {
 }
 
 // toolName is the command path with the spaces turned into underscores:
-// `todo action add` is action_add.
+// `roz action add` is action_add.
 func toolName(cmd *cobra.Command) string {
 	path := strings.Fields(cmd.CommandPath())
-	return strings.Join(path[1:], "_") // drop "todo"
+	return strings.Join(path[1:], "_") // drop "roz"
 }
 
 func describeCommand(cmd *cobra.Command) mcp.Tool {

@@ -1,7 +1,7 @@
-// Command todo tracks projects, actions and pull requests.
+// Command roz tracks projects, actions and pull requests.
 package main
 
-import "github.com/scottlaird/todo/internal/cli"
+import "github.com/scottlaird/roz/internal/cli"
 
 func main() {
 	cli.Execute()

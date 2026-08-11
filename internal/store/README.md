@@ -112,8 +112,8 @@ costs a migration per setting.
 
 The row is seeded by the migration rather than by `Init`, so no reader has to
 decide what an absent configuration means. `Store.Config` reads it afresh each
-call rather than caching on the `Store`, because `todo serve` outlives a
-`todo config set` in another terminal.
+call rather than caching on the `Store`, because `roz serve` outlives a
+`roz config set` in another terminal.
 
 Bespoke validation — that a Jira base URL has a scheme, that a prefix is a
 shape the linker could match — lives in `Tx.SaveConfig`, which is the only
@@ -165,8 +165,8 @@ third consumer appears and not before.
    **separate** — build and validate the record first, then call
    `Store.Allocate…` last, so rejected input does not consume a number.
 3. Add `Tx.Load<Entity>` and a `Clone`.
-4. Add a list query if it needs one. Order by `n`, not `id`: `TD100` sorts
-   before `TD41` as text, which is the whole reason `n` exists.
+4. Add a list query if it needs one. Order by `n`, not `id`: `ROZ100` sorts
+   before `ROZ41` as text, which is the whole reason `n` exists.
 5. Teach `subject.go` to resolve its identifiers, if `note` and `exception`
    should work against it.
 6. Declare its relations, if it is connected to anything that is not a column
@@ -183,11 +183,11 @@ not, because an identifier may already have been written into a ticket or said
 out loud. Never derive the next number from `max(n)`.
 
 **Identifier prefixes live in the database**, seeded at init and write-once.
-There is no hardcoded `TD` anywhere outside the `todo init` flag defaults.
+There is no hardcoded `ROZ` anywhere outside the `roz init` flag defaults.
 `EntityForID` resolves a prefix through that registry.
 
-**`subject_id` in the log is heterogeneous by design.** It holds `TD200`,
-`scottlaird/todo#11` or `scottlaird/todo`. Nothing joins on it, so nothing
+**`subject_id` in the log is heterogeneous by design.** It holds `ROZ200`,
+`scottlaird/roz#11` or `scottlaird/roz`. Nothing joins on it, so nothing
 cares — but a parser must reject what is not its own shape rather than guess.
 
 **The log is append-only and has no foreign keys.** Deleting an entity leaves

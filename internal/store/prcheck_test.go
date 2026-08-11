@@ -61,8 +61,8 @@ func checkEvents(t *testing.T, st *Store) []string {
 
 func trackedPR(t *testing.T, st *Store) string {
 	t.Helper()
-	trackRepo(t, st, "scottlaird/todo")
-	return trackPR(t, st, "scottlaird/todo", 1).ID
+	trackRepo(t, st, "scottlaird/roz")
+	return trackPR(t, st, "scottlaird/roz", 1).ID
 }
 
 // TestGoingGreenIsWrittenNotLogged is the whole of SL25. Two pull requests

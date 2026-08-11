@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scottlaird/todo/internal/mcp"
-	"github.com/scottlaird/todo/internal/service"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/mcp"
+	"github.com/scottlaird/roz/internal/service"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // openTestStore opens a second handle on a database the CLI helpers built, so
@@ -154,7 +154,7 @@ func TestMCPStopsWhenTheSchemaMoves(t *testing.T) {
 	defer close(quiet.closed)
 
 	server := &mcp.Server{
-		Name:    "todo",
+		Name:    "roz",
 		Version: version,
 		Tools:   &mcpTools{db: db, agent: "test"},
 	}
@@ -196,14 +196,14 @@ func TestMCPStopsWhenTheSchemaMoves(t *testing.T) {
 }
 
 // TestMCPStopsWhenItsClientGoesAway: the guard must not hold the process open
-// after the protocol loop is done. `todo mcp` ends when its stdin does, and
+// after the protocol loop is done. `roz mcp` ends when its stdin does, and
 // gaining a second service silently took that away until service.Run learned
 // that a service finishing stops the rest.
 func TestMCPStopsWhenItsClientGoesAway(t *testing.T) {
 	db := initDB(t)
 
 	server := &mcp.Server{
-		Name:    "todo",
+		Name:    "roz",
 		Version: version,
 		Tools:   &mcpTools{db: db, agent: "test"},
 	}

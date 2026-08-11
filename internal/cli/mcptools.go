@@ -149,18 +149,39 @@ func describeCommand(cmd *cobra.Command) mcp.Tool {
 
 	return mcp.Tool{
 		Name:        name,
-		Description: describe(cmd),
+		Description: describe(name, cmd),
 		InputSchema: schema,
 	}
 }
 
 // describe is the command's own help, which is where the reasoning already
 // lives. An agent reading it learns the same things a person does.
-func describe(cmd *cobra.Command) string {
+//
+// Where the server has decided something for the caller, the help is
+// describing a command they cannot actually invoke, so the difference is
+// spelled out rather than left to be discovered — see constrained.
+func describe(name string, cmd *cobra.Command) string {
+	description := cmd.Short
 	if cmd.Long != "" {
-		return cmd.Short + "\n\n" + cmd.Long
+		description += "\n\n" + cmd.Long
 	}
-	return cmd.Short
+	if note, ok := constrained[name]; ok {
+		description += "\n\n" + note
+	}
+	return description
+}
+
+// constrained is what the server has already settled, in the tool's own words.
+//
+// Only watch needs one so far, and it needs it badly: its help opens "Follow
+// the event log" and goes on about the poll interval, none of which is true of
+// a tool that answers once. An agent taking that at face value would either
+// expect to be followed or never call it twice.
+var constrained = map[string]string{
+	"watch": "This tool is the bounded read, not the follow: the server forces " +
+		"--once, so it returns the events matching the filters instead of " +
+		"streaming. Nothing arrives between calls — ask again for what has " +
+		"happened since, with --since, or -n for a count of recent events.",
 }
 
 func schemaForFlag(f *pflagFlag) map[string]any {

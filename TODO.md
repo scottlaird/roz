@@ -166,6 +166,22 @@ them.
       are a research preview and need
       `--dangerously-load-development-channels`, so this buys reach into
       sessions nobody is watching rather than speed.
+- [ ] **Long-running processes should notice the database migrating under
+      them, and stop.** `serve`, `syncer`, `watch` and `mcp` read the schema
+      once, at startup. An upgrade applied by another process — a rebuilt
+      binary, a second checkout — leaves them querying columns that no longer
+      exist, and the failure surfaces as whatever query happens to run first
+      rather than as "your server is out of date".
+
+      `applied_migration` already records the high-water mark, so the check is
+      reading it on a tick and exiting when it differs from what was current at
+      startup. Exiting rather than reloading, on the grounds that a restart is
+      cheap and a process serving a schema it does not understand is not: for
+      `mcp` the client respawns it, and for `serve` the runner already stops
+      the other services when one fails.
+
+      `0008` dropped five columns from `project`, which is exactly the shape
+      that would have broken a server left running from the morning.
 - [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
       `project` name one tracker in the schema, in the entity, and in `todo
       project jira`. Home projects use GitHub issues, and the reader for them

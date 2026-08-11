@@ -296,3 +296,46 @@ func (s *Store) PRsByAction(ctx context.Context) (map[string][]ActionPR, error) 
 	}
 	return byAction, rows.Err()
 }
+
+// PRsFor returns the pull requests one action is about, subject first.
+//
+// The single-row sibling of PRsByAction. Both exist on purpose: the page
+// draws every row and wants one query, `show` draws one row and should not
+// read the whole table to do it.
+func (t *Tx) PRsFor(ctx context.Context, actionID string) ([]ActionPR, error) {
+	fields, err := fieldsOf(&PR{})
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]string, len(fields))
+	for i, f := range fields {
+		columns[i] = "p." + f.column
+	}
+
+	query := fmt.Sprintf(
+		"SELECT ap.role, %s FROM action_pr ap JOIN pr p ON p.id = ap.pr_id "+
+			"WHERE ap.action_id = ? ORDER BY ap.role, p.id",
+		strings.Join(columns, ", "))
+	rows, err := t.tx.QueryContext(ctx, query, actionID)
+	if err != nil {
+		return nil, fmt.Errorf("reading pull request links: %w", err)
+	}
+	defer rows.Close()
+
+	var links []ActionPR
+	for rows.Next() {
+		var role string
+		var pr PR
+		dest := make([]any, 0, len(fields)+1)
+		dest = append(dest, &role)
+		for _, f := range fields {
+			dest = append(dest, f.pointerOf(&pr))
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, fmt.Errorf("reading pull request links: %w", err)
+		}
+		copied := pr
+		links = append(links, ActionPR{PR: &copied, Role: role})
+	}
+	return links, rows.Err()
+}

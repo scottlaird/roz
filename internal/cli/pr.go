@@ -246,15 +246,7 @@ func runPRShow(cmd *cobra.Command, args []string) error {
 		return notFoundOr(err, args[0])
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecord(p)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	return writeRecordDetail(cmd.OutOrStdout(), p)
+	return showRecord(cmd, ctx, tx, p, format)
 }
 
 func newPRListCmd() *cobra.Command {

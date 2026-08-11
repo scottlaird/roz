@@ -8,6 +8,7 @@ path.go      where the database lives, per platform
 migrate.go   the migration runner
 field.go     struct-tag metadata: which column, who may write it, how it encodes
 record.go    the Record interface and the field-level diff
+relation.go  what an entity is connected to beyond its own columns
 actor.go     who is making a change, and what that entitles them to write
 tx.go        the unit of work: Load, Insert, Update
 event.go     the log: writing it, and reading it back
@@ -118,6 +119,42 @@ path to the row. Same argument as the field kinds: a rule stated at the
 database cannot be forgotten at a call site, and the CLI and the MCP server
 both arrive here.
 
+## Relations
+
+A `db` tag declares a column. A relation declares a connection that is not one
+— what lives in a join table, or the far side of a foreign key pointing back.
+
+```go
+func (a *Action) relations() []Relation {
+    return []Relation{
+        {Name: "blocked_by", Load: blockedByIDs},
+        {Name: "blocking", Load: blockingIDs},
+        {Name: "subject_pr", Load: subjectPRID},
+        {Name: "context_prs", Load: contextPRIDs},
+    }
+}
+```
+
+The declaration names the connection and the function that reads it, and
+deliberately **does not describe the join**. The queries stay hand-written and
+tested where they are; generating them was never the point. What it buys is
+that a reader of the entity can see what it is attached to, and that
+`Tx.MarshalRecord` gives `show` and `show -o json` the same answer — the table
+used to print an action's blockers while the JSON silently omitted them.
+
+A connection that is already a column needs nothing here. `action.project_id`
+and `action.hidden_behind` are declared by their tags like anything else,
+which is why the lists are short.
+
+A relation with nothing at the far end is **left out**, not rendered empty, so
+absent and none read the same.
+
+**One query per relation**, which is right for one record and wrong for a
+list. The status page keeps its own batched loaders — `PRsByAction`,
+`JiraByProject` — and reads them for every row it draws. Unifying those too
+would mean a batch loader in every declaration, which is worth doing when a
+third consumer appears and not before.
+
 ## Adding an entity
 
 1. Define the struct with `db` and `kind` tags, and `table()`,
@@ -130,6 +167,8 @@ both arrive here.
    before `TD41` as text, which is the whole reason `n` exists.
 5. Teach `subject.go` to resolve its identifiers, if `note` and `exception`
    should work against it.
+6. Declare its relations, if it is connected to anything that is not a column
+   of its own table.
 
 Nothing else needs touching. JSON, diffing and event emission follow from the
 tags.

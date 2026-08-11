@@ -52,8 +52,6 @@ them.
 
 - [ ] `todo verify` — still stubbed, though no longer for want of a design:
       `todo pr announce` set the pattern. See the open question.
-- [ ] `action show -o json` omits the edges, which the table shows. They are
-      not columns of `action`, and a record marshals from its own columns.
 - [ ] `--db` is a package-level variable in `internal/cli`, written by flag
       parsing. Harmless for one-shot commands and for `serve`, which opens the
       store once before any service starts, but it means two commands cannot
@@ -202,17 +200,6 @@ them.
 
       Predicates stay pure over the database — the work is the observation and
       its sync, not the predicate.
-- [ ] **Declare relationships in the struct, the way columns are declared.**
-      `JiraKey` was visibly a many-to-one. The many-to-many that replaced it is
-      visible nowhere: the join table, its cascade, and what `-o json` should
-      carry are each decided in a different place, by hand, and nothing checks
-      that they agree.
-
-      Four relationship shapes exist and none is declared. The value is not
-      generating the SQL — it is that a reader of the struct can see what an
-      entity is connected to, and that `show`, the page and the cascade stop
-      being three independent answers to the same question.
-
 ## Open questions
 
 **`todo verify` writes an observed column.** It stamps `last_verified_at`, so a
@@ -327,6 +314,22 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - **Unstated sorts last at every term**, so filling nothing in never moves an
   item up, and nothing is inferred from a title or an age — a queue that
   quietly promotes things is one you stop trusting.
+- **Relations are declared on the entity, naming a loader rather than a join.**
+  What an action is connected to beyond its own columns is a list on the
+  struct; the SQL stays hand-written and tested where it was. Generating the
+  queries was never the value — one place to read, and one answer for every
+  consumer, was.
+- **`show` and `show -o json` now agree**, which closes the older complaint
+  that the table printed an action's blockers and the JSON did not. A relation
+  with nothing at the far end is left out rather than rendered empty.
+- **The status page keeps its own batched loaders.** One query per relation is
+  right for one record and wrong for a list, and the page reads these for
+  every row it draws. Sharing would need a batch loader in each declaration,
+  which is worth it when a third consumer appears and not before.
+- **The subject pull request and the context ones are two relations, not one
+  list with a role.** The schema allows at most one subject and closing reads
+  only that; a context link is background and is never asked anything. Two
+  relations put that rule in the shape instead of in a comment.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

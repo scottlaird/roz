@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -285,48 +286,42 @@ func runProjectShow(cmd *cobra.Command, args []string) error {
 		return notFoundOr(err, args[0])
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecord(p)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	return writeRecordDetail(cmd.OutOrStdout(), p)
+	return showRecord(cmd, ctx, tx, p, format)
 }
 
 // writeRecordDetail prints every column, one per line. The columns come from
 // the record's own metadata, so a new one appears here without being added.
+//
+// For a record with relations, prefer showRecord: this sees only columns.
 func writeRecordDetail(out io.Writer, r any) error {
-	return writeRecordDetailWith(out, r, nil)
-}
-
-// writeRecordDetailWith prints a record, followed by rows that are not
-// columns of it — an action's blockers, say, which live in another table.
-// They share the record's tabwriter so the two halves line up.
-func writeRecordDetailWith(out io.Writer, r any, extra [][2]string) error {
 	encoded, err := store.MarshalRecord(r)
 	if err != nil {
 		return err
 	}
+	return writeDetail(out, encoded)
+}
+
+// writeDetail prints an already-encoded record, one key per line.
+//
+// It reads the JSON rather than the struct, which is what lets a relation
+// print beside the columns without a second mechanism: whatever the encoder
+// put in, this lays out. The keys are sorted, so a relation appears wherever
+// its name falls rather than tacked on the end.
+func writeDetail(out io.Writer, encoded []byte) error {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(encoded, &object); err != nil {
 		return err
 	}
 
-	columns := make([]string, 0, len(object))
-	for column := range object {
-		columns = append(columns, column)
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
 	}
-	sort.Strings(columns)
+	sort.Strings(keys)
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	for _, column := range columns {
-		fmt.Fprintf(w, "%s\t%s\n", column, detailValue(object[column]))
-	}
-	for _, row := range extra {
-		fmt.Fprintf(w, "%s\t%s\n", row[0], row[1])
+	for _, key := range keys {
+		fmt.Fprintf(w, "%s\t%s\n", key, detailValue(object[key]))
 	}
 	return w.Flush()
 }
@@ -348,9 +343,36 @@ func detailValue(raw json.RawMessage) string {
 		return x
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64)
+	case []any:
+		if len(x) == 0 {
+			return "-"
+		}
+		// A list of names reads as a list of names. This is what an action's
+		// blockers looked like when `show` built that row by hand, and
+		// printing ["NA1","NA2"] instead would have been the relation
+		// declarations costing legibility to buy consistency.
+		if joined, ok := joinStrings(x); ok {
+			return joined
+		}
+		return string(raw)
 	default:
 		return string(raw)
 	}
+}
+
+// joinStrings renders a JSON array of strings as a comma-separated list,
+// reporting false for anything else — an array of objects has no obvious
+// one-line form, and inventing one would hide what is in it.
+func joinStrings(values []any) (string, bool) {
+	parts := make([]string, len(values))
+	for i, v := range values {
+		s, ok := v.(string)
+		if !ok {
+			return "", false
+		}
+		parts[i] = s
+	}
+	return strings.Join(parts, ", "), true
 }
 
 func newProjectSetCmd() *cobra.Command {
@@ -755,4 +777,22 @@ func runProjectClose(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(out, "  %s is now %s\n", a.ID, a.State)
 	}
 	return nil
+}
+
+// showRecord prints one record in either format, relations included.
+//
+// One function rather than one per entity, because `show` printing an
+// action's blockers while `show -o json` silently omitted them is the exact
+// shape of bug the relation declarations exist to stop. Both formats now read
+// the same list.
+func showRecord(cmd *cobra.Command, ctx context.Context, tx *store.Tx, r store.Record, format string) error {
+	encoded, err := tx.MarshalRecord(ctx, r)
+	if err != nil {
+		return err
+	}
+	if format == outputJSON {
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
+		return err
+	}
+	return writeDetail(cmd.OutOrStdout(), encoded)
 }

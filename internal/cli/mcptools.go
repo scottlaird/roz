@@ -38,10 +38,12 @@ type mcpTools struct {
 
 // skipped are the commands an agent has no business calling.
 //
-// init creates a database, which is a decision about where state lives.
-// serve and syncer never return. completion and help are cobra's.
+// init creates a database, which is a decision about where state lives, and
+// db moves whole databases around for the same reason. serve and syncer never
+// return. completion and help are cobra's.
 var skipped = map[string]bool{
 	"init":       true,
+	"db":         true,
 	"serve":      true,
 	"syncer":     true,
 	"completion": true,

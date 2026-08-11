@@ -78,6 +78,7 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		fmt.Fprintf(out, "%s could not be read: %s\n", key, result.Missing[key])
 	}
 	reportSettled(out, result.Settled)
+	reportOverdue(out, result.Overdue)
 
 	if !quiet {
 		fmt.Fprintf(out, "polled %d, %d changed", result.Polled, result.ChangedCount())
@@ -86,6 +87,9 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		}
 		if result.SettledCount() > 0 {
 			fmt.Fprintf(out, ", %d closed", result.SettledCount())
+		}
+		if result.OverdueCount() > 0 {
+			fmt.Fprintf(out, ", %d overdue", result.OverdueCount())
 		}
 		fmt.Fprintln(out)
 	}
@@ -122,4 +126,16 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// reportOverdue prints the waits that have gone on too long.
+//
+// Like reportSettled it prints even under --quiet. The whole reason this
+// exists is that a wait going bad was silent, and a quiet flag that silenced
+// it again would defeat the point.
+func reportOverdue(out io.Writer, overdue []store.Overdue) {
+	for _, o := range overdue {
+		fmt.Fprintf(out, "%s has been waiting %d days: %s\n",
+			o.Action.ID, o.Waiting, o.Action.Title)
+	}
 }

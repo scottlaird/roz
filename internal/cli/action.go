@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	flagVerb    = "verb"
-	flagProject = "project"
-	flagWhy     = "why"
-	flagRankPin = "rank-pin"
+	flagVerb       = "verb"
+	flagProject    = "project"
+	flagWhy        = "why"
+	flagRankPin    = "rank-pin"
+	flagOkayToWait = "okay-to-wait-until"
 )
 
 func newActionCmd() *cobra.Command {
@@ -50,7 +51,7 @@ func newActionCmd() *cobra.Command {
 // cascade that belongs to them.
 var actionFieldFlags = []string{
 	flagTitle, flagVerb, flagProject, flagWhy, flagStatus, flagRankPin,
-	flagSnoozeUntil, flagSnoozeReason,
+	flagSnoozeUntil, flagSnoozeReason, flagOkayToWait,
 }
 
 func addActionFieldFlags(cmd *cobra.Command) {
@@ -63,6 +64,8 @@ func addActionFieldFlags(cmd *cobra.Command) {
 	f.Int(flagRankPin, 0, "manual sort override; 0 clears it")
 	f.String(flagSnoozeUntil, "", "ISO-8601 date or timestamp; requires state snoozed")
 	f.String(flagSnoozeReason, "", "why it is deferred")
+	f.String(flagOkayToWait, "",
+		"when waiting on this stops being reasonable; empty clears it and the verb's allowance applies")
 }
 
 func newActionAddCmd() *cobra.Command {
@@ -220,6 +223,24 @@ func applyActionFlags(cmd *cobra.Command, a *store.Action) error {
 			return err
 		}
 		a.State = v
+	}
+	if f.Changed(flagOkayToWait) {
+		v, err := f.GetString(flagOkayToWait)
+		if err != nil {
+			return err
+		}
+		// Empty clears it, and the verb's allowance applies again. Unlike a
+		// snooze this needs no matching state: an action is not "waiting"
+		// as a state, it is waiting because its verb says so.
+		if v == "" {
+			a.OkayToWaitUntil = sql.NullString{}
+		} else {
+			at, err := validateTimestamp(flagOkayToWait, v)
+			if err != nil {
+				return err
+			}
+			a.OkayToWaitUntil = sql.NullString{String: at, Valid: true}
+		}
 	}
 	if f.Changed(flagRankPin) {
 		v, err := f.GetInt(flagRankPin)

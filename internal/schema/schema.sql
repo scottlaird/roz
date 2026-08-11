@@ -96,6 +96,11 @@ CREATE TABLE actionverb (
   -- whether closing an action with this verb opens the repository's pipeline.
   -- Last of the columns because ADD COLUMN put it there.
   starts_pipeline INTEGER NOT NULL DEFAULT 0 CHECK (starts_pipeline IN (0,1)),
+  -- how many days of waiting is reasonable for this verb before it is worth
+  -- somebody's attention. NULL means it never times out, which is right for
+  -- the verbs describing your own work: nothing is waiting, so nothing can be
+  -- overdue. Last because ADD COLUMN put it there. See 0013.
+  wait_days     INTEGER,
   -- a predicate_key exists exactly when the verb closes on one
   CHECK ((closes = 'predicate') = (predicate_key IS NOT NULL))
 ) STRICT;
@@ -108,41 +113,41 @@ CREATE TABLE actionverb (
 -- vocabulary can grow without a deploy, and a database may have gained or
 -- retired verbs since. Never delete a row -- closed actions and log entries
 -- reference retired verbs. Set active = 0 instead.
-INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires_pr, starts_pipeline, description) VALUES
+INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires_pr, starts_pipeline, wait_days, description) VALUES
   -- Predicate-closed. These flow through on their own.
-  ('undraft',          'un-draft',          'predicate', 'pr_not_draft',      'click',   1, 0,
+  ('undraft',          'un-draft',          'predicate', 'pr_not_draft',      'click',   1, 0, NULL,
    'Take the pull request out of draft.'),
-  ('send_for_review',  'send for review',   'predicate', 'pr_announced',      'click',   1, 0,
+  ('send_for_review',  'send for review',   'predicate', 'pr_announced',      'click',   1, 0, NULL,
    'Announce it where reviewers will see it. The announcement is the one signal GitHub cannot supply.'),
-  ('wait_review',      'wait for review',   'predicate', 'pr_approved',       'wait',    1, 0,
+  ('wait_review',      'wait for review',   'predicate', 'pr_approved',       'wait',    1, 0, 3,
    'Nothing to do but wait. Closes when the review decision is APPROVED.'),
-  ('address_comments', 'address comments',  'predicate', 'pr_threads_clear',  'session', 1, 0,
+  ('address_comments', 'address comments',  'predicate', 'pr_threads_clear',  'session', 1, 0, NULL,
    'Deal with review threads. Closes when none are unresolved against the current head.'),
-  ('rebase',           'rebase',            'predicate', 'pr_mergeable',      'click',   1, 0,
+  ('rebase',           'rebase',            'predicate', 'pr_mergeable',      'click',   1, 0, NULL,
    'Bring it up to date. Closes when the merge state is neither BEHIND nor DIRTY.'),
-  ('merge',            'merge',             'predicate', 'pr_merged',         'click',   1, 0,
+  ('merge',            'merge',             'predicate', 'pr_merged',         'click',   1, 0, 1,
    'One click, once everything else is done.'),
 
   -- Human-closed. These are the items worth spending attention on, and the
   -- only ones that reach the queue as thinking work.
-  ('decide',           'decide',            'human',     NULL,                'decide',  0, 0,
+  ('decide',           'decide',            'human',     NULL,                'decide',  0, 0, NULL,
    'A judgement that has to be made before anything else can move.'),
-  ('write',            'write',             'human',     NULL,                'session', 0, 1,
+  ('write',            'write',             'human',     NULL,                'session', 0, 1, NULL,
    'Actual work. Usually ends with a pull request.'),
-  ('announce',         'announce',          'human',     NULL,                'click',   0, 0,
+  ('announce',         'announce',          'human',     NULL,                'click',   0, 0, NULL,
    'Tell someone something.'),
-  ('run',              'run',               'human',     NULL,                'click',   0, 0,
+  ('run',              'run',               'human',     NULL,                'click',   0, 0, NULL,
    'Run a command or a job and see what it says.'),
-  ('file',             'file',              'human',     NULL,                'click',   0, 0,
+  ('file',             'file',              'human',     NULL,                'click',   0, 0, NULL,
    'Raise a ticket or an issue somewhere else.'),
-  ('investigate',      'investigate',       'human',     NULL,                'session', 0, 0,
+  ('investigate',      'investigate',       'human',     NULL,                'session', 0, 0, NULL,
    'Find out what is going on. Closes when you know.'),
 
   -- review is human-closed for now, though the sketch has it closing on a
   -- predicate. It needs to know that *we* submitted a review, which needs
   -- both the viewer's identity and pull requests tracked because they are
   -- assigned to us rather than authored by us. Neither exists yet.
-  ('review',           'review',            'human',     NULL,                'session', 1, 0,
+  ('review',           'review',            'human',     NULL,                'session', 1, 0, NULL,
    'Review someone else''s pull request.');
 
 -- ── pipelines ────────────────────────────────────────────────────────
@@ -246,6 +251,10 @@ CREATE TABLE action (
   -- the sketch groups with sync as a writer of observed fields. Last because
   -- ADD COLUMN put it there. See 0011.
   last_verified_at TEXT,
+  -- authored: when it stops being reasonable to still be waiting on this one.
+  -- NULL means the verb's wait_days, read when the deadline is checked rather
+  -- than copied here. Last because ADD COLUMN put it there. See 0013.
+  okay_to_wait_until TEXT,
   UNIQUE (kind, n),
   CHECK (id = kind || n),
   CHECK (hidden_behind IS NULL OR hidden_behind <> id),

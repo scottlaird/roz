@@ -119,23 +119,6 @@ them.
 - [ ] Tracking a pull request assigned to us rather than authored by us has
       nowhere to record *why* it is tracked. That is a schema change, and it is
       what `review` needs before it can close on a predicate.
-- [ ] **A timeout on waiting — `okay_to_wait_until` on an action.** A
-      `wait_review` or a `merge` that has been sitting long enough should ask
-      for attention. [#47](https://github.com/scottlaird/todo/pull/47) makes
-      this more necessary rather than less: excluding `rank_class = wait` from
-      `--unblocked` was right, since four of ten queue items were waits, but it
-      left the queue itself silent about them. The page has its own waiting
-      block, so they are visible to anyone who goes and looks; what is missing
-      is anything that speaks up when a wait has gone on too long, which is a
-      page you have to remember to read away from being no signal at all.
-
-      Shape: an authored per-action deadline, defaulting from the verb or the
-      repository rather than typed every time, and an `exception` event when it
-      passes. That reuses `severity = 'exception'`, which is already what
-      monitors filter on, rather than inventing a second alerting path.
-
-      It is **not** a snooze. A snooze hides something until a date; this
-      reveals something after one.
 - [ ] **A `git_ref` entity, and the two predicates it enables.** Waiting for a
       release is currently a snooze to a guessed date, which is wrong in both
       directions: if the release slips the item wakes early, and if it ships
@@ -338,6 +321,35 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   command is not as innocuous as its name, and the output has to say so.
   `reportSettled` is shared with sync rather than duplicated, so the two
   cannot describe the same event differently.
+- **A wait that has gone on too long raises an exception.** Excluding
+  `rank_class = wait` from `--unblocked` was right — four of ten queue items
+  were waits — but it left nothing speaking up when one went bad. `severity =
+  'exception'` is what a monitor already filters on, so this reuses it rather
+  than inventing a second alerting path.
+- **Reported, never changed.** An overdue action is not closed, snoozed or
+  reprioritised. What to do about a stuck wait is a judgement, and this is
+  only the part that says a judgement is wanted. **It is not a snooze**: a
+  snooze hides something until a date, this reveals something after one.
+- **The allowance is `actionverb.wait_days`, and NULL means never.** A verb
+  describing your own work cannot be overdue, only undone; only `wait_review`
+  (3 days) and `merge` (1) are seeded. `action.okay_to_wait_until` is the
+  per-action exception, resolved when the deadline is checked rather than
+  copied at creation — the same shape `pr.pipeline` has against its
+  repository. The repository was considered as a second source and left out:
+  one place to look beats two until something needs the second.
+- **The clock is `waiting_since`, which finally means something.** The sketch
+  called it "derivable from review requests" and nothing had derived it, so
+  the column was dead and every wait would have been counted from whenever the
+  action happened to be created. Sync fills it from the subject pull request's
+  `first_review_requested_at`, falling back to `created_at` where nothing has
+  observed a wait beginning.
+- **Idempotent through the log, with no new state.** A wait is already
+  reported if an exception exists at or after its deadline. If the deadline
+  later moves out — a fresh review request, or a raised allowance — the old
+  exception falls before the new one and it is reported again, which is right:
+  it is a different wait.
+- **Checked even when nothing is tracked.** A deadline is not a fact about
+  GitHub, and `Sync`'s nothing-to-poll return used to skip it entirely.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

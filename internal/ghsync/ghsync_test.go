@@ -2,6 +2,7 @@ package ghsync
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -458,5 +459,139 @@ func TestSyncSettlesNothingWhenNothingIsObserved(t *testing.T) {
 	if result.SettledCount() != 0 {
 		t.Errorf("settled %d actions on an unreadable pull request, want none",
 			result.SettledCount())
+	}
+}
+
+// TestSyncObservesWaitingSince: the sketch calls waiting_since "derivable
+// from review requests" and nothing had derived it, so the column meant
+// nothing and every wait clock started from whenever the action happened to
+// be created.
+func TestSyncObservesWaitingSince(t *testing.T) {
+	st, key := newStore(t)
+	ctx := context.Background()
+
+	action := linkedAction(t, st, "wait_review", key).ID
+
+	pr := observed(key)
+	pr.FirstReviewRequestedAt = "2026-08-01T09:00:00.000Z"
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{pr}}}
+
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	a, err := tx.LoadAction(ctx, action)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	if a.WaitingSince.String != "2026-08-01T09:00:00.000Z" {
+		t.Errorf("waiting_since = %v, want the review request time", a.WaitingSince)
+	}
+}
+
+// TestSyncLeavesWaitingSinceAloneWhenGitHubSaysNothing: absence is not a
+// fact, the same rule the column merge follows.
+func TestSyncLeavesWaitingSinceAloneWhenGitHubSaysNothing(t *testing.T) {
+	st, key := newStore(t)
+	ctx := context.Background()
+
+	action := linkedAction(t, st, "wait_review", key).ID
+	client := &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{observed(key)},
+	}}
+
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	a, err := tx.LoadAction(ctx, action)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	if a.WaitingSince.Valid {
+		t.Errorf("waiting_since = %v, want it left unset", a.WaitingSince)
+	}
+}
+
+// bareStore is a store with nothing tracked in it — no repository, no pull
+// request — which is the other path out of Sync.
+func bareStore(t *testing.T) *store.Store {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "todo.db")
+	if _, _, err := store.Init(path, map[store.Entity]string{
+		store.EntityProject: "SL", store.EntityAction: "NA",
+	}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	st, err := store.New(db)
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+	return st
+}
+
+// TestOverdueIsCheckedWithNothingTracked: a deadline is not a fact about
+// GitHub. An action can sit past its allowance in a database with no pull
+// requests tracked at all, and the nothing-to-poll return used to skip the
+// check entirely.
+func TestOverdueIsCheckedWithNothingTracked(t *testing.T) {
+	st := bareStore(t)
+	ctx := context.Background()
+
+	a := store.NewAction("wait for somebody", "wait_review")
+	if err := st.AllocateAction(ctx, a); err != nil {
+		t.Fatalf("AllocateAction() returned error: %v", err)
+	}
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.Insert(ctx, a); err != nil {
+		t.Fatalf("Insert() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	// waiting_since is observed, so a sync actor writes it — which is what
+	// really does, from the pull request's first review request.
+	observing, err := st.Begin(ctx, store.ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	long := a.Clone()
+	long.WaitingSince = sql.NullString{String: "2020-01-01T00:00:00.000Z", Valid: true}
+	if _, err := observing.Update(ctx, a, long); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := observing.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	result, err := Sync(ctx, st, &fakeFetcher{})
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if result.OverdueCount() != 1 {
+		t.Errorf("overdue = %d with nothing tracked, want 1", result.OverdueCount())
 	}
 }

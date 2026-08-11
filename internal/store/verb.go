@@ -41,6 +41,11 @@ type ActionVerb struct {
 	// repository's pipeline. Having a subject pull request is not on its own
 	// a reason to: investigating one ends when you know the answer.
 	StartsPipeline bool `db:"starts_pipeline"`
+
+	// WaitDays is how long waiting is reasonable before it is worth somebody
+	// noticing. NULL means never: a verb describing your own work cannot be
+	// overdue, only undone.
+	WaitDays sql.NullInt64 `db:"wait_days"`
 }
 
 func (v *ActionVerb) table() string       { return "actionverb" }

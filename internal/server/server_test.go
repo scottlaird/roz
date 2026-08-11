@@ -359,6 +359,64 @@ func TestEventsSurviveAFailedRead(t *testing.T) {
 	}
 }
 
+// TestEventsSurviveAFailedFirstRead: the read that takes the baseline is no
+// different from any later one, so a database busy at connect time should not
+// cost the client its connection.
+func TestEventsSurviveAFailedFirstRead(t *testing.T) {
+	v := &version{at: 5, failing: true}
+	base := runningLive(t, v.read, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events returned error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: the stream should open anyway", resp.StatusCode)
+	}
+
+	lines := make(chan string, 4)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "data: ") {
+				lines <- scanner.Text()
+			}
+		}
+	}()
+
+	// The read recovers with nothing having changed. That first success is the
+	// baseline, not news, and sending it would reload the page over a change
+	// nobody made.
+	v.fail(false)
+	select {
+	case got, ok := <-lines:
+		if ok {
+			t.Fatalf("event = %q, want none: the baseline is not a change", got)
+		}
+		t.Fatal("the stream ended after a failed first read")
+	case <-time.After(3 * pollInterval):
+	}
+
+	v.move()
+	select {
+	case got, ok := <-lines:
+		if !ok {
+			t.Fatal("the stream ended before the change arrived")
+		}
+		if got != "data: 6" {
+			t.Errorf("event = %q, want the version after the change", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no event arrived after the version moved")
+	}
+}
+
 // TestNoEventsWithoutAChangeSource: `todo render` has no server, and a server
 // with nothing to watch should say so rather than hold a connection open
 // promising events that cannot come.

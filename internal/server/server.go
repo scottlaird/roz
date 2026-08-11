@@ -175,17 +175,30 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
+	// The baseline is taken before the headers go out, so that a client
+	// holding a response is a client whose starting version is already known.
+	// The other order is a race: the response arrives, something moves, and
+	// only then does this read happen — picking up the new version as the
+	// baseline and reporting the change as nothing at all.
+	//
+	// A failed read here is treated exactly as the loop below treats one. It
+	// used to end the connection, which is the same busy database the comment
+	// down there says is not worth dropping a connection over, and the browser
+	// would only rebuild it against that same database.
+	last, known := int64(0), true
+	if current, err := s.changes(ctx); err != nil {
+		s.logf("reading the version: %v\n", err)
+		known = false
+	} else {
+		last = current
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 	flusher.Flush()
-
-	ctx := r.Context()
-	last, err := s.changes(ctx)
-	if err != nil {
-		s.logf("reading the version: %v\n", err)
-		return
-	}
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -204,6 +217,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				// A failed read is not a reason to drop the connection: the
 				// database may be busy, and the next tick will try again.
+				continue
+			}
+			if !known {
+				// The baseline never arrived, so this is it. Sending it would
+				// reload the page over a change nobody made.
+				last, known = current, true
 				continue
 			}
 			if current == last {

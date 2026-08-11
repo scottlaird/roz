@@ -79,3 +79,44 @@ func TestRunWithNoServices(t *testing.T) {
 		t.Errorf("Run() with no services returned %v, want nil", err)
 	}
 }
+
+// finished is a service with a natural end: it does its work and returns,
+// the way an MCP server does when its client closes stdin.
+type finished struct {
+	name  string
+	after time.Duration
+}
+
+func (f *finished) Name() string { return f.name }
+
+func (f *finished) Run(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+	case <-time.After(f.after):
+	}
+	return nil
+}
+
+// TestAServiceFinishingStopsTheRest: without this, a process whose only real
+// service has ended is held open forever by the ones supporting it. `todo mcp`
+// stopped exiting at EOF the moment it gained a second service, which is how
+// this was found.
+func TestAServiceFinishingStopsTheRest(t *testing.T) {
+	done := &finished{name: "done", after: 10 * time.Millisecond}
+	supporting := &blocking{name: "supporting"}
+
+	returned := make(chan error, 1)
+	go func() { returned <- Run(context.Background(), done, supporting) }()
+
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Errorf("Run() returned %v, want nil: finishing is not failing", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not return after a service finished")
+	}
+	if !supporting.stopped.Load() {
+		t.Error("the supporting service kept running after the other finished")
+	}
+}

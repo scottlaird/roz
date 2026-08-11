@@ -194,3 +194,37 @@ func TestMCPStopsWhenTheSchemaMoves(t *testing.T) {
 		t.Fatal("mcp did not stop; it is still waiting for a request")
 	}
 }
+
+// TestMCPStopsWhenItsClientGoesAway: the guard must not hold the process open
+// after the protocol loop is done. `todo mcp` ends when its stdin does, and
+// gaining a second service silently took that away until service.Run learned
+// that a service finishing stops the rest.
+func TestMCPStopsWhenItsClientGoesAway(t *testing.T) {
+	db := initDB(t)
+
+	server := &mcp.Server{
+		Name:    "todo",
+		Version: version,
+		Tools:   &mcpTools{db: db, agent: "test"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		// An empty reader is a client that connected and hung up.
+		done <- service.Run(ctx,
+			&mcpService{server: server, in: strings.NewReader(""), out: io.Discard},
+			&schemaGuard{store: openTestStore(t, db)})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("mcp returned %v, want nil: a client hanging up is not a failure", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("mcp did not exit after its stdin ended")
+	}
+}

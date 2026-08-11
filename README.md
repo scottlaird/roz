@@ -339,6 +339,57 @@ confidently to the wrong place is worse than no link.
 `--db` stays a flag, since it says which database to open. `TODO_JIRA_BASE_URL`
 and `TODO_JIRA_PREFIXES` override the stored values for a single run.
 
+## Ranking
+
+Creation order is the default everywhere, and it is honest about being
+arbitrary. `--sort priority` asks for the real ranking; the page always uses
+it.
+
+**Projects** sort on one field, `project.priority`, an integer from 1 to 4.
+Unprioritised sorts last — unstated is not the same as low, but it has to go
+somewhere, and behind the stated ones is the reading that does no harm.
+
+```bash
+todo project set SL10 --priority 1
+```
+
+**Actions** sort on six terms, each breaking ties in the one before:
+
+| # | term | lives on | set with |
+|---|---|---|---|
+| 1 | `rank_pin` | `action` | `todo action set NA7 --rank-pin 1` (`0` clears it) |
+| 2 | `priority` | the `project` it advances | `todo project set SL10 --priority 1` |
+| 3 | `rank_class` | the `actionverb` it uses | choose the verb; `todo verb list` shows the classes |
+| 4 | unblocks count | computed from `action_blocks` | `todo action add-blocker --from NA8 --to NA7` raises NA7's, since `--from` is the blocked one |
+| 5 | `effort` | the `project` it advances | `todo project set SL10 --effort hours` |
+| 6 | `n` | `action` | nothing: it is creation order, so the result is stable |
+
+Reading down: the pin exists to override whatever the system worked out, so
+it wins outright. Then what you said matters. Then how big a step this is —
+`click` before `decide` before `session` before `wait`, so one-click items
+clear out and things you are only waiting on sink. Then how much finishing it
+frees. Then prefer the project that is nearly done.
+
+**The unblocks count is transitive**, and that is the point of it. The sketch's
+argument is that "this week's most important items were the ones gating
+chains", and a direct count gives the head of a chain of four the same 1 as
+something blocking a single leaf. Only open followers count — freeing
+something already done is worth nothing. `hidden_behind` is not part of it:
+that edge is the judgement that a follower is not worth looking at, not a
+statement about ordering.
+
+Two things are deliberately not terms. **Nothing is inferred from the title or
+the age of an item** — a queue that quietly promotes things is a queue you
+stop trusting. And **unstated sorts last at every term**, so filling nothing
+in never moves an item up.
+
+Two changes from the sketch, both recorded in [`TODO.md`](TODO.md): priority is
+a term at all, and it is the first one after the pin. The sketch proposed
+`rank_class` → unblocks → effort and predates priority being used as the
+planning signal it now is — but a one-click action on a barely-wanted project
+outranking real work on the most wanted one reads as the queue ignoring what
+it was told.
+
 ## Prose fields
 
 Some fields are written as sentences rather than as values, and those are

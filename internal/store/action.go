@@ -153,9 +153,9 @@ func (t *Tx) LoadVerb(ctx context.Context, verb string) (*ActionVerb, error) {
 // Orderings a list can be returned in.
 //
 // The default everywhere is creation order, which is honest about being
-// arbitrary. OrderPriority is the first step towards the ranking the sketch
-// describes; it is not that ranking, which also wants rank_class,
-// unblocks_count and effort.
+// arbitrary. OrderPriority is the sketch's ranking: the priority of what an
+// action advances, then the verb's rank class, then how much finishing it
+// frees, then effort — with rank_pin over all of it. See rankOrder.
 const (
 	OrderCreated  = ""
 	OrderPriority = "priority"
@@ -237,12 +237,17 @@ func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action
 		columns[i] = "a." + f.column
 	}
 
-	// The table is aliased and its columns qualified because ordering by
-	// priority joins project, and both tables have a snooze_until.
+	// The table is aliased and its columns qualified because the ranking
+	// joins project, and both tables have a snooze_until.
 	where, args := filter.clauses(s.now().UTC().Format(timeFormat))
-	query := fmt.Sprintf("SELECT %s FROM action a", strings.Join(columns, ", "))
+
+	var query string
 	if filter.Order == OrderPriority {
-		query += " LEFT JOIN project p ON p.id = a.project_id"
+		query = unblocksCTE
+	}
+	query += fmt.Sprintf("SELECT %s FROM action a", strings.Join(columns, ", "))
+	if filter.Order == OrderPriority {
+		query += rankJoins
 	}
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
@@ -273,19 +278,12 @@ func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action
 	return actions, nil
 }
 
-// actionOrder is the ORDER BY for a listing.
-//
-// Under OrderPriority: rank_pin first, because it exists to override whatever
-// the system worked out; then the priority of the project the action
-// advances, since an action inherits its urgency from what it is for; then
-// creation order. Anything without a priority sorts after everything with
-// one — unstated is not the same as low, but it has to go somewhere, and
-// behind the stated ones is the reading that does no harm.
+// actionOrder is the ORDER BY for a listing: creation order, or the ranking.
 func actionOrder(order string) string {
 	if order != OrderPriority {
 		return "a.n"
 	}
-	return "a.rank_pin IS NULL, a.rank_pin, p.priority IS NULL, p.priority, a.n"
+	return rankOrder()
 }
 
 func (f ActionFilter) clauses(now string) ([]string, []any) {

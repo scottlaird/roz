@@ -15,6 +15,7 @@ json.go      JSON in and out, driven by the same field metadata
 alloc.go     identifier allocation
 sequence.go  identifier prefixes and the entity registry
 subject.go   resolving an identifier to whatever it names
+rank.go      the queue's ordering, and the terms it is built from
 predicate.go how a verb decides its work is done
 verb.go      the vocabulary, and the check that every predicate resolves
 pipeline.go  what closing a verb instantiates

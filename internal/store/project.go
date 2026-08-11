@@ -145,10 +145,14 @@ type ProjectFilter struct {
 // unprioritised sort last: unstated is not the same as low, but it has to go
 // somewhere, and behind the stated ones is the reading that does no harm.
 func projectOrder(order string) string {
-	if order != OrderPriority {
+	switch order {
+	case OrderPriority:
+		return "priority IS NULL, priority, n"
+	case OrderStaleness:
+		return stalenessOrder("")
+	default:
 		return "n"
 	}
-	return "priority IS NULL, priority, n"
 }
 
 // ListProjects returns projects matching the filter.

@@ -1,0 +1,18 @@
+-- An action can go stale as quietly as a project can.
+--
+-- project.last_verified_at has been in the schema since the start and nothing
+-- ever wrote it, because `todo verify` was a stub. Actions were left out
+-- entirely, which is the wrong way round: a project is a plan and changes
+-- slowly, while an action claims something is worth doing *now* and rots
+-- faster.
+--
+-- Observed, like the project's, and for the sketch's reason: verification is
+-- checking the record against reality, so the timestamp is an observation of
+-- the world rather than a judgement about it. That is why `todo verify` is
+-- listed with `todo sync` under "the only writers of observed fields", and
+-- why it needs an actor of its own rather than an --actor override.
+--
+-- Distinct from updated_at, which every write moves. When something last
+-- *changed* is already recoverable; when someone last *looked at it and was
+-- satisfied* was recorded nowhere.
+ALTER TABLE action ADD COLUMN last_verified_at TEXT;

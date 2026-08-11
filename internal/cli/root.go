@@ -1,12 +1,12 @@
 // Package cli defines the todo command tree.
 //
-// Every leaf command is currently a stub: it prints its path and exits 1.
-// The tree itself is the point — the surface is settled here, and behaviour
-// gets filled in underneath it.
+// The tree is the surface: every leaf is implemented, and the shape of the
+// command line is settled here rather than emerging from the packages
+// underneath it. `todo mcp` derives its tools from this same tree, so a flag
+// added to a command is a tool argument without anything else being written.
 package cli
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -16,12 +16,6 @@ import (
 
 // dbPath is the SQLite file every command will operate on.
 var dbPath string
-
-// stub is the Run function for every command that has no implementation yet.
-func stub(cmd *cobra.Command, _ []string) {
-	fmt.Fprintf(os.Stderr, "todo: %s is not implemented\n", cmd.CommandPath())
-	os.Exit(1)
-}
 
 // NewRootCmd builds the full command tree.
 func NewRootCmd() *cobra.Command {

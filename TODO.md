@@ -11,7 +11,7 @@ entities — `project`, `action`, `pr`, `github_repo`, `calendar_window` and
 registry the verb vocabulary resolves against; and the pipelines a repository
 chooses between. `todo watch` tails the log.
 
-One command is still a stub that exits 1: `verify`.
+Every command in the tree is implemented; nothing is a stub any more.
 
 The queue is mechanical, which was the claim the whole design rested on.
 Closing a `write` action instantiates the repository's pipeline as a chain of
@@ -50,8 +50,6 @@ them.
 
 ## Smaller gaps
 
-- [ ] `todo verify` — still stubbed, though no longer for want of a design:
-      `todo pr announce` set the pattern. See the open question.
 - [ ] `--db` is a package-level variable in `internal/cli`, written by flag
       parsing. Harmless for one-shot commands and for `serve`, which opens the
       store once before any service starts, but it means two commands cannot
@@ -121,17 +119,6 @@ them.
       Ownership can be per-directory and can change under a long-lived pull
       request, so what is inferred is an observation with a time, not a fact
       about the repository.
-- [ ] **Sort by staleness — what has gone longest without being looked at.**
-      Half of it exists. `project.last_verified_at` is in the schema and
-      `todo verify` is the verb designed to stamp it; both are waiting on each
-      other. What is missing is the same column on `action`, a way to mark one
-      reviewed, and the ordering itself.
-
-      Two clocks, and they answer different questions: the last time an item
-      *changed* is already recoverable from `updated_at` and the log, while
-      the last time someone *looked at it and was satisfied* is not recorded
-      anywhere. Staleness is the second one — an item nobody has changed for a
-      month is fine if it was reviewed on Friday, and alarming if it was not.
 - [ ] **Push events into an agent's session, as an MCP channel.** The MCP
       server answers when asked; nothing reaches an agent between turns. A
       Claude Code *channel* is the mechanism for that — a server declaring
@@ -201,13 +188,6 @@ them.
       Predicates stay pure over the database — the work is the observation and
       its sync, not the predicate.
 ## Open questions
-
-**`todo verify` writes an observed column.** It stamps `last_verified_at`, so a
-human running it is exactly what `Tx.Update` refuses. `todo pr announce` has
-since shown the shape that works: a named verb that picks its own sync actor,
-with a distinct actor name so the log does not claim an integration said it.
-The same approach fits here. It is a decision rather than a design problem
-now.
 
 **Sync cadence versus event fidelity.** The sketch's own question, mostly
 answered: the log records transitions rather than poll results, so a quiet
@@ -330,6 +310,28 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   list with a role.** The schema allows at most one subject and closing reads
   only that; a context link is background and is never asked anything. Two
   relations put that rule in the shape instead of in a comment.
+- **Staleness is a second clock, and `updated_at` is not it.** When something
+  last changed is already recoverable from `updated_at` and the log; when
+  someone last looked at it and was satisfied was recorded nowhere.
+  `last_verified_at` is that, on projects and on actions — the sketch left it
+  off actions, which is the wrong way round, since an action claims something
+  is worth doing *now* and rots faster than a plan does.
+- **`todo verify` writes an observed column, under an actor of its own.**
+  Verifying is asking the world whether the record is still true, not deciding
+  what it should say, which is why the sketch lists it beside `todo sync` as a
+  writer of observed fields. Like `pr announce` it is a named command rather
+  than an `--actor` override — one verb instead of a hole in the rule — and it
+  logs as `sync:verify` so the log says a person went and looked. This settles
+  the old open question, which had assumed the answer might be to make the
+  column authored instead.
+- **Never verified sorts first under `--sort staleness`**, inverting the rule
+  that unstated sorts last. Same reasoning, different destination: a missing
+  priority is an absence of information, a missing verification is the
+  information.
+- **No `verified` event kind**, though the sketch's vocabulary lists one. The
+  diff already logs `last_verified_at` moving, and hand-writing a second event
+  beside it is exactly what "events come from diffs, never hand-written calls"
+  rules out. Worth revisiting only if something needs to filter on it.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

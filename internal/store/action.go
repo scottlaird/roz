@@ -75,6 +75,12 @@ type Action struct {
 
 	CreatedAt string `db:"created_at" kind:"created"`
 	UpdatedAt string `db:"updated_at" kind:"auto"`
+
+	// LastVerifiedAt is when someone last checked this against reality and was
+	// satisfied, which UpdatedAt cannot tell you: every write moves that one.
+	// An action nobody has touched for a month is fine if it was verified on
+	// Friday and alarming if it was not.
+	LastVerifiedAt sql.NullString `db:"last_verified_at" kind:"observed"`
 }
 
 func (a *Action) table() string       { return "action" }
@@ -159,7 +165,26 @@ func (t *Tx) LoadVerb(ctx context.Context, verb string) (*ActionVerb, error) {
 const (
 	OrderCreated  = ""
 	OrderPriority = "priority"
+	// OrderStaleness is longest un-checked first: what nobody has looked at
+	// in the longest time, rather than what nobody has changed. See
+	// stalenessOrder.
+	OrderStaleness = "staleness"
 )
+
+// stalenessOrder puts the least recently verified first, and anything never
+// verified before all of it.
+//
+// That last part inverts the rule the other orderings follow, where unstated
+// sorts last. It is not an exception so much as the same reasoning arriving
+// somewhere else: a missing priority is an absence of information, while a
+// missing verification is the information — nobody has ever checked this, so
+// nothing is staler.
+//
+// prefix qualifies the column for a query that joins, and is empty otherwise.
+func stalenessOrder(prefix string) string {
+	return prefix + "last_verified_at IS NOT NULL, " +
+		prefix + "last_verified_at, " + prefix + "n"
+}
 
 // ActionFilter narrows ListActions. The zero value selects everything.
 type ActionFilter struct {
@@ -280,10 +305,14 @@ func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action
 
 // actionOrder is the ORDER BY for a listing: creation order, or the ranking.
 func actionOrder(order string) string {
-	if order != OrderPriority {
+	switch order {
+	case OrderPriority:
+		return rankOrder()
+	case OrderStaleness:
+		return stalenessOrder("a.")
+	default:
 		return "a.n"
 	}
-	return rankOrder()
 }
 
 func (f ActionFilter) clauses(now string) ([]string, []any) {

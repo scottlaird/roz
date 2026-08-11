@@ -73,7 +73,7 @@ directory.
 | **other** | |
 | `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
 | `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `todo config set`. |
-| `todo verify` | Stamp `last_verified_at`. *Not implemented yet.* |
+| `todo verify` | Record that a project or action was checked against reality. Feeds `--sort staleness`. |
 
 ## A walkthrough
 
@@ -345,6 +345,9 @@ Creation order is the default everywhere, and it is honest about being
 arbitrary. `--sort priority` asks for the real ranking; the page always uses
 it.
 
+There is a third order, `--sort staleness`, which answers a different
+question and is covered under [Staleness](#staleness).
+
 **Projects** sort on one field, `project.priority`, an integer from 1 to 4.
 Unprioritised sorts last — unstated is not the same as low, but it has to go
 somewhere, and behind the stated ones is the reading that does no harm.
@@ -389,6 +392,43 @@ a term at all, and it is the first one after the pin. The sketch proposed
 planning signal it now is — but a one-click action on a barely-wanted project
 outranking real work on the most wanted one reads as the queue ignoring what
 it was told.
+
+## Staleness
+
+`updated_at` says when something last *changed*. It cannot say when someone
+last *looked at it and was satisfied*, and those are different questions: an
+item nobody has touched for a month is fine if it was reviewed on Friday and
+alarming if it was not.
+
+`todo verify` records the second one, on projects and actions:
+
+```console
+$ todo verify TD1
+TD1 verified at 2026-08-11T04:45:50.628Z
+$ todo project list --sort staleness
+ID   STATUS  PRI  EFFORT  SNOOZED UNTIL  TITLE
+TD3  active  -    -       -              never checked
+TD1  active  -    -       -              checked last week
+TD2  active  -    -       -              checked yesterday
+```
+
+**Never checked sorts first**, which inverts the rule everywhere else that
+unstated sorts last. It is the same reasoning arriving somewhere different: a
+missing priority is an absence of information, while a missing verification
+*is* the information — nobody has ever looked at this, so nothing is staler.
+
+`verify` changes nothing else, so it is safe to run on anything at any time,
+and running it twice with the same timestamp writes nothing. `--at` backdates,
+because the check usually happened before anyone got round to recording it.
+
+It writes an **observed** column, which a person normally may not do.
+Verifying is asking the world whether the record is still true rather than
+deciding what it should say, which is why the design sketch lists `todo verify`
+alongside `todo sync` as the only writers of observed fields. Like
+`todo pr announce`, it is a separate command rather than an `--actor`
+override — one named verb instead of a hole in the rule — and it is logged as
+`sync:verify`, so the log says a person went and looked rather than that
+something reported it.
 
 ## Prose fields
 

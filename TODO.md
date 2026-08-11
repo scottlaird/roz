@@ -219,25 +219,6 @@ them.
       migration per setting, which for a handful of real settings is the right
       trade. `sequence` is already this shape: a small table keyed by purpose,
       not a generic bag.
-- [ ] **Some fields are prose and should say so — `format:"markdown"`.** The
-      candidates are the ones written as sentences rather than values:
-      `action.why`, `project.summary`, both `snooze_reason`s, and the notes.
-      Titles are arguably plain, and a Jira summary is not ours to interpret.
-
-      `format:"json"` is the precedent, and this would work the same way:
-      store the source, render at the edge. `show -o json` keeps returning what
-      was written and the log keeps recording source in `old_value`, so only
-      the page renders.
-
-      The cost is not the renderer. It is that **linkification stops being a
-      regex**: a regex over the string will rewrite an identifier inside a code
-      span or inside an existing link, producing nested anchors and broken
-      code. It wants to become an AST transformer visiting text nodes only.
-
-      Validation barely changes, which is the trap — almost any string is valid
-      Markdown, so the tag buys nothing at the input boundary. The one thing
-      worth rejecting is raw HTML, and rejecting it on input says more than
-      stripping it at render, because the author finds out.
 - [ ] **A `git_ref` entity, and the two predicates it enables.** Waiting for a
       release is currently a snooze to a guessed date, which is wrong in both
       directions: if the release slips the item wakes early, and if it ships
@@ -294,6 +275,32 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 
 ## Settled, recorded so it is not relitigated
 
+- **Prose fields are Markdown; titles are not.** `action.why`,
+  `project.summary`, the two `snooze_reason`s and a calendar note carry
+  `format:"markdown"`. The store keeps the source, `show -o json` returns the
+  source and the log records the source; only the page renders. A title is a
+  name, so `the *old* pipeline` keeps its asterisks there. `jira_issue.summary`
+  is observed and stays plain — it is not ours to interpret — and `event.note`
+  stays plain because the log is not rendered anywhere.
+- **Linkification is an AST transformer, not a regex.** goldmark parses, and a
+  transformer visits text nodes only, which is the difference between linking
+  an identifier and rewriting one inside a code span, inside the text of a link
+  somebody already wrote, or inside an href. Where two patterns overlap —
+  `ACME-1/tools#4` is both a Jira key and a pull request — the longer match
+  wins. The plain path and the Markdown path share one definition of what an
+  identifier is, so a reference cannot mean different things in a title and in
+  a why.
+- **goldmark is the parser, and the only non-obvious dependency here.** The
+  standard library has no Markdown, and hand-rolling one is a tarpit: nested
+  emphasis, unbalanced backticks and link-in-link are where those break, and
+  every such bug would then be ours. goldmark is pure Go with no dependencies
+  of its own, and it exposes exactly the hook this needed — an AST transformer
+  — rather than only a string-to-HTML function.
+- **Raw HTML is refused on input, not stripped at render.** It is the only
+  thing worth validating in a Markdown field, since almost any string is valid
+  Markdown, and it is worth it because the author finds out immediately. The
+  parser decides what counts, rather than a second guess at Markdown's rules:
+  `<https://example.com>` is an autolink and passes.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

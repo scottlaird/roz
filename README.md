@@ -70,7 +70,7 @@ directory.
 | `todo exception` | Record an exception for a monitor to surface. |
 | **other** | |
 | `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
-| `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. GitHub and Jira identifiers become links, including ones written into prose; Jira needs `--jira-base-url` and `--jira-prefix`. |
+| `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `--jira-base-url` and `--jira-prefix`. |
 | `todo verify` | Stamp `last_verified_at`. *Not implemented yet.* |
 
 ## A walkthrough
@@ -284,6 +284,39 @@ therefore done. Those are different claims, and the log keeps them apart.
 Without `--once` it follows. Every row came from a diff between two versions
 of a record — nothing writes to the log by hand except the edge and lifecycle
 events, which have no column to diff.
+
+## Prose fields
+
+Some fields are written as sentences rather than as values, and those are
+Markdown: `action --why`, `project --summary`, both `--snooze-reason`s, and a
+calendar note. A title is *not* — it is a name, so asterisks in one stay
+asterisks.
+
+```console
+$ todo action set NA7 --why 'unblocks the *split*, once `todo sync github` runs'
+NA7 why: "" → "unblocks the *split*, once `todo sync github` runs"
+```
+
+The database keeps what you typed. `show -o json` returns the source, the
+event log records the source, and only `todo render` turns it into HTML — so
+nothing is lost if you decide later that a field should have been plain.
+
+Identifiers are linked wherever they appear, including inside a sentence:
+`CDSS-1557` and `scottlaird/todo#54` both become links, while a bare `#54`
+does not, because which repository it means is a guess. Linking happens on the
+parsed document rather than on the text, so an identifier inside a code span
+or inside a link you wrote yourself is left alone.
+
+The one thing rejected on input is raw HTML:
+
+```console
+$ todo action set NA7 --why 'see <b>this</b>'
+Error: action.why: raw HTML is not allowed here: "<b>" — write it as Markdown, or wrap it in backticks to show it literally
+```
+
+Refusing it here rather than stripping it at render time means you find out
+straight away, instead of wondering later why half a sentence is missing from
+the page.
 
 ## For an agent
 

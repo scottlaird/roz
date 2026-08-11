@@ -75,9 +75,28 @@ at every call site.
 the test is whether a forbidden column was given a value at all. An empty
 value is not a claim, and neither is an empty JSON container.
 
-`format:"json"` marks a TEXT column holding JSON. It changes only how the
-value crosses the JSON boundary — a structure rather than a quoted string, in
-both directions. In the database and in the event log it stays text.
+## Field formats
+
+The `format` tag says what a TEXT column holds. Neither format changes
+storage: both columns are text in the database and text in the event log.
+
+`format:"json"` marks a column holding JSON. It changes only how the value
+crosses the JSON boundary — a structure rather than a quoted string, in both
+directions.
+
+`format:"markdown"` marks a column written as prose rather than as a value:
+`action.why`, `project.summary`, the two `snooze_reason`s, `calendar_window.note`.
+The store keeps the source the author typed, and `show -o json` returns it
+unchanged; only the page renders, through `internal/markdown`. A title is not
+prose — it is a name, and an author who writes `the *old* pipeline` there means
+the asterisks.
+
+The tag carries one input rule, checked in `Tx.Insert` and on the columns
+`Tx.Update` actually changes: **no raw HTML**. Almost any string is valid
+Markdown, so that is the only thing worth refusing, and refusing it on the way
+in tells the author, where stripping it at render time would leave them
+wondering why half a sentence vanished. `<https://example.com>` is an autolink
+and passes; a literal tag in backticks passes too.
 
 ## Adding an entity
 

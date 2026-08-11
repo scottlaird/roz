@@ -61,7 +61,7 @@ type CalendarWindow struct {
 	StartsOn string `db:"starts_on"`
 	EndsOn   string `db:"ends_on"`
 	Capacity string `db:"capacity"`
-	Note     string `db:"note"`
+	Note     string `db:"note" format:"markdown"`
 
 	CreatedAt string `db:"created_at" kind:"created"`
 }

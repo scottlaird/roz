@@ -44,7 +44,16 @@ const (
 // in the event log it stays text.
 const formatJSON = "json"
 
-var fieldFormats = map[string]bool{"": true, formatJSON: true}
+// formatMarkdown marks a TEXT column written as prose rather than as a value —
+// action.why, project.summary, the snooze reasons, a calendar note. Like
+// formatJSON it changes nothing about storage: the column holds the source the
+// author typed, the event log records that source, and `show -o json` returns
+// it. Only the page renders.
+//
+// It also carries one input rule, enforced in checkProse: no raw HTML.
+const formatMarkdown = "markdown"
+
+var fieldFormats = map[string]bool{"": true, formatJSON: true, formatMarkdown: true}
 
 var fieldKinds = map[string]FieldKind{
 	string(Authored): Authored,

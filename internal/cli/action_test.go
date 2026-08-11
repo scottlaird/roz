@@ -178,6 +178,11 @@ func TestActionRejections(t *testing.T) {
 			wantErr: "nothing to set",
 		},
 		{
+			name:    "raw HTML in prose",
+			args:    []string{"action", "add", "--title", "x", "--verb", "write", "--why", "see <b>this</b>"},
+			wantErr: "raw HTML is not allowed",
+		},
+		{
 			name:    "sync actor",
 			args:    []string{"action", "add", "--title", "x", "--verb", "write", "--actor", "sync:github"},
 			wantErr: "not allowed",

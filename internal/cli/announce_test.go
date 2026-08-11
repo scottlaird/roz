@@ -185,3 +185,92 @@ func TestAnnounceHasNoActorFlag(t *testing.T) {
 		t.Errorf("error = %v, want an unknown flag", err)
 	}
 }
+
+// TestAnnouncingSettlesTheStep is SL6: send_for_review closes on the
+// announcement, and the announcement has just arrived. Waiting for the next
+// poll leaves the queue showing work that is already done for up to a whole
+// sync interval.
+func TestAnnouncingSettlesTheStep(t *testing.T) {
+	db, key := announceable(t)
+
+	// Closing a write action instantiates the repository's review pipeline,
+	// whose first steps are undraft and send_for_review.
+	work := addAction(t, db, "--title", "write the endpoint", "--verb", "write")
+	if _, err := runCLI(t, "action", "close", "--db", db, work, "--pr", key); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+
+	step := actionWithVerb(t, db, "send_for_review")
+	if step == "" {
+		t.Fatal("closing the write action did not instantiate send_for_review")
+	}
+
+	out, err := runCLI(t, "pr", "announce", "--db", db, key, "--channel", "#reviews")
+	if err != nil {
+		t.Fatalf("pr announce returned error: %v", err)
+	}
+
+	// It says what it closed. An action closing without anyone asking is the
+	// most surprising thing here, and finding out later is worse.
+	if !strings.Contains(out, step) || !strings.Contains(out, "closed") {
+		t.Errorf("announce did not report closing %s:\n%s", step, out)
+	}
+
+	shown, err := runCLI(t, "action", "show", "--db", db, step, "-o", "json")
+	if err != nil {
+		t.Fatalf("action show returned error: %v", err)
+	}
+	var action map[string]any
+	if err := json.Unmarshal([]byte(shown), &action); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if action["state"] != "done" {
+		t.Errorf("%s is %v after the announcement, want done", step, action["state"])
+	}
+}
+
+// TestAnnouncingSettlesNothingElse: the settle pass is the same one sync
+// runs, so it must not close a step whose predicate is not satisfied.
+func TestAnnouncingSettlesNothingElse(t *testing.T) {
+	db, key := announceable(t)
+
+	work := addAction(t, db, "--title", "write the endpoint", "--verb", "write")
+	if _, err := runCLI(t, "action", "close", "--db", db, work, "--pr", key); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+	merge := actionWithVerb(t, db, "merge")
+
+	if _, err := runCLI(t, "pr", "announce", "--db", db, key, "--channel", "#reviews"); err != nil {
+		t.Fatalf("pr announce returned error: %v", err)
+	}
+
+	shown, err := runCLI(t, "action", "show", "--db", db, merge, "-o", "json")
+	if err != nil {
+		t.Fatalf("action show returned error: %v", err)
+	}
+	var action map[string]any
+	if err := json.Unmarshal([]byte(shown), &action); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if action["state"] == "done" {
+		t.Errorf("%s closed on an announcement, but the pull request is not merged", merge)
+	}
+}
+
+// actionWithVerb returns the id of the one open action using a verb, or "".
+func actionWithVerb(t *testing.T, db, verb string) string {
+	t.Helper()
+	out, err := runCLI(t, "action", "list", "--db", db, "--verb", verb, "-o", "json")
+	if err != nil {
+		t.Fatalf("action list returned error: %v", err)
+	}
+	var actions []map[string]any
+	if err := json.Unmarshal([]byte(out), &actions); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if len(actions) == 0 {
+		return ""
+	}
+	id, _ := actions[0]["id"].(string)
+	return id
+}

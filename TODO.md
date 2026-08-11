@@ -33,8 +33,6 @@ finishes them. What would make it pleasant rather than merely possible:
 
 - [ ] A `todo pr announce` habit, since `send_for_review` closes on the
       announcement and GitHub cannot supply it.
-- [ ] Settling after `pr announce` as well as after sync, so the step closes
-      when the fact arrives rather than at the next poll.
 
 `todo render` and the web server are not needed for it. `todo db backup` is
 not either, but a real database makes it worth having sooner.
@@ -327,6 +325,19 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   go with the workflow file, and a check nobody runs any more is not a check
   that failed. Its disappearance is logged only if it was broken, since that
   is a question being answered rather than a row being tidied.
+- **`pr announce` settles, the same way sync does.** `send_for_review` closes
+  on the announcement, so waiting for the next poll left the queue showing
+  work that was already done for up to a sync interval. One settle pass, under
+  the predicate actor, after the transaction rather than inside it — closing
+  is its own unit of work, and a cascade that fails should not undo the fact
+  that was reported.
+- **It reports what it closed**, and that is not decoration. A command reading
+  as "write down what I did in Slack" now closes actions and instantiates
+  whatever follows them. That is the design working — nobody should have to
+  type the fact and then separately type the consequence — but it means the
+  command is not as innocuous as its name, and the output has to say so.
+  `reportSettled` is shared with sync rather than duplicated, so the two
+  cannot describe the same event differently.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

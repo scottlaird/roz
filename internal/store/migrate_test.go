@@ -177,6 +177,45 @@ func pipelineRows(t *testing.T, db *sql.DB) map[string]string {
 }
 
 // compareSeeded reports seeded rows that differ, are missing, or are extra.
+// TestSeededConfig: the config row is seeded rather than created by init, so
+// that no reader has to handle its absence. That only holds if both ways of
+// building a database produce it, and produce the same one.
+//
+// The timestamps are left out because they are stamped from the clock as the
+// migration runs, so the two databases legitimately disagree about them.
+func TestSeededConfig(t *testing.T) {
+	documented := configRows(t, applyDocumentedSchema(t))
+	migrated := configRows(t, applyMigrations(t))
+
+	if len(documented) != 1 {
+		t.Fatalf("schema.sql seeds %d config rows, want exactly 1", len(documented))
+	}
+	compareSeeded(t, "config", documented, migrated)
+}
+
+func configRows(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+
+	rows, err := db.Query("SELECT id, owner, jira_base_url, jira_prefixes FROM config")
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	defer rows.Close()
+
+	seeded := map[string]string{}
+	for rows.Next() {
+		var id, owner, base, prefixes string
+		if err := rows.Scan(&id, &owner, &base, &prefixes); err != nil {
+			t.Fatalf("scanning config: %v", err)
+		}
+		seeded[id] = fmt.Sprintf("owner=%q base=%q prefixes=%s", owner, base, prefixes)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	return seeded
+}
+
 func compareSeeded(t *testing.T, what string, documented, migrated map[string]string) {
 	t.Helper()
 

@@ -326,3 +326,84 @@ func TestSortPriorityStillFilters(t *testing.T) {
 		t.Errorf("--unblocked --sort priority returned the wrong rows:\n%s", out)
 	}
 }
+
+// TestRenderReadsTheConfiguredJira is the point of the config table: linking
+// used to need a flag on every invocation, so in practice the page rendered
+// with no Jira at all.
+func TestRenderReadsTheConfiguredJira(t *testing.T) {
+	db := initDB(t)
+	addAction(t, db, "--title", "Close CDSS-1557", "--verb", "write",
+		"--why", "blocked on CDSS-1557")
+
+	before, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if strings.Contains(before, "<a href=\"https://example.atlassian.net") {
+		t.Errorf("an unconfigured database linked a key:\n%s", before)
+	}
+
+	if _, err := runCLI(t, "config", "set", "--db", db,
+		"--jira-base-url", "https://example.atlassian.net/browse",
+		"--jira-prefix", "CDSS"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+
+	after, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	want := `<a href="https://example.atlassian.net/browse/CDSS-1557">CDSS-1557</a>`
+	if strings.Count(after, want) != 2 {
+		t.Errorf("want the key linked in both the title and the why:\n%s", after)
+	}
+}
+
+// TestRenderShowsTheOwner: unset is the normal case, and the heading should
+// read the way it always did rather than trailing a separator.
+func TestRenderShowsTheOwner(t *testing.T) {
+	db := initDB(t)
+
+	before, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(before, "<h1>todo</h1>") {
+		t.Errorf("an unconfigured page has an odd heading:\n%s", before)
+	}
+
+	if _, err := runCLI(t, "config", "set", "--db", db, "--owner", "scott"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+	after, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(after, "scott") || !strings.Contains(after, "<title>todo · scott</title>") {
+		t.Errorf("the owner is missing from the page:\n%s", after)
+	}
+}
+
+// TestRenderPrefersTheEnvironment: the one override left, for rendering
+// against a different Jira without writing that decision into the database.
+func TestRenderPrefersTheEnvironment(t *testing.T) {
+	db := initDB(t)
+	addAction(t, db, "--title", "Close CDSS-1557", "--verb", "write")
+	if _, err := runCLI(t, "config", "set", "--db", db,
+		"--jira-base-url", "https://stored.example.com/browse",
+		"--jira-prefix", "CDSS"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+
+	t.Setenv("TODO_JIRA_BASE_URL", "https://override.example.com/browse")
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(out, "https://override.example.com/browse/CDSS-1557") {
+		t.Errorf("TODO_JIRA_BASE_URL did not override the stored value:\n%s", out)
+	}
+	if strings.Contains(out, "stored.example.com") {
+		t.Errorf("the stored base URL was used as well:\n%s", out)
+	}
+}

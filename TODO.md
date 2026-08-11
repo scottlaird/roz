@@ -206,19 +206,6 @@ them.
 
       It is **not** a snooze. A snooze hides something until a date; this
       reveals something after one.
-- [ ] **A configuration table.** The Jira base URL, the project prefixes worth
-      linking, and the name the queue belongs to are all flags today, so they
-      have to be passed on every invocation and are absent from anything
-      reading the database directly.
-
-      Columns rather than a string→string store, on the reasoning the rest of
-      the schema follows: an entity with authored columns gets the diff-based
-      event log for free — a settings change is exactly the sort of thing worth
-      having in the log — plus CHECK constraints and typing. A key-value table
-      gives none of that and invites `enable_foo="true"`. The cost is a
-      migration per setting, which for a handful of real settings is the right
-      trade. `sequence` is already this shape: a small table keyed by purpose,
-      not a generic bag.
 - [ ] **A `git_ref` entity, and the two predicates it enables.** Waiting for a
       release is currently a snooze to a guessed date, which is wrong in both
       directions: if the release slips the item wakes early, and if it ships
@@ -301,6 +288,21 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   Markdown, and it is worth it because the author finds out immediately. The
   parser decides what counts, rather than a second guess at Markdown's rules:
   `<https://example.com>` is an autolink and passes.
+- **Settings are a table with columns, not a key-value bag.** The Jira base
+  URL, the project keys worth linking and the name on the page live in
+  `config`, one row enforced by a CHECK. Columns buy the diff-based event log
+  — a settings change is exactly the sort of thing worth finding later — plus
+  CHECK constraints and typing, where a string→string table gives none of
+  that and invites `enable_foo = "true"`. The cost is a migration per setting,
+  which for a handful is the right trade. `sequence` was already this shape.
+- **The row is seeded by the migration, not by init**, so no reader has to
+  decide what an absent configuration means, and an existing database comes up
+  behaving exactly as it did. Validation lives in `Tx.SaveConfig` rather than
+  in the command, for the same reason the field kinds do.
+- **`--db` is the only setting that stays a flag**, because it says which
+  database to open and cannot be read out of one that has not been chosen yet.
+  `--jira-base-url` and `--jira-prefix` are gone; `TODO_JIRA_BASE_URL` and
+  `TODO_JIRA_PREFIXES` remain as single-run overrides.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

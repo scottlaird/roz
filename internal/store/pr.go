@@ -25,10 +25,11 @@ const (
 // subject_id in the log is heterogeneous by design: it holds TD200 or
 // myrepo#4174, and nothing joins on it.
 //
-// Almost every column is observed. Only the decision to track the pull
-// request is a judgement, and that decision is the existence of the row —
-// there is no column for it. So a human may create one and then never write
-// to it again; everything after that is sync's.
+// Almost every column is observed. The decision to track the pull request is
+// a judgement, and that decision is the existence of the row — there is no
+// column for it. Pipeline is the one authored column, and it is a judgement
+// too: that this pull request is an exception to how its repository normally
+// reaches merge. Everything else is sync's.
 type PR struct {
 	ID     string `db:"id" kind:"identity"`
 	Repo   string `db:"repo" kind:"identity"`
@@ -90,6 +91,16 @@ type PR struct {
 	// means "when the stored state last changed", and stays NULL until the
 	// first sync that finds anything.
 	LastSyncedAt sql.NullString `db:"last_synced_at" kind:"auto"`
+
+	// Pipeline names the chain this pull request instantiates, when it is not
+	// the one its repository uses: a hotfix that skips review, or protected
+	// code that needs more than the usual steps.
+	//
+	// NULL is the ordinary case and means the repository's, resolved when the
+	// chain is instantiated rather than copied here at track time — so
+	// changing a repository's policy reaches the pull requests that never
+	// claimed an exception to it.
+	Pipeline sql.NullString `db:"pipeline"`
 }
 
 func (p *PR) table() string       { return "pr" }

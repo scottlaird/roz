@@ -99,12 +99,6 @@ them.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
-- [ ] **`todo pr track --pipeline`.** A pull request takes its repository's
-      pipeline, and there is no way to say this one is different — a
-      hotfix that skips review, or a change to protected code that needs more
-      than the usual chain. The column would sit on `pr` and fall back to the
-      repository's when unset, which is the same shape `github_repo.pipeline`
-      already has against the default.
 - [ ] **Pipelines with more than one review step.** A real change can need
       reviewing by your own team, then by the owners of code it happens to
       touch, then by whoever guards the protected parts — three reviews, in
@@ -302,6 +296,21 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   out-of-order case `applied_migration` exists for in the first place. A read
   that fails is not a migration — a busy database is only a busy database, and
   the next tick asks again.
+- **A pull request may name its own pipeline, and NULL means the
+  repository's.** `pr.pipeline` is the only authored column a pull request
+  has — everything else about one is observed, and the decision to track it is
+  the row's existence. It is a judgement in the same way `github_repo.pipeline`
+  is, so sync may not write it either.
+- **The fallback is read at close, not copied at track.** Deliberately unlike
+  `github_repo.pipeline` against the *default*, which resolves eagerly: a
+  default is a guess made in the absence of policy and freezing it protects
+  repositories already tracked, while a repository's pipeline **is** the policy
+  and should reach the pull requests that never claimed an exception to it.
+- **`todo pr set` exists so the exception is revocable.** A `--pipeline` only
+  settable at track time would be a decision nobody could take back, and
+  whether a change is a hotfix is usually learned afterwards. Changing it
+  affects the next chain instantiated; actions already created are left alone,
+  because they exist and something may be waiting on them.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

@@ -19,6 +19,7 @@ func newPRCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newPRTrackCmd(),
+		newPRSetCmd(),
 		newPRAnnounceCmd(),
 		newPRShowCmd(),
 		newPRListCmd(),
@@ -33,12 +34,24 @@ func newPRTrackCmd() *cobra.Command {
 		Long: "Records the decision to track it, and nothing else. Every other column\n" +
 			"is observed and belongs to sync, so a freshly tracked pull request is\n" +
 			"empty until it is synced.\n\n" +
-			"There is no column for the decision itself — the row's existence is it.",
+			"There is no column for the decision itself — the row's existence is it.\n\n" +
+			"--pipeline is the exception: it says this pull request reaches merge\n" +
+			"differently from the rest of its repository — a hotfix that skips\n" +
+			"review, or protected code that needs more than the usual steps.\n" +
+			"Leaving it unset is the ordinary case and means the repository's,\n" +
+			"read when the chain is instantiated rather than copied now.",
 		Args: cobra.ExactArgs(1),
 		RunE: runPRTrack,
 	}
+	addPRPipelineFlag(cmd)
 	addActorFlag(cmd)
 	return cmd
+}
+
+func addPRPipelineFlag(cmd *cobra.Command) {
+	cmd.Flags().String(flagPipeline, "",
+		"how this one reaches merge, when it differs from its repository; "+
+			"see `todo pipeline list`")
 }
 
 func runPRTrack(cmd *cobra.Command, args []string) error {
@@ -75,6 +88,9 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 	}
 
 	p := store.NewPR(repo, number)
+	if err := applyPRPipelineFlag(cmd, p); err != nil {
+		return err
+	}
 
 	// Check first rather than interpreting a constraint failure. The unique
 	// index is still the backstop; this is only so the message says what
@@ -86,6 +102,13 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The same check `todo repo track` makes, and for the same reason: an
+	// unknown pipeline should be reported as itself rather than as a foreign
+	// key constraint. Unlike a repository, no default is filled in — unset
+	// means the repository's.
+	if err := checkPipelineUsable(ctx, tx, p.Pipeline); err != nil {
+		return err
+	}
 	if err := tx.Insert(ctx, p); err != nil {
 		return err
 	}
@@ -94,6 +117,97 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), p.ID)
+	return nil
+}
+
+// newPRSetCmd exists because --pipeline at track time alone would be a
+// decision that cannot be revised. Whether a pull request is a hotfix is
+// often learned after it is tracked, and there has to be a way back to the
+// repository's chain.
+//
+// One flag is the whole command: everything else about a pull request is
+// observed, and sync's to write.
+func newPRSetCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "set <repo#number>",
+		Short: "Change how one pull request reaches merge",
+		Long: "The only authored column a pull request has. Everything else is\n" +
+			"observed and belongs to sync.\n\n" +
+			"An empty value clears it: --pipeline \"\" returns this pull request to\n" +
+			"its repository's chain.\n\n" +
+			"Changing it affects the chain the next close instantiates. Actions\n" +
+			"already created are not revisited — they exist, and something may\n" +
+			"already be waiting on them.",
+		Args: cobra.ExactArgs(1),
+		RunE: runPRSet,
+	}
+	addPRPipelineFlag(cmd)
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runPRSet(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+
+	if !cmd.Flags().Changed(flagPipeline) {
+		return fmt.Errorf("nothing to set: pass --%s", flagPipeline)
+	}
+	actor, err := actorFrom(cmd)
+	if err != nil {
+		return err
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	tx, err := st.Begin(ctx, actor)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadPR(ctx, args[0])
+	if err != nil {
+		return notFoundOr(err, args[0])
+	}
+	after := before.Clone()
+	if err := applyPRPipelineFlag(cmd, after); err != nil {
+		return err
+	}
+	if err := checkPipelineUsable(ctx, tx, after.Pipeline); err != nil {
+		return err
+	}
+
+	changes, err := tx.Update(ctx, before, after)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if len(changes) == 0 {
+		fmt.Fprintf(out, "%s unchanged\n", before.ID)
+		return nil
+	}
+	for _, change := range changes {
+		fmt.Fprintf(out, "%s %s\n", before.ID, change)
+	}
+	return nil
+}
+
+func applyPRPipelineFlag(cmd *cobra.Command, p *store.PR) error {
+	if !cmd.Flags().Changed(flagPipeline) {
+		return nil
+	}
+	v, err := cmd.Flags().GetString(flagPipeline)
+	if err != nil {
+		return err
+	}
+	p.Pipeline = nullString(v)
 	return nil
 }
 
@@ -215,13 +329,31 @@ func writePRTable(out io.Writer, prs []*store.PR) error {
 		return nil
 	}
 
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tSTATE\tDRAFT\tREVIEW\tMERGE\tCHECKS\tFROZEN\tTITLE")
+	// The pipeline column appears only when something is using it. An
+	// override is worth seeing and its absence is not, and the ordinary case
+	// is every row reading "-" in a table that is wide already. Anything
+	// parsing this should read -o json, which always carries the column.
+	var overridden bool
 	for _, p := range prs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		overridden = overridden || p.Pipeline.Valid
+	}
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	header := "ID\tSTATE\tDRAFT\tREVIEW\tMERGE\tCHECKS\tFROZEN"
+	if overridden {
+		header += "\tPIPELINE"
+	}
+	fmt.Fprintln(w, header+"\tTITLE")
+
+	for _, p := range prs {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s",
 			p.ID, nullText(p.State), nullBoolText(p.IsDraft),
 			nullText(p.ReviewDecision), nullText(p.MergeStateStatus),
-			nullText(p.ChecksState), yesNo(p.Frozen), orDash(p.Title))
+			nullText(p.ChecksState), yesNo(p.Frozen))
+		if overridden {
+			fmt.Fprintf(w, "\t%s", nullText(p.Pipeline))
+		}
+		fmt.Fprintf(w, "\t%s\n", orDash(p.Title))
 	}
 	return w.Flush()
 }

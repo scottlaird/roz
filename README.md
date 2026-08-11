@@ -354,6 +354,10 @@ The database keeps what you typed. `show -o json` returns the source, the
 event log records the source, and only `todo render` turns it into HTML — so
 nothing is lost if you decide later that a field should have been plain.
 
+On the page, an action's `--why` sits under its title in the queue, and a
+project's `--summary` gets a row of its own beneath the project, spanning the
+table. A summary is prose and does not fit a cell.
+
 Identifiers are linked wherever they appear, including inside a sentence:
 `CDSS-1557` and `scottlaird/todo#54` both become links, while a bare `#54`
 does not, because which repository it means is a guess. Linking happens on the

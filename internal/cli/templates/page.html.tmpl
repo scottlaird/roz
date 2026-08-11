@@ -79,20 +79,22 @@
   .age{float:right;font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;
        color:var(--faint);margin-left:12px}
   .why{color:var(--mid);font-size:13.5px;margin-top:2px}
-  {{/* why is Markdown, so it arrives as blocks rather than as a run of text.
-       The first paragraph must not push the line away from the title it
-       belongs to, which is why the margins are stripped and put back only
-       between siblings. */}}
-  .why>:first-child{margin-top:0}
-  .why>:last-child{margin-bottom:0}
-  .why p{margin:.45em 0}
-  .why ul,.why ol{margin:.45em 0;padding-left:1.5em}
-  .why li{margin:.1em 0}
-  .why code{background:var(--sink);border:1px solid var(--rule);border-radius:3px;padding:0 3px}
-  .why pre{background:var(--sink);border:1px solid var(--rule);border-radius:5px;
-           padding:8px 10px;margin:.45em 0;overflow-x:auto}
-  .why pre code{background:none;border:0;padding:0}
-  .why blockquote{margin:.45em 0;padding-left:10px;border-left:2px solid var(--rule)}
+  {{/* Markdown arrives as blocks rather than as a run of text, and both the
+       places that render it -- an action's why and a project's summary --
+       want the same treatment, so these rules hang off .prose rather than off
+       either one. The first block must not push the line away from what it
+       belongs to, which is why the outer margins are stripped and put back
+       only between siblings. */}}
+  .prose>:first-child{margin-top:0}
+  .prose>:last-child{margin-bottom:0}
+  .prose p{margin:.45em 0}
+  .prose ul,.prose ol{margin:.45em 0;padding-left:1.5em}
+  .prose li{margin:.1em 0}
+  .prose code{background:var(--sink);border:1px solid var(--rule);border-radius:3px;padding:0 3px}
+  .prose pre{background:var(--sink);border:1px solid var(--rule);border-radius:5px;
+             padding:8px 10px;margin:.45em 0;overflow-x:auto}
+  .prose pre code{background:none;border:0;padding:0}
+  .prose blockquote{margin:.45em 0;padding-left:10px;border-left:2px solid var(--rule)}
   .refs{margin-top:4px;font-size:12.5px;color:var(--mid);display:flex;flex-wrap:wrap;gap:4px 14px}
   .refs .bad{color:var(--bad);font-weight:600}
   .refs .state{color:var(--faint)}
@@ -105,6 +107,10 @@
   td{padding:7px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
   tbody tr:last-child td{border-bottom:none}
   tr.expired td{background:var(--bad-bg)}
+  {{/* A project and its summary are one entity, so the rule between them goes
+       and the pair is separated from the next project instead. */}}
+  tr:has(+ tr.detail) td{border-bottom:none}
+  tr.detail td{padding-top:0;color:var(--mid);font-size:13px}
   td.n{font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:nowrap;width:1%}
   td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mid);width:1%}
   .empty{color:var(--faint);font-size:13.5px}
@@ -141,7 +147,7 @@
           {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
           <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
         </div>
-        {{if .Why}}<div class="why">{{.Why}}</div>{{end}}
+        {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}
         {{template "refs" .}}
       </li>
       {{end}}
@@ -159,7 +165,7 @@
           {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
           <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
         </div>
-        {{if .Why}}<div class="why">{{.Why}}</div>{{end}}
+        {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}
         {{template "refs" .}}
       </li>
       {{end}}
@@ -188,6 +194,16 @@
             <td>{{range $i, $j := .Jira}}{{if $i}}, {{end}}{{template "jira" $j}}{{else}}-{{end}}</td>
             <td class="n">{{.Snooze}}</td>
           </tr>
+          {{/* The summary is prose and does not fit a cell, so it gets a row
+               of its own spanning the rest of the table, indented under the
+               title it belongs to. Only when there is one: most rows are the
+               table, and this is the exception that explains one. */}}
+          {{if .Summary}}
+          <tr class="detail{{if .Expired}} expired{{end}}">
+            <td></td>
+            <td colspan="7"><div class="prose">{{.Summary}}</div></td>
+          </tr>
+          {{end}}
           {{end}}
         </tbody>
       </table>

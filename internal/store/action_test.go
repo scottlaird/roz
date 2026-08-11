@@ -516,3 +516,114 @@ func TestProjectPriorityOrder(t *testing.T) {
 		t.Errorf("ListProjects(priority) = %v, want the unprioritised one last", listed)
 	}
 }
+
+// TestWaitingIsWhatTheQueueLeavesOut: --unblocked and --waiting partition
+// what is in play, so nothing ready can fall between them.
+func TestWaitingIsWhatTheQueueLeavesOut(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	work := addAction(t, st, "write it", "write")
+	waits := addAction(t, st, "wait for review", "wait_review")
+	blocked := addAction(t, st, "deploy it", "run")
+	hidden := addAction(t, st, "tidy up", "write")
+	blockOn(t, st, blocked, work)
+	attach(t, st, hidden, func(a *Action) {
+		a.HiddenBehind = sql.NullString{String: work.ID, Valid: true}
+	})
+
+	queue, err := st.ListActions(ctx, ActionFilter{Unblocked: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(queue), []string{work.ID}) {
+		t.Errorf("--unblocked = %v, want [%s]", ids(queue), work.ID)
+	}
+
+	waiting, err := st.ListActions(ctx, ActionFilter{Waiting: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(waiting), []string{waits.ID}) {
+		t.Errorf("--waiting = %v, want [%s]", ids(waiting), waits.ID)
+	}
+
+	// Blocked and hidden are in neither: their blocker is already in the
+	// queue, and listing them is the noise the fold rule exists to stop.
+	for _, unwanted := range []string{blocked.ID, hidden.ID} {
+		if contains(ids(queue), unwanted) || contains(ids(waiting), unwanted) {
+			t.Errorf("%s appears in the queue or the waiting list", unwanted)
+		}
+	}
+}
+
+// TestStaleFindsAClaimGitHubContradicts is the disagreement nothing else
+// notices: closing is a judgement, the pull request's state is a fact.
+func TestStaleFindsAClaimGitHubContradicts(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	trackRepo(t, st, "scottlaird/todo")
+	open := trackPR(t, st, "scottlaird/todo", 1)
+	merged := trackPR(t, st, "scottlaird/todo", 2)
+	observe(t, st, open, func(p *PR) {
+		p.State = sql.NullString{String: PRStateOpen, Valid: true}
+	})
+	observe(t, st, merged, func(p *PR) {
+		p.State = sql.NullString{String: PRStateMerged, Valid: true}
+	})
+
+	lying := linkedAndClosed(t, st, "said it was merged", open.ID, ClosedCompleted)
+	honest := linkedAndClosed(t, st, "really was merged", merged.ID, ClosedCompleted)
+	abandoned := linkedAndClosed(t, st, "given up on", open.ID, ClosedDropped)
+
+	stale, err := st.ListActions(ctx, ActionFilter{Stale: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if !equalStrings(ids(stale), []string{lying.ID}) {
+		t.Errorf("--stale = %v, want only [%s]", ids(stale), lying.ID)
+	}
+	_, _ = honest, abandoned
+}
+
+// linkedAndClosed makes an action about a pull request and closes it.
+func linkedAndClosed(t *testing.T, st *Store, title, prID, reason string) *Action {
+	t.Helper()
+	ctx := context.Background()
+
+	a := addAction(t, st, title, "merge")
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.LinkPR(ctx, a, prID, RoleSubject); err != nil {
+		t.Fatalf("LinkPR() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	closeIt(t, st, CloseRequest{ID: a.ID, Reason: reason})
+	return a
+}
+
+// TestStaleSaysNothingAboutAnUnsyncedPullRequest: absence is not a fact, so a
+// pull request nobody has looked at is not evidence of a wrong claim.
+func TestStaleSaysNothingAboutAnUnsyncedPullRequest(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	trackRepo(t, st, "scottlaird/todo")
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+	linkedAndClosed(t, st, "closed against an unsynced pull request", pr.ID, ClosedCompleted)
+
+	stale, err := st.ListActions(ctx, ActionFilter{Stale: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Errorf("--stale = %v on no evidence, want nothing", ids(stale))
+	}
+}

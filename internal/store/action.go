@@ -186,11 +186,41 @@ type ActionFilter struct {
 	Unblocked bool
 	// Order is how the results come back. Empty is creation order.
 	Order string
+	// Waiting keeps what the queue leaves out because it is waiting on
+	// somebody: ready, unhidden, and a verb whose rank class says so. It is
+	// the complement of Unblocked over the same set, which is why the two are
+	// built from the same conditions — a queue and the things it deliberately
+	// omits should not be able to disagree about what is in play.
+	Waiting bool
 	// Expired keeps snoozed actions whose date has passed — the query the
 	// sketch calls the highest value in the system, because a snooze nobody
 	// is watching is how work goes quiet.
 	Expired bool
+	// Stale keeps actions that claim to be finished while the pull request
+	// they are about is still open. Nothing else notices that: closing is a
+	// judgement and GitHub is a fact, and this is where the two disagree.
+	Stale bool
 }
+
+// inPlay are the conditions an action meets to be worth listing at all: open,
+// ready, and not folded out of the queue behind something else. Unblocked and
+// Waiting are this plus opposite sides of the wait rank class.
+func inPlay() []string {
+	return []string{"a.closed_at IS NULL", "a.state = ?", "a.hidden_behind IS NULL"}
+}
+
+// waitVerbs is the set of verbs whose own description is that there is
+// nothing to do but wait. Naming the rank class rather than the verbs means a
+// waiting verb added later is classified without editing this.
+const waitVerbs = "(SELECT verb FROM actionverb WHERE rank_class = ?)"
+
+// staleSubjects matches actions whose subject pull request is still open.
+//
+// A pull request nobody has synced has no state, and is not matched: absence
+// is not a fact, so an unsynced pull request is not evidence of anything.
+const staleSubjects = `a.id IN (
+		SELECT link.action_id FROM action_pr link JOIN pr ON pr.id = link.pr_id
+		WHERE link.role = ? AND pr.state = ?)`
 
 // ListActions returns actions matching the filter.
 //
@@ -278,17 +308,25 @@ func (f ActionFilter) clauses(now string) ([]string, []any) {
 		where = append(where, "a.closed_at IS NULL")
 	}
 	if f.Unblocked {
-		where = append(where,
-			"a.closed_at IS NULL",
-			"a.state = ?",
-			"a.hidden_behind IS NULL",
-			"a.verb NOT IN (SELECT verb FROM actionverb WHERE rank_class = ?)",
-		)
+		where = append(where, inPlay()...)
+		where = append(where, "a.verb NOT IN "+waitVerbs)
+		args = append(args, ActionReady, RankWait)
+	}
+	if f.Waiting {
+		where = append(where, inPlay()...)
+		where = append(where, "a.verb IN "+waitVerbs)
 		args = append(args, ActionReady, RankWait)
 	}
 	if f.Expired {
 		where = append(where, "a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_until < ?")
 		args = append(args, ActionSnoozed, now)
+	}
+	if f.Stale {
+		// Only completion claims anything about the work. An abandoned action
+		// with an open pull request is not a contradiction: it is someone
+		// deciding not to finish.
+		where = append(where, "a.closed_reason = ?", staleSubjects)
+		args = append(args, ClosedCompleted, RoleSubject, PRStateOpen)
 	}
 	return where, args
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/todo/internal/github"
 )
 
 // addAction creates one action and returns its id.
@@ -271,5 +273,65 @@ func TestActionListUnblocked(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("--unblocked does not include %q after the blocker closed:\n%s", want, out)
 		}
+	}
+}
+
+// TestActionListWaiting is the other half of the queue: what it leaves out
+// because somebody else has it.
+func TestActionListWaiting(t *testing.T) {
+	db := initDB(t)
+	addAction(t, db, "--title", "write it", "--verb", "write")
+	addAction(t, db, "--title", "wait for review", "--verb", "wait_review")
+
+	queue, err := runCLI(t, "action", "list", "--db", db, "--unblocked")
+	if err != nil {
+		t.Fatalf("action list --unblocked returned error: %v", err)
+	}
+	if !strings.Contains(queue, "write it") || strings.Contains(queue, "wait for review") {
+		t.Errorf("--unblocked = \n%s", queue)
+	}
+
+	waiting, err := runCLI(t, "action", "list", "--db", db, "--waiting")
+	if err != nil {
+		t.Fatalf("action list --waiting returned error: %v", err)
+	}
+	if !strings.Contains(waiting, "wait for review") || strings.Contains(waiting, "write it") {
+		t.Errorf("--waiting = \n%s", waiting)
+	}
+}
+
+// TestActionListStale is the check nothing else performs: an action saying it
+// is finished while GitHub says the pull request is open.
+func TestActionListStale(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/repo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#1"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	withFetcher(t, stubFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{{
+			Key: "owner/repo#1", Repo: "owner/repo", Number: 1,
+			Title: "still open", State: "OPEN", BaseRef: "main",
+		}},
+	}})
+	if _, err := runCLI(t, "sync", "github", "--db", db, "--quiet"); err != nil {
+		t.Fatalf("sync returned error: %v", err)
+	}
+
+	id := addAction(t, db, "--title", "merge it", "--verb", "merge")
+	if _, err := runCLI(t, "action", "link-pr", "--db", db,
+		"--action", id, "--pr", "owner/repo#1"); err != nil {
+		t.Fatalf("action link-pr returned error: %v", err)
+	}
+	if _, err := runCLI(t, "action", "close", "--db", db, id); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "action", "list", "--db", db, "--stale")
+	if err != nil {
+		t.Fatalf("action list --stale returned error: %v", err)
+	}
+	if !strings.Contains(out, id) {
+		t.Errorf("--stale did not surface the contradiction:\n%s", out)
 	}
 }

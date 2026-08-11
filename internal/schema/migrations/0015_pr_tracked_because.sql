@@ -1,0 +1,24 @@
+-- Why a pull request is tracked, which the row's existence could not say.
+--
+-- Tracking one you wrote and tracking one somebody has asked you to review
+-- are different decisions with different consequences — different actions,
+-- different reasons to stop tracking it — and until now they looked identical
+-- in the database.
+--
+-- A closed set rather than free text, because every consumer branches on it:
+-- `review` cannot close on a predicate without knowing that reviewing it was
+-- the point, and a rule for when to stop tracking wants to treat a review
+-- differently from your own work. Adding a fourth reason is a migration,
+-- which for a vocabulary this small is the right trade.
+--
+--   authored   you wrote it
+--   reviewing  somebody wants your review
+--   watching   neither, but you care what happens to it
+--
+-- Nullable, and no default. Tracking a pull request you did not write is the
+-- exception, so defaulting to 'authored' would be right most of the time and
+-- would also be the tool inventing a fact — and for every row that predates
+-- this column, inventing one it has no way to check. Unstated is the honest
+-- answer to a question nobody was asked.
+ALTER TABLE pr ADD COLUMN tracked_because TEXT
+  CHECK (tracked_because IS NULL OR tracked_because IN ('authored','reviewing','watching'));

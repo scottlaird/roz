@@ -25,11 +25,12 @@ const (
 // subject_id in the log is heterogeneous by design: it holds TD200 or
 // myrepo#4174, and nothing joins on it.
 //
-// Almost every column is observed. The decision to track the pull request is
-// a judgement, and that decision is the existence of the row — there is no
-// column for it. Pipeline is the one authored column, and it is a judgement
-// too: that this pull request is an exception to how its repository normally
-// reaches merge. Everything else is sync's.
+// Almost every column is observed. Two are authored, and both are judgements
+// rather than observations: Pipeline, that this one is an exception to how its
+// repository normally reaches merge, and TrackedBecause, why it is tracked at
+// all. The decision to track it is still the row's existence — the reason is
+// a separate question, and one that only arises once you track something you
+// did not write. Everything else is sync's.
 type PR struct {
 	ID     string `db:"id" kind:"identity"`
 	Repo   string `db:"repo" kind:"identity"`
@@ -103,6 +104,41 @@ type PR struct {
 	// changing a repository's policy reaches the pull requests that never
 	// claimed an exception to it.
 	Pipeline sql.NullString `db:"pipeline"`
+
+	// TrackedBecause is why this is tracked at all: one you wrote, one
+	// somebody wants your review on, or one you are only watching.
+	//
+	// The row's existence records the *decision* to track it. That was enough
+	// while every tracked pull request was your own, and stopped being enough
+	// the moment one was not: a review has different actions, and a different
+	// reason to stop tracking it, from your own work.
+	//
+	// NULL means unstated, and there is no default. Defaulting to authored
+	// would be right most of the time and would still be the tool inventing a
+	// fact it cannot check.
+	TrackedBecause sql.NullString `db:"tracked_because"`
+}
+
+// Why a pull request is tracked. A closed set, matching the CHECK: every
+// consumer branches on it, so an unrecognised value would be a silent gap
+// rather than a new case.
+const (
+	// TrackedAuthored is one you wrote.
+	TrackedAuthored = "authored"
+	// TrackedReviewing is one somebody wants your review on. This is the case
+	// the column exists for.
+	TrackedReviewing = "reviewing"
+	// TrackedWatching is neither, but you care what happens to it.
+	TrackedWatching = "watching"
+)
+
+// TrackingReasons are the accepted values, in the order they are usually met.
+var TrackingReasons = []string{TrackedAuthored, TrackedReviewing, TrackedWatching}
+
+// ValidateTrackingReason checks a reason, reporting what is accepted rather
+// than only that the value was not.
+func ValidateTrackingReason(reason string) error {
+	return validateOneOf("reason", reason, TrackingReasons)
 }
 
 func (p *PR) table() string       { return "pr" }
@@ -188,6 +224,10 @@ type PRFilter struct {
 	Frozen bool
 	// State keeps one of OPEN, MERGED or CLOSED.
 	State string
+	// Because keeps pull requests tracked for one reason — most usefully
+	// "what am I on the hook to review", which the row's existence could not
+	// answer.
+	Because string
 }
 
 // ListPRs returns tracked pull requests matching the filter, ordered by
@@ -246,6 +286,10 @@ func (f PRFilter) clauses() ([]string, []any) {
 	if f.State != "" {
 		where = append(where, "state = ?")
 		args = append(args, f.State)
+	}
+	if f.Because != "" {
+		where = append(where, "tracked_because = ?")
+		args = append(args, f.Because)
 	}
 	return where, args
 }

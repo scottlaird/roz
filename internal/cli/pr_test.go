@@ -318,3 +318,171 @@ func TestPRListShowsAPipelineOnlyWhenOneIsSet(t *testing.T) {
 		t.Errorf("the override is not visible:\n%s", withOne)
 	}
 }
+
+// TestTrackedBecause: the row's existence records the decision to track a
+// pull request. It cannot record why, and one you were asked to review is a
+// different thing from one you wrote.
+func TestTrackedBecause(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "scottlaird/todo")
+
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1",
+		"--because", "reviewing"); err != nil {
+		t.Fatalf("pr track --because returned error: %v", err)
+	}
+
+	var pr struct {
+		Because *string `json:"tracked_because"`
+	}
+	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/todo#1", "-o", "json")
+	if err != nil {
+		t.Fatalf("pr show returned error: %v", err)
+	}
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if pr.Because == nil || *pr.Because != "reviewing" {
+		t.Errorf("tracked_because = %v, want reviewing", pr.Because)
+	}
+}
+
+// TestTrackedBecauseHasNoDefault: assuming you wrote it would be right most
+// of the time and still be the tool inventing a fact it cannot check.
+func TestTrackedBecauseHasNoDefault(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "scottlaird/todo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/todo#1", "-o", "json")
+	if err != nil {
+		t.Fatalf("pr show returned error: %v", err)
+	}
+	var pr struct {
+		Because *string `json:"tracked_because"`
+	}
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if pr.Because != nil {
+		t.Errorf("tracked_because = %q, want it unstated", *pr.Because)
+	}
+}
+
+// TestListByReason is the reader that keeps this from being dead schema:
+// "what am I on the hook to review" is the question the column exists for.
+func TestListByReason(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "scottlaird/todo")
+	for number, because := range map[string]string{"1": "authored", "2": "reviewing", "3": ""} {
+		args := []string{"pr", "track", "--db", db, "scottlaird/todo#" + number}
+		if because != "" {
+			args = append(args, "--because", because)
+		}
+		if _, err := runCLI(t, args...); err != nil {
+			t.Fatalf("pr track returned error: %v", err)
+		}
+	}
+
+	out, err := runCLI(t, "pr", "list", "--db", db, "--because", "reviewing")
+	if err != nil {
+		t.Fatalf("pr list --because returned error: %v", err)
+	}
+	if !strings.Contains(out, "scottlaird/todo#2") {
+		t.Errorf("the reviewing pull request is missing:\n%s", out)
+	}
+	for _, unwanted := range []string{"scottlaird/todo#1", "scottlaird/todo#3"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("%s should not match --because reviewing:\n%s", unwanted, out)
+		}
+	}
+}
+
+// TestBecauseColumnAppearsOnlyWhenUsed, the same rule the pipeline column
+// follows: an exception is worth seeing and its absence is not.
+func TestBecauseColumnAppearsOnlyWhenUsed(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "scottlaird/todo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+
+	plain, err := runCLI(t, "pr", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("pr list returned error: %v", err)
+	}
+	if strings.Contains(plain, "BECAUSE") {
+		t.Errorf("the column appears with nothing in it:\n%s", plain)
+	}
+
+	if _, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1",
+		"--because", "watching"); err != nil {
+		t.Fatalf("pr set returned error: %v", err)
+	}
+	withOne, err := runCLI(t, "pr", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("pr list returned error: %v", err)
+	}
+	if !strings.Contains(withOne, "BECAUSE") || !strings.Contains(withOne, "watching") {
+		t.Errorf("the reason is not visible:\n%s", withOne)
+	}
+}
+
+func TestTrackedBecauseRejections(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "not a reason, at track",
+			args:    []string{"pr", "track", "scottlaird/todo#2", "--because", "curious"},
+			wantErr: "is not recognised",
+		},
+		{
+			name:    "not a reason, at set",
+			args:    []string{"pr", "set", "scottlaird/todo#1", "--because", "curious"},
+			wantErr: "authored, reviewing, watching",
+		},
+		{
+			name:    "not a reason, when filtering",
+			args:    []string{"pr", "list", "--because", "curious"},
+			wantErr: "is not recognised",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := initDB(t)
+			trackRepo(t, db, "scottlaird/todo")
+			if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+				t.Fatalf("pr track returned error: %v", err)
+			}
+			_, err := runCLI(t, append(tt.args, "--db", db)...)
+			if err == nil {
+				t.Fatalf("%v was accepted, want an error", tt.args)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestClearingTheReason returns it to unstated, for when it was set wrongly.
+func TestClearingTheReason(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "scottlaird/todo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1",
+		"--because", "reviewing"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1", "--because", "")
+	if err != nil {
+		t.Fatalf("pr set --because \"\" returned error: %v", err)
+	}
+	if !strings.Contains(out, "tracked_because") {
+		t.Errorf("clearing did not report the change:\n%s", out)
+	}
+}

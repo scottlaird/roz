@@ -327,3 +327,41 @@ func TestLoadSubjectResolvesPRKeys(t *testing.T) {
 			subject.subjectType(), subject.subjectID(), p.ID)
 	}
 }
+
+// TestTrackedBecauseIsAuthored: it is a judgement about why you are tracking
+// something, not a fact GitHub reported, so sync must not be able to write it.
+func TestTrackedBecauseIsAuthored(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	trackRepo(t, st, "scottlaird/todo")
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := pr.Clone()
+	after.TrackedBecause = sql.NullString{String: TrackedReviewing, Valid: true}
+	if _, err := tx.Update(ctx, pr, after); err == nil {
+		t.Error("sync wrote tracked_because, want the authored rule to refuse it")
+	}
+}
+
+// TestTheSchemaRefusesAnUnknownReason: the CHECK is the backstop under the
+// command's validation, so a direct write cannot invent a fourth reason.
+func TestTheSchemaRefusesAnUnknownReason(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	trackRepo(t, st, "scottlaird/todo")
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+
+	_, err := st.db.ExecContext(ctx,
+		"UPDATE pr SET tracked_because = 'curious' WHERE id = ?", pr.ID)
+	if err == nil {
+		t.Error("the schema accepted a reason outside the set")
+	}
+}

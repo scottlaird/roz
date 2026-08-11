@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -39,11 +40,17 @@ func newPRTrackCmd() *cobra.Command {
 			"differently from the rest of its repository — a hotfix that skips\n" +
 			"review, or protected code that needs more than the usual steps.\n" +
 			"Leaving it unset is the ordinary case and means the repository's,\n" +
-			"read when the chain is instantiated rather than copied now.",
+			"read when the chain is instantiated rather than copied now.\n\n" +
+			"--because says why you are tracking it. Tracking one you did not\n" +
+			"write is the case it exists for: a review has different actions and a\n" +
+			"different reason to stop tracking it. There is no default, because\n" +
+			"assuming you wrote it would be right most of the time and still be\n" +
+			"the tool inventing a fact.",
 		Args: cobra.ExactArgs(1),
 		RunE: runPRTrack,
 	}
 	addPRPipelineFlag(cmd)
+	addPRBecauseFlag(cmd)
 	addActorFlag(cmd)
 	return cmd
 }
@@ -52,6 +59,33 @@ func addPRPipelineFlag(cmd *cobra.Command) {
 	cmd.Flags().String(flagPipeline, "",
 		"how this one reaches merge, when it differs from its repository; "+
 			"see `todo pipeline list`")
+}
+
+const flagBecause = "because"
+
+func addPRBecauseFlag(cmd *cobra.Command) {
+	cmd.Flags().String(flagBecause, "",
+		"why it is tracked: "+strings.Join(store.TrackingReasons, ", ")+
+			"; unset leaves it unstated")
+}
+
+func applyPRBecauseFlag(cmd *cobra.Command, p *store.PR) error {
+	if !cmd.Flags().Changed(flagBecause) {
+		return nil
+	}
+	v, err := cmd.Flags().GetString(flagBecause)
+	if err != nil {
+		return err
+	}
+	if v == "" {
+		p.TrackedBecause = sql.NullString{}
+		return nil
+	}
+	if err := store.ValidateTrackingReason(v); err != nil {
+		return err
+	}
+	p.TrackedBecause = sql.NullString{String: v, Valid: true}
+	return nil
 }
 
 func runPRTrack(cmd *cobra.Command, args []string) error {
@@ -89,6 +123,9 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 
 	p := store.NewPR(repo, number)
 	if err := applyPRPipelineFlag(cmd, p); err != nil {
+		return err
+	}
+	if err := applyPRBecauseFlag(cmd, p); err != nil {
 		return err
 	}
 
@@ -130,11 +167,12 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 func newPRSetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <repo#number>",
-		Short: "Change how one pull request reaches merge",
-		Long: "The only authored column a pull request has. Everything else is\n" +
+		Short: "Change how one pull request reaches merge, or why it is tracked",
+		Long: "The two authored columns a pull request has. Everything else is\n" +
 			"observed and belongs to sync.\n\n" +
-			"An empty value clears it: --pipeline \"\" returns this pull request to\n" +
-			"its repository's chain.\n\n" +
+			"An empty value clears either: --pipeline \"\" returns this pull request\n" +
+			"to its repository's chain, and --because \"\" leaves the reason\n" +
+			"unstated again.\n\n" +
 			"Changing it affects the chain the next close instantiates. Actions\n" +
 			"already created are not revisited — they exist, and something may\n" +
 			"already be waiting on them.",
@@ -142,6 +180,7 @@ func newPRSetCmd() *cobra.Command {
 		RunE: runPRSet,
 	}
 	addPRPipelineFlag(cmd)
+	addPRBecauseFlag(cmd)
 	addActorFlag(cmd)
 	return cmd
 }
@@ -149,8 +188,8 @@ func newPRSetCmd() *cobra.Command {
 func runPRSet(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
-	if !cmd.Flags().Changed(flagPipeline) {
-		return fmt.Errorf("nothing to set: pass --%s", flagPipeline)
+	if !cmd.Flags().Changed(flagPipeline) && !cmd.Flags().Changed(flagBecause) {
+		return fmt.Errorf("nothing to set: pass --%s or --%s", flagPipeline, flagBecause)
 	}
 	actor, err := actorFrom(cmd)
 	if err != nil {
@@ -174,6 +213,9 @@ func runPRSet(cmd *cobra.Command, args []string) error {
 	}
 	after := before.Clone()
 	if err := applyPRPipelineFlag(cmd, after); err != nil {
+		return err
+	}
+	if err := applyPRBecauseFlag(cmd, after); err != nil {
 		return err
 	}
 	if err := checkPipelineUsable(ctx, tx, after.Pipeline); err != nil {
@@ -260,6 +302,9 @@ func newPRListCmd() *cobra.Command {
 	f.Bool("stacked", false, "based on another tracked pull request")
 	f.Bool("frozen", false, "announced or commented on, so amend rather than force-push")
 	f.String("state", "", "OPEN, MERGED or CLOSED")
+	f.String(flagBecause, "",
+		"why it is tracked: "+strings.Join(store.TrackingReasons, ", ")+
+			" — most usefully what you are on the hook to review")
 	addOutputFlag(cmd)
 	return cmd
 }
@@ -312,7 +357,16 @@ func prFilterFrom(cmd *cobra.Command) (store.PRFilter, error) {
 	if err != nil {
 		return store.PRFilter{}, err
 	}
-	return store.PRFilter{Stacked: stacked, Frozen: frozen, State: state}, nil
+	because, err := f.GetString(flagBecause)
+	if err != nil {
+		return store.PRFilter{}, err
+	}
+	if because != "" {
+		if err := store.ValidateTrackingReason(because); err != nil {
+			return store.PRFilter{}, err
+		}
+	}
+	return store.PRFilter{Stacked: stacked, Frozen: frozen, State: state, Because: because}, nil
 }
 
 func writePRTable(out io.Writer, prs []*store.PR) error {
@@ -321,17 +375,21 @@ func writePRTable(out io.Writer, prs []*store.PR) error {
 		return nil
 	}
 
-	// The pipeline column appears only when something is using it. An
-	// override is worth seeing and its absence is not, and the ordinary case
+	// Both of these columns appear only when something is using them. An
+	// exception is worth seeing and its absence is not, and the ordinary case
 	// is every row reading "-" in a table that is wide already. Anything
-	// parsing this should read -o json, which always carries the column.
-	var overridden bool
+	// parsing this should read -o json, which always carries them.
+	var overridden, explained bool
 	for _, p := range prs {
 		overridden = overridden || p.Pipeline.Valid
+		explained = explained || p.TrackedBecause.Valid
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	header := "ID\tSTATE\tDRAFT\tREVIEW\tMERGE\tCHECKS\tFROZEN"
+	if explained {
+		header += "\tBECAUSE"
+	}
 	if overridden {
 		header += "\tPIPELINE"
 	}
@@ -342,6 +400,9 @@ func writePRTable(out io.Writer, prs []*store.PR) error {
 			p.ID, nullText(p.State), nullBoolText(p.IsDraft),
 			nullText(p.ReviewDecision), nullText(p.MergeStateStatus),
 			nullText(p.ChecksState), yesNo(p.Frozen))
+		if explained {
+			fmt.Fprintf(w, "\t%s", nullText(p.TrackedBecause))
+		}
 		if overridden {
 			fmt.Fprintf(w, "\t%s", nullText(p.Pipeline))
 		}

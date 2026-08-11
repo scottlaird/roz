@@ -338,6 +338,13 @@ CREATE TABLE pr (
   -- that never claimed an exception to it. Last because ADD COLUMN put it
   -- there. See 0010.
   pipeline           TEXT REFERENCES action_pipeline(name),
+  -- authored, and the second one: why this is tracked at all. The row's
+  -- existence records the decision, not the reason, and the two are different
+  -- questions once you track something you did not write. A closed set
+  -- because every consumer branches on it. NULL means unstated. See 0015.
+  tracked_because    TEXT
+                       CHECK (tracked_because IS NULL OR
+                              tracked_because IN ('authored','reviewing','watching')),
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;

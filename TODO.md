@@ -116,9 +116,6 @@ them.
       key, which is a table rebuild and a decision: one set of columns with a
       `tracker` discriminator, or a child table so a project can carry both.
       Worth doing before there is much data to migrate.
-- [ ] Tracking a pull request assigned to us rather than authored by us has
-      nowhere to record *why* it is tracked. That is a schema change, and it is
-      what `review` needs before it can close on a predicate.
 - [ ] **A `git_ref` entity, and the two predicates it enables.** Waiting for a
       release is currently a snooze to a guessed date, which is wrong in both
       directions: if the release slips the item wakes early, and if it ships
@@ -372,6 +369,22 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   because `snooze_until` and `status` are coupled by a CHECK, which is how it
   was found — and `applyBlockedState` had the same bug for actions, where
   nothing would have caught it at all.
+- **Why a pull request is tracked is a column; that it is tracked is still the
+  row's existence.** Two different questions, and the second only arises once
+  you track something you did not write — a review has different actions and a
+  different reason to stop tracking it. `authored`, `reviewing`, `watching`,
+  as a CHECK rather than free text, because things branch on it and an
+  unrecognised value would be a silent gap rather than a new case.
+- **No default.** Assuming `authored` would be right most of the time and
+  would still be the tool inventing a fact it cannot check — and for every row
+  predating the column, one it has no way to check at all. NULL means
+  unstated, which is the honest answer to a question nobody was asked.
+- **It has a reader from the day it lands**, which is the `waiting_since`
+  lesson: `pr list --because reviewing` answers "what am I on the hook to
+  review". A column nothing reads is a column nothing writes either.
+- **It does not finish the `review` verb.** Closing that on a predicate also
+  needs our GitHub login, and `config.owner` is deliberately a label rather
+  than one — so this is necessary and not sufficient.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

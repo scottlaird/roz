@@ -71,6 +71,23 @@ func MarshalRecord(r any) ([]byte, error) {
 	return json.Marshal(object)
 }
 
+// marshalRecordWith encodes a record together with values that are not
+// columns of its table — what Tx.MarshalRecord has loaded from its relations.
+//
+// The extras are merged after the columns and cannot collide with one: a
+// relation named after a column would be a mistake worth making loudly, and
+// the entity declaring both is the place to notice it.
+func marshalRecordWith(r any, extra map[string]any) ([]byte, error) {
+	object, err := recordObject(r)
+	if err != nil {
+		return nil, err
+	}
+	for name, value := range extra {
+		object[name] = value
+	}
+	return json.Marshal(object)
+}
+
 // MarshalRecords renders a slice of records as a JSON array. An empty slice
 // is [], never null, so a consumer can iterate without a nil check.
 func MarshalRecords[T any](records []T) ([]byte, error) {

@@ -25,7 +25,9 @@ func TestProjectShow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project show returned error: %v", err)
 	}
-	for _, want := range []string{"a title", "TD1", "priority", `["docs/a.md"]`} {
+	// design_refs is a list of names, and reads as one: the detail table
+	// joins a JSON array of strings rather than printing its brackets.
+	for _, want := range []string{"a title", "TD1", "priority", "docs/a.md"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output does not contain %q:\n%s", want, out)
 		}

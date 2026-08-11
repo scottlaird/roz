@@ -484,42 +484,7 @@ func runActionShow(cmd *cobra.Command, args []string) error {
 		return notFoundOr(err, args[0])
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecord(a)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	extra, err := actionEdgeRows(ctx, tx, a)
-	if err != nil {
-		return err
-	}
-	return writeRecordDetailWith(cmd.OutOrStdout(), a, extra)
-}
-
-// actionEdgeRows are what an action is waiting for and what it is about.
-// Without them a blocked action shows a state and no reason for it.
-func actionEdgeRows(ctx context.Context, tx *store.Tx, a *store.Action) ([][2]string, error) {
-	var rows [][2]string
-
-	blockers, err := tx.OpenBlockers(ctx, a.ID)
-	if err != nil {
-		return nil, err
-	}
-	if len(blockers) > 0 {
-		rows = append(rows, [2]string{"blocked_by", strings.Join(blockers, ", ")})
-	}
-
-	pr, ok, err := tx.SubjectPR(ctx, a.ID)
-	if err != nil {
-		return nil, err
-	}
-	if ok {
-		rows = append(rows, [2]string{"subject_pr", pr})
-	}
-	return rows, nil
+	return showRecord(cmd, ctx, tx, a, format)
 }
 
 func newActionListCmd() *cobra.Command {
@@ -527,9 +492,9 @@ func newActionListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "Actions, in the order they were created",
 		Long: "Creation order by default. --sort priority uses what the status page\n" +
-			"uses: any rank_pin first, then the priority of the project the action\n" +
-			"advances, then creation order. Neither is the ranking the design\n" +
-			"describes, which also wants rank_class and the dependency graph.",
+			"uses: any rank_pin, then the priority of the project the action\n" +
+			"advances, then the verb's rank class, then how much closing it would\n" +
+			"free, then effort. See the README for what sets each of those.",
 		Args: cobra.NoArgs,
 		RunE: runActionList,
 	}

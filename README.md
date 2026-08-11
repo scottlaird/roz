@@ -43,7 +43,7 @@ directory.
 | `todo jira show` / `list` | Issues as last observed, and which projects track them. |
 | **actions** | |
 | `todo action add` | Allocate an action and print its id. |
-| `todo action show` | Print one action, its blockers and its pull request. |
+| `todo action show` | Print one action, with what blocks it, what it blocks, and its pull requests. `-o json` carries the same. |
 | `todo action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--waiting`, `--stale`, `--open`, `--expired` and filters. |
 | `todo action set` | Change authored columns. Closing is not one of them. |
 | `todo action snooze` | Defer an action to a real date. |

@@ -57,8 +57,8 @@ directory.
 | `todo repo track` | Start tracking a repository and choose its pipeline. |
 | `todo repo show` / `list` / `set` | Read and change repository policy. |
 | `todo pr track` | Start tracking a pull request, keyed `owner/repo#number`. `--pipeline` if this one reaches merge differently from its repository. |
-| `todo pr set` | Change that pipeline, or clear it. The only authored column a pull request has. |
-| `todo pr show` / `list` | Read tracked pull requests. |
+| `todo pr set` | Change the pipeline or the tracking reason, or clear either. The two authored columns a pull request has. |
+| `todo pr show` / `list` | Read tracked pull requests; `--because reviewing` for what you owe a review on. |
 | `todo pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync, and closes the `send_for_review` step waiting on it. |
 | `todo sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
 | `todo syncer` | The same on a loop, backing off as rate limit heads down. |
@@ -596,6 +596,39 @@ written because it is true, unlogged because it would drown the log.
 
 `checks_state` stays on `pr` — GitHub's rollup, and what the page and
 `pr list` show. The per-check detail is on `pr show`.
+
+## Why a pull request is tracked
+
+The row's existence records the *decision* to track a pull request. It cannot
+record the reason, and that only starts mattering once you track one you did
+not write: a review has different actions, and a different reason to stop
+tracking it, from your own work.
+
+```console
+$ todo pr track scottlaird/todo#2 --because reviewing
+scottlaird/todo#2
+$ todo pr list --because reviewing
+ID                 STATE  DRAFT  REVIEW  MERGE  CHECKS  FROZEN  BECAUSE    TITLE
+scottlaird/todo#2  -      -      -       -      -       no      reviewing  -
+```
+
+Three reasons, as a closed set: `authored` (you wrote it), `reviewing`
+(somebody wants your review), `watching` (neither, but you care). A CHECK
+rather than free text, because things branch on it — adding a fourth is a
+migration, which for a vocabulary this small is the right trade.
+
+**There is no default.** Assuming `authored` would be right most of the time
+and would still be the tool inventing a fact it cannot check. Unstated is the
+honest answer to a question nobody was asked, and `--because ""` returns it
+there.
+
+The `BECAUSE` column appears in `pr list` only when something is using it,
+the same rule `PIPELINE` follows: an exception is worth seeing and its absence
+is not.
+
+This does not finish the `review` verb. Closing that on a predicate needs our
+GitHub login as well, and `config.owner` is deliberately a label rather than
+one.
 
 ## One project waiting on another
 

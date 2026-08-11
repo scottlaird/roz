@@ -11,21 +11,28 @@ import (
 	"sync"
 )
 
-// A Service runs until its context is cancelled.
+// A Service runs until its context is cancelled, or until it has nothing left
+// to do — an MCP server whose client has closed stdin is finished, and saying
+// so is not a failure.
 //
 // Run must return nil on cancellation: stopping on request is not a failure,
-// and returning an error for it would take the other services down with it.
+// and returning an error for it would report a clean shutdown as a broken one.
 type Service interface {
 	// Name identifies the service in errors and logs.
 	Name() string
 	Run(ctx context.Context) error
 }
 
-// Run runs every service until one fails or ctx is cancelled.
+// Run runs every service until one of them returns or ctx is cancelled.
 //
-// The first failure cancels the rest, so a component that cannot continue
-// does not leave the others running against a half-working system. The
-// returned error is that first failure; a clean shutdown returns nil.
+// The first to return cancels the rest, whether or not it failed. Failure is
+// the obvious case — a component that cannot continue should not leave the
+// others running against a half-working system — but finishing is the same
+// argument from the other end: these are the pieces of one program, and a
+// process whose reason for existing has ended should not be held open by the
+// services that were supporting it.
+//
+// The returned error is the first failure; a clean shutdown returns nil.
 func Run(ctx context.Context, services ...Service) error {
 	if len(services) == 0 {
 		return nil
@@ -41,9 +48,9 @@ func Run(ctx context.Context, services ...Service) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer cancel()
 			if err := s.Run(ctx); err != nil {
 				failures <- fmt.Errorf("%s: %w", s.Name(), err)
-				cancel()
 			}
 		}()
 	}

@@ -57,6 +57,13 @@ func (g *schemaGuard) Run(ctx context.Context) error {
 	// opinion about whether the schema is right — only about whether it moved.
 	started, err := g.store.SchemaState(ctx)
 	if err != nil {
+		// Cancellation can land inside this read, when another service finishes
+		// as this one starts — `todo mcp` against a client that hung up
+		// immediately. A service must return nil for that, or a clean shutdown
+		// is reported as a failure. Same treatment the loop below gives.
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	}
 	if g.ready != nil {

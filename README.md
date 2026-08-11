@@ -354,6 +354,21 @@ different database.
 // ← TD1
 ```
 
+## Checks
+
+CI runs on every pull request and on `main`: `gofmt`, `go vet`, and the tests
+under the race detector. Only under the race detector — it runs the same tests,
+and it is the run that matters, because `serve` renders the page on one
+goroutine while the watcher reads the log on another.
+
+```
+gofmt -l . && go vet ./... && go test -race ./...
+```
+
+Nothing in the suite reaches the network or the real `gh`: GitHub reads go
+through an injected runner, and the store tests open a fresh database per test
+with the clock advanced a second per transaction.
+
 ## Where to read more
 
 - [`TODO.md`](TODO.md) — what is left, what is settled, and what is

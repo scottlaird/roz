@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Nothing here writes anything back, so read access to the checkout is all of it.
+permissions:
+  contents: read
+
+# A branch that is pushed twice in a minute only needs the second answer.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Formatting and vet are seconds, and the tests are minutes. Splitting them
+  # means an unformatted file says so straight away instead of waiting behind
+  # the race detector.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"
+            echo "$unformatted"
+            echo
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Only the race run. It runs the same tests, and running them plain first
+      # only buys a slightly tidier failure at the cost of waiting through the
+      # suite twice. This is the run that matters anyway: serve renders the
+      # page on one goroutine while the watcher reads the log on another.
+      - name: go test -race
+        run: go test -race ./...

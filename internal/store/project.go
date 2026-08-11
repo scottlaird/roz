@@ -34,12 +34,12 @@ type Project struct {
 	N    int64  `db:"n" kind:"identity"`
 
 	Title        string         `db:"title"`
-	Summary      string         `db:"summary"`
+	Summary      string         `db:"summary" format:"markdown"`
 	Status       string         `db:"status"`
 	Priority     sql.NullInt64  `db:"priority"`
 	Effort       sql.NullString `db:"effort"`
 	SnoozeUntil  sql.NullString `db:"snooze_until"`
-	SnoozeReason string         `db:"snooze_reason"`
+	SnoozeReason string         `db:"snooze_reason" format:"markdown"`
 	SupersededBy sql.NullString `db:"superseded_by"`
 	DesignRefs   string         `db:"design_refs" format:"json"` // JSON array of file paths
 

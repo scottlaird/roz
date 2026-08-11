@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/scottlaird/todo/internal/markdown"
 )
 
 // timeFormat is ISO-8601 UTC at millisecond precision: sorts correctly as
@@ -130,6 +132,9 @@ func (t *Tx) Insert(ctx context.Context, r Record) error {
 	if err := t.checkInsertPermission(r, fields); err != nil {
 		return err
 	}
+	if err := checkProse(r, fields, nil); err != nil {
+		return err
+	}
 	t.stampNew(r, fields)
 
 	var columns []string
@@ -176,6 +181,9 @@ func (t *Tx) Update(ctx context.Context, before, after Record) ([]Change, error)
 
 	fields, err := fieldsOf(after)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkProse(after, fields, changedColumns(changes)); err != nil {
 		return nil, err
 	}
 	t.stamp(after, fields, Auto)
@@ -239,6 +247,39 @@ func isUnset(f field, text string) bool {
 	return f.format == formatJSON && (text == "{}" || text == "[]")
 }
 
+// checkProse applies the input rule that goes with format:"markdown" to the
+// columns about to be written. A nil only means every one of them, which is
+// the insert case; Update passes the columns that actually moved, so an
+// unrelated edit is never refused for something already in the row.
+//
+// It lives beside the permission checks rather than in each command because
+// that is the same argument the field kinds settled: a rule stated once and
+// enforced on the only path to the database cannot be forgotten at a call
+// site, and both the CLI and the MCP server arrive here.
+func checkProse(r Record, fields []field, only map[string]bool) error {
+	for _, f := range fields {
+		if f.format != formatMarkdown || (only != nil && !only[f.column]) {
+			continue
+		}
+		text, err := renderValue(f.value(r))
+		if err != nil {
+			return fmt.Errorf("%s.%s: %w", r.table(), f.column, err)
+		}
+		if err := markdown.Validate(text); err != nil {
+			return fmt.Errorf("%s.%s: %w", r.table(), f.column, err)
+		}
+	}
+	return nil
+}
+
+func changedColumns(changes []Change) map[string]bool {
+	columns := make(map[string]bool, len(changes))
+	for _, change := range changes {
+		columns[change.Column] = true
+	}
+	return columns
+}
+
 func (t *Tx) checkPermission(r Record, changes []Change) error {
 	allowed := t.actor.writes()
 	for _, change := range changes {
@@ -253,10 +294,7 @@ func (t *Tx) checkPermission(r Record, changes []Change) error {
 // assignments builds the SET clause: every changed column, plus the auto
 // columns that go with any write.
 func (t *Tx) assignments(r Record, fields []field, changes []Change) ([]string, []any) {
-	changed := make(map[string]bool, len(changes))
-	for _, change := range changes {
-		changed[change.Column] = true
-	}
+	changed := changedColumns(changes)
 
 	var assignments []string
 	var args []any

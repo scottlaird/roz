@@ -123,6 +123,31 @@ func TestRenderEscapes(t *testing.T) {
 	}
 }
 
+// TestRenderProseIsMarkdown: why is prose and renders as the author wrote it;
+// the title beside it is a name, so the same characters stay literal there.
+func TestRenderProseIsMarkdown(t *testing.T) {
+	db := initDB(t)
+	addAction(t, db, "--title", "the *old* pipeline", "--verb", "write",
+		"--why", "unblocks the *split*, once `todo sync github` runs")
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	for _, want := range []string{
+		"<em>split</em>",
+		"<code>todo sync github</code>",
+		"the *old* pipeline",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the page does not contain %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "<em>old</em>") {
+		t.Errorf("the title was rendered as Markdown:\n%s", out)
+	}
+}
+
 // TestRenderEmpty: an empty queue must say so rather than render a bare
 // header, which reads as something broken.
 func TestRenderEmpty(t *testing.T) {
@@ -299,51 +324,5 @@ func TestSortPriorityStillFilters(t *testing.T) {
 	}
 	if !strings.Contains(out, "ready work") || strings.Contains(out, "blocked work") {
 		t.Errorf("--unblocked --sort priority returned the wrong rows:\n%s", out)
-	}
-}
-
-// TestLinkify: most of a title's references are written into the sentence
-// rather than attached as a link, so the page has to find them there.
-func TestLinkify(t *testing.T) {
-	const base = "https://example.atlassian.net/browse"
-
-	prefixes := []string{"CDSS"}
-
-	for _, tt := range []struct {
-		name, text, want string
-	}{
-		{"a jira key in prose", "Close CDSS-1557 once resizing merges",
-			`<a href="https://example.atlassian.net/browse/CDSS-1557">CDSS-1557</a>`},
-		{"a qualified pull request", "follows temporalio/saas-infra-plane#4156",
-			`<a href="https://github.com/temporalio/saas-infra-plane/pull/4156">temporalio/saas-infra-plane#4156</a>`},
-		{"a bare number is left alone", "follows #4156", "#4156"},
-		{"markup in a title is escaped", "a <script>alert(1)</script> title",
-			"&lt;script&gt;"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			got := string(linkify(tt.text, base, prefixes))
-			if !strings.Contains(got, tt.want) {
-				t.Errorf("linkify(%q) = %q, want it to contain %q", tt.text, got, tt.want)
-			}
-		})
-	}
-
-	// Without a base URL there is nowhere for a Jira key to point, and
-	// guessing at a host would produce links that look right and go nowhere.
-	if got := string(linkify("Close CDSS-1557", "", prefixes)); strings.Contains(got, "<a") {
-		t.Errorf("linkify without a base linked anyway: %q", got)
-	}
-
-	// A key's shape is not distinctive: the pattern that finds CDSS-1744 also
-	// finds UTF-8. Anything whose project is not configured stays plain text.
-	for _, text := range []string{
-		"UTF-8 encoding", "SHA-256 digest", "ISO-8601 timestamps", "CVE-2024-1234", "RE-42",
-	} {
-		if got := string(linkify(text, base, prefixes)); strings.Contains(got, "<a") {
-			t.Errorf("linkify(%q) linked something that is not a configured project: %q", text, got)
-		}
-	}
-	if got := string(linkify("Close CDSS-1557", base, nil)); strings.Contains(got, "<a") {
-		t.Errorf("linkify with no prefixes linked anyway: %q", got)
 	}
 }

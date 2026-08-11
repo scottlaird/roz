@@ -54,7 +54,7 @@ type Action struct {
 	ProjectID sql.NullString `db:"project_id"`
 
 	// Why is what this unblocks. One sentence of non-action text, maximum.
-	Why string `db:"why"`
+	Why string `db:"why" format:"markdown"`
 
 	// HiddenBehind is not the blocked-by edge. Blocked-by is a fact about
 	// ordering; hidden-behind is the judgement that there is nothing to do
@@ -62,7 +62,7 @@ type Action struct {
 	HiddenBehind sql.NullString `db:"hidden_behind"`
 
 	SnoozeUntil  sql.NullString `db:"snooze_until"`
-	SnoozeReason string         `db:"snooze_reason"`
+	SnoozeReason string         `db:"snooze_reason" format:"markdown"`
 
 	// RankPin overrides the computed sort where it is wrong.
 	RankPin sql.NullInt64 `db:"rank_pin"`

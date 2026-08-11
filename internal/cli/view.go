@@ -6,12 +6,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/scottlaird/todo/internal/markdown"
 	"github.com/scottlaird/todo/internal/store"
 )
+
+// prose is everything the page needs in order to turn stored text into
+// clickable HTML: what counts as an identifier, how to render a Markdown
+// field, and where a Jira key points.
+//
+// It is built once per page and passed down, rather than threading a base URL
+// and a prefix list through every row function. Building the renderer once
+// also matters: goldmark assembles a parser and a renderer at construction,
+// and doing that per action would be work for nothing.
+type prose struct {
+	links    *markdown.Linker
+	markdown *markdown.Renderer
+	jiraBase string
+}
+
+func newProse(jiraBase string, jiraPrefixes []string) *prose {
+	links := markdown.NewLinker(jiraBase, jiraPrefixes)
+	return &prose{
+		links:    links,
+		markdown: markdown.NewRenderer(links),
+		jiraBase: strings.TrimSuffix(jiraBase, "/"),
+	}
+}
 
 // The view model the status page renders.
 //
@@ -82,6 +105,7 @@ type projectView struct {
 // size and wrong at any other, and the shape is the thing that gets copied.
 func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, jiraBase string, jiraPrefixes []string) (*pageContent, error) {
 	today := now.UTC().Format(store.DateFormat)
+	text := newProse(jiraBase, jiraPrefixes)
 
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
 		Upcoming: true,
@@ -147,11 +171,11 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, j
 
 	for _, a := range queue {
 		content.Queue = append(content.Queue,
-			actionRow(a, rank, prsByAction, jiraByProject, jiraBase, jiraPrefixes, today))
+			actionRow(a, rank, prsByAction, jiraByProject, text, today))
 	}
 	for _, a := range waiting {
 		content.Waiting = append(content.Waiting,
-			actionRow(a, rank, prsByAction, jiraByProject, jiraBase, jiraPrefixes, today))
+			actionRow(a, rank, prsByAction, jiraByProject, text, today))
 	}
 
 	openPerProject := map[string]int{}
@@ -163,13 +187,13 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, j
 	for _, p := range projects {
 		content.Projects = append(content.Projects, projectView{
 			ID:       p.ID,
-			Title:    linkify(p.Title, jiraBase, jiraPrefixes),
+			Title:    text.links.Text(p.Title),
 			Status:   p.Status,
 			Priority: nullIntText(p.Priority),
 			Effort:   nullText(p.Effort),
 			Snooze:   nullText(p.SnoozeUntil),
 			Actions:  openPerProject[p.ID],
-			Jira:     jiraViews(jiraByProject[p.ID], jiraBase),
+			Jira:     jiraViews(jiraByProject[p.ID], text.jiraBase),
 			Expired:  expired(p.SnoozeUntil, today),
 		})
 	}
@@ -180,12 +204,14 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, j
 }
 
 func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.ActionPR,
-	jira map[string][]*store.JiraIssue, jiraBase string, jiraPrefixes []string, today string) actionView {
+	jira map[string][]*store.JiraIssue, text *prose, today string) actionView {
 
 	view := actionView{
-		ID:        a.ID,
-		Title:     linkify(a.Title, jiraBase, jiraPrefixes),
-		Why:       linkify(a.Why, jiraBase, jiraPrefixes),
+		ID: a.ID,
+		// A title is a name and renders as plain text; why is prose and
+		// renders as Markdown. Both link the same identifiers.
+		Title:     text.links.Text(a.Title),
+		Why:       text.markdown.Render(a.Why),
 		Verb:      a.Verb,
 		RankClass: rank[a.Verb],
 		Project:   nullText(a.ProjectID),
@@ -196,7 +222,7 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		view.PRs = append(view.PRs, prRow(p))
 	}
 	if a.ProjectID.Valid {
-		view.Jira = jiraViews(jira[a.ProjectID.String], jiraBase)
+		view.Jira = jiraViews(jira[a.ProjectID.String], text.jiraBase)
 	}
 	return view
 }
@@ -305,50 +331,4 @@ func shortDate(stamp string) string {
 		return stamp[:10]
 	}
 	return stamp
-}
-
-// Identifiers worth turning into links wherever they appear in prose, because
-// most of a title's references are written into the sentence rather than
-// attached as a link: "close CDSS-1557 once resizing merges".
-var (
-	jiraKeyPattern = regexp.MustCompile(`\b[A-Z][A-Z0-9]+-\d+\b`)
-	prPattern      = regexp.MustCompile(`\b([\w.-]+/[\w.-]+)#(\d+)\b`)
-)
-
-// linkify escapes the text and then turns identifiers in it into links.
-//
-// Escaping first and marking the result as HTML is the safe order: nothing
-// reaches the page unescaped, and the only markup added is what this function
-// wrote. Doing it the other way round -- linking, then trusting the template
-// -- would double-escape the anchors.
-//
-// A bare "#4156" is deliberately left alone. Which repository it means is a
-// guess, and a link that goes confidently to the wrong pull request is worse
-// than plain text.
-//
-// Jira keys are only linked when their project is one of the configured
-// prefixes. The shape of a key is not distinctive enough to match on: the
-// obvious pattern also matches UTF-8, SHA-256, ISO-8601 and CVE-2024, each of
-// which would become a confident link to nothing.
-func linkify(text, jiraBase string, prefixes []string) template.HTML {
-	escaped := template.HTMLEscapeString(text)
-
-	escaped = prPattern.ReplaceAllString(escaped,
-		`<a href="https://github.com/$1/pull/$2">$1#$2</a>`)
-
-	if jiraBase != "" && len(prefixes) > 0 {
-		allowed := make(map[string]bool, len(prefixes))
-		for _, p := range prefixes {
-			allowed[strings.ToUpper(strings.TrimSpace(p))] = true
-		}
-		base := strings.TrimSuffix(jiraBase, "/")
-		escaped = jiraKeyPattern.ReplaceAllStringFunc(escaped, func(key string) string {
-			project, _, _ := strings.Cut(key, "-")
-			if !allowed[project] {
-				return key
-			}
-			return `<a href="` + base + `/` + key + `">` + key + `</a>`
-		})
-	}
-	return template.HTML(escaped)
 }

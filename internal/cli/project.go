@@ -30,6 +30,8 @@ func newProjectCmd() *cobra.Command {
 		newProjectWakeCmd(),
 		newProjectSupersedeCmd(),
 		newProjectCloseCmd(),
+		newProjectBlockCmd(),
+		newProjectUnblockCmd(),
 		newProjectListCmd(),
 		newProjectJiraCmd(),
 		newProjectLinkJiraCmd(),
@@ -776,6 +778,9 @@ func runProjectClose(cmd *cobra.Command, args []string) error {
 	for _, a := range result.Freed {
 		fmt.Fprintf(out, "  %s is now %s\n", a.ID, a.State)
 	}
+	for _, p := range result.Unblocked {
+		fmt.Fprintf(out, "  %s is now %s\n", p.ID, p.Status)
+	}
 	return nil
 }
 
@@ -795,4 +800,114 @@ func showRecord(cmd *cobra.Command, ctx context.Context, tx *store.Tx, r store.R
 		return err
 	}
 	return writeDetail(cmd.OutOrStdout(), encoded)
+}
+
+// newProjectBlockCmd mirrors `action add-blocker`, because one project
+// waiting on another is the same relationship as one action waiting on
+// another. Same flags, same direction, same reading.
+func newProjectBlockCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "block",
+		Short: "Record that one project must finish before another can start",
+		Long: "The blocked project moves to blocked, and returns to active when its\n" +
+			"last open blocker closes. Until this existed, `blocked` was a status\n" +
+			"with nothing recording what it was blocked on, so the dependency lived\n" +
+			"in a summary and nothing ever cleared it.\n\n" +
+			"A blocked project still appears on the page, marked. It is not hidden:\n" +
+			"blocked is exactly where work goes quiet.",
+		Args: cobra.NoArgs,
+		RunE: runProjectBlock,
+	}
+	f := cmd.Flags()
+	f.String(flagFrom, "", "blocked project (required)")
+	f.String(flagTo, "", "project that blocks it (required)")
+	_ = cmd.MarkFlagRequired(flagFrom)
+	_ = cmd.MarkFlagRequired(flagTo)
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runProjectBlock(cmd *cobra.Command, _ []string) error {
+	blocked, blocker, err := blockingPair(cmd)
+	if err != nil {
+		return err
+	}
+
+	return withActionTx(cmd, func(ctx context.Context, tx *store.Tx) error {
+		blockedProject, blockerProject, err := loadPair(ctx, tx, blocked, blocker)
+		if err != nil {
+			return err
+		}
+		if !blockerProject.IsOpen() {
+			return fmt.Errorf("%s is already %s and blocks nothing",
+				blockerProject.ID, blockerProject.Status)
+		}
+		if err := tx.BlockProject(ctx, blockerProject, blockedProject); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s is %s, waiting on %s\n",
+			blockedProject.ID, blockedProject.Status, blockerProject.ID)
+		return nil
+	})
+}
+
+func newProjectUnblockCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unblock",
+		Short: "Remove a dependency between two projects",
+		Long: "For when the dependency was wrong rather than satisfied. Saying so\n" +
+			"should not require closing something that is not done.\n\n" +
+			"The blocked project returns to active if this was its last open\n" +
+			"blocker.",
+		Args: cobra.NoArgs,
+		RunE: runProjectUnblock,
+	}
+	f := cmd.Flags()
+	f.String(flagFrom, "", "blocked project (required)")
+	f.String(flagTo, "", "project that was blocking it (required)")
+	_ = cmd.MarkFlagRequired(flagFrom)
+	_ = cmd.MarkFlagRequired(flagTo)
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runProjectUnblock(cmd *cobra.Command, _ []string) error {
+	blocked, blocker, err := blockingPair(cmd)
+	if err != nil {
+		return err
+	}
+
+	return withActionTx(cmd, func(ctx context.Context, tx *store.Tx) error {
+		blockedProject, blockerProject, err := loadPair(ctx, tx, blocked, blocker)
+		if err != nil {
+			return err
+		}
+		if err := tx.UnblockProject(ctx, blockerProject, blockedProject); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s is %s, no longer waiting on %s\n",
+			blockedProject.ID, blockedProject.Status, blockerProject.ID)
+		return nil
+	})
+}
+
+// blockingPair reads --from and --to, which name the blocked one and its
+// blocker in that order — the same way `action add-blocker` reads them.
+func blockingPair(cmd *cobra.Command) (blocked, blocker string, err error) {
+	f := cmd.Flags()
+	if blocked, err = f.GetString(flagFrom); err != nil {
+		return "", "", err
+	}
+	blocker, err = f.GetString(flagTo)
+	return blocked, blocker, err
+}
+
+func loadPair(ctx context.Context, tx *store.Tx, blockedID, blockerID string) (blocked, blocker *store.Project, err error) {
+	if blocked, err = tx.LoadProject(ctx, blockedID); err != nil {
+		return nil, nil, notFoundOr(err, blockedID)
+	}
+	if blocker, err = tx.LoadProject(ctx, blockerID); err != nil {
+		return nil, nil, notFoundOr(err, blockerID)
+	}
+	return blocked, blocker, nil
 }

@@ -21,6 +21,7 @@ predicate.go how a verb decides its work is done
 verb.go      the vocabulary, and the check that every predicate resolves
 pipeline.go  what closing a verb instantiates
 edge.go      blocking, hiding and pull request links
+projectedge.go one project waiting on another, and the cascade
 prcheck.go   a row per check, and which transitions are worth an event
 close.go     closing an action, and the cascade that follows
 settle.go    closing the actions whose predicate has come true

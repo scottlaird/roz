@@ -412,6 +412,10 @@ type ProjectCloseResult struct {
 	// Freed are the actions that became ready because a dropped one stopped
 	// blocking them, and the ones that stopped being hidden behind it.
 	Freed []*Action
+	// Unblocked are the projects that became active because this one closed.
+	// The project half of the same cascade, which did not exist until there
+	// was a project-to-project edge to run it over.
+	Unblocked []*Project
 }
 
 // CloseProject closes a project and drops whatever was still open on it.
@@ -462,6 +466,13 @@ func (s *Store) CloseProject(ctx context.Context, actor Actor, id, status string
 
 	result := &ProjectCloseResult{Project: after}
 	if result.Dropped, result.Freed, err = tx.dropOpenActions(ctx, after.ID); err != nil {
+		return nil, err
+	}
+
+	// Projects waiting on this one are freed the way actions are. Without
+	// this a project blocked on another stayed blocked for ever, since
+	// nothing else ever re-evaluated the edge.
+	if result.Unblocked, err = tx.freeBlockedProjects(ctx, after.ID); err != nil {
 		return nil, err
 	}
 

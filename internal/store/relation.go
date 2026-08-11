@@ -102,6 +102,8 @@ func (a *Action) relations() []Relation {
 // here would put the same fact in two places.
 func (p *Project) relations() []Relation {
 	return []Relation{
+		{Name: "blocked_by", Load: projectBlockedByIDs},
+		{Name: "blocking", Load: projectBlockingIDs},
 		{Name: "jira", Load: jiraKeys},
 	}
 }
@@ -160,6 +162,26 @@ func contextPRIDs(ctx context.Context, tx *Tx, id string) (any, error) {
 	}
 	if len(ids) == 0 {
 		return nil, nil
+	}
+	return ids, nil
+}
+
+func projectBlockedByIDs(ctx context.Context, tx *Tx, id string) (any, error) {
+	blockers, err := tx.OpenProjectBlockers(ctx, id)
+	if err != nil || len(blockers) == 0 {
+		return nil, err
+	}
+	return blockers, nil
+}
+
+func projectBlockingIDs(ctx context.Context, tx *Tx, id string) (any, error) {
+	blocked, err := tx.BlockedProjects(ctx, id)
+	if err != nil || len(blocked) == 0 {
+		return nil, err
+	}
+	ids := make([]string, len(blocked))
+	for i, p := range blocked {
+		ids[i] = p.ID
 	}
 	return ids, nil
 }

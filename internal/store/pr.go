@@ -49,8 +49,10 @@ type PR struct {
 	// green, and reading it that way costs queue attempts.
 	InMergeQueue sql.NullBool `db:"in_merge_queue" kind:"observed"`
 
+	// ChecksState is GitHub's rollup over every check. The checks themselves
+	// are rows in pr_check: one column holding the whole map could only ever
+	// diff as "the map changed", which is fifteen useless events an hour.
 	ChecksState sql.NullString `db:"checks_state" kind:"observed"`
-	Checks      string         `db:"checks" kind:"observed" format:"json"`
 
 	// base_ref changing deserves an event: a stacked PR silently retargets
 	// when its parent merges.
@@ -153,7 +155,6 @@ func NewPR(repo string, number int64) *PR {
 		ID:            PRKey(repo, number),
 		Repo:          repo,
 		Number:        number,
-		Checks:        "{}",
 		ReviewerTeams: "[]",
 		Approvals:     "[]",
 		Raw:           "{}",

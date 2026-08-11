@@ -305,7 +305,6 @@ CREATE TABLE pr (
   base_ref           TEXT,                     -- default branch, or a branch name when stacked
   head_sha           TEXT,
   in_merge_queue     INTEGER CHECK (in_merge_queue IN (0,1)),
-  checks             TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(checks)),
   reviewer_teams     TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(reviewer_teams)),  -- JSON array of team slugs
   approvals          TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(approvals)),       -- JSON array of logins
   first_review_requested_at TEXT,
@@ -358,6 +357,20 @@ CREATE TABLE action_blocks (
   created_at TEXT NOT NULL,
   PRIMARY KEY (blocker_id, blocked_id),
   CHECK (blocker_id <> blocked_id)
+) STRICT;
+
+-- A row per check rather than the whole map in one column, so the diff says
+-- which check moved instead of "the map changed". See 0012 for why, and
+-- store/prcheck.go for which transitions are worth an event.
+--
+-- state is GitHub's vocabulary and deliberately unconstrained, like
+-- review_decision and merge_state_status.
+CREATE TABLE pr_check (
+  pr_id       TEXT NOT NULL REFERENCES pr(id),
+  name        TEXT NOT NULL,   -- the context name, as GitHub reports it
+  state       TEXT NOT NULL,   -- SUCCESS | FAILURE | PENDING | SKIPPED | ...
+  observed_at TEXT NOT NULL,
+  PRIMARY KEY (pr_id, name)
 ) STRICT;
 
 CREATE TABLE action_pr (

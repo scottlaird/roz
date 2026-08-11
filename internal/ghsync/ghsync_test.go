@@ -113,8 +113,8 @@ func TestSyncWritesObservedState(t *testing.T) {
 	if pr.ReviewDecision.String != "REVIEW_REQUIRED" || pr.MergeStateStatus.String != "BLOCKED" {
 		t.Errorf("review = %v, merge = %v", pr.ReviewDecision, pr.MergeStateStatus)
 	}
-	if pr.Checks != `{"build":"SUCCESS"}` {
-		t.Errorf("checks = %q", pr.Checks)
+	if got := checksFor(t, st, key); got != "build SUCCESS" {
+		t.Errorf("checks = %q, want %q", got, "build SUCCESS")
 	}
 	if pr.ReviewerTeams != `["platform"]` {
 		t.Errorf("reviewer_teams = %q", pr.ReviewerTeams)
@@ -306,24 +306,58 @@ func TestSyncWithNothingTracked(t *testing.T) {
 	}
 }
 
-func TestChecksEncodeStably(t *testing.T) {
-	// Map iteration order must not leak into the stored value, or every poll
-	// would look like a change.
-	first, err := encodeChecks(map[string]string{"b": "SUCCESS", "a": "FAILURE", "c": "PENDING"})
+// checksFor reads the check rows back as one comparable string.
+func checksFor(t *testing.T, st *store.Store, key string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
 	if err != nil {
-		t.Fatalf("encodeChecks() returned error: %v", err)
+		t.Fatalf("Begin() returned error: %v", err)
 	}
-	for range 20 {
-		again, err := encodeChecks(map[string]string{"c": "PENDING", "a": "FAILURE", "b": "SUCCESS"})
-		if err != nil {
-			t.Fatalf("encodeChecks() returned error: %v", err)
-		}
-		if again != first {
-			t.Fatalf("encoding is not stable: %q then %q", first, again)
+	defer tx.Rollback()
+
+	checks, err := tx.ChecksFor(ctx, key)
+	if err != nil {
+		t.Fatalf("ChecksFor() returned error: %v", err)
+	}
+	return store.FormatChecks(checks)
+}
+
+// TestRepeatedChecksAreQuiet keeps the property the old encodeChecks test
+// guarded, now that there is no encoding to be stable about: polling again
+// with the same answers must not read as a change.
+//
+// Map iteration order used to be the hazard, because the whole map was one
+// value. Rows are keyed by name and written only when the state differs, so
+// ordering cannot leak — but the property is worth pinning wherever it lives.
+func TestRepeatedChecksAreQuiet(t *testing.T) {
+	st, key := newStore(t)
+	ctx := context.Background()
+
+	pr := observed(key)
+	pr.Checks = map[string]string{"a": "FAILURE", "b": "SUCCESS", "c": "PENDING"}
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{pr}}}
+
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("first Sync() returned error: %v", err)
+	}
+	before, err := st.Events(ctx, store.EventQuery{})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+
+	for range 5 {
+		if _, err := Sync(ctx, st, client); err != nil {
+			t.Fatalf("Sync() returned error: %v", err)
 		}
 	}
-	if want := `{"a":"FAILURE","b":"SUCCESS","c":"PENDING"}`; first != want {
-		t.Errorf("encodeChecks() = %q, want %q", first, want)
+	after, err := st.Events(ctx, store.EventQuery{})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("five quiet polls wrote %d events, want none", len(after)-len(before))
 	}
 }
 

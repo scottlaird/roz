@@ -58,7 +58,7 @@ directory.
 | `todo pr track` | Start tracking a pull request, keyed `owner/repo#number`. `--pipeline` if this one reaches merge differently from its repository. |
 | `todo pr set` | Change that pipeline, or clear it. The only authored column a pull request has. |
 | `todo pr show` / `list` | Read tracked pull requests. |
-| `todo pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync. |
+| `todo pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync, and closes the `send_for_review` step waiting on it. |
 | `todo sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
 | `todo syncer` | The same on a loop, backing off as rate limit heads down. |
 | `todo mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
@@ -230,7 +230,15 @@ cannot supply. Until Slack sync exists, that is recorded by hand:
 $ todo pr announce scottlaird/todo#39 --channel '#infra-reviews'
 scottlaird/todo#39 announced_at: "" → "2026-08-10T14:47:22.041Z"
 scottlaird/todo#39 announced_channel: "" → "#infra-reviews"
+NA3 closed: scottlaird/todo#39 is send_for_review
+  NA4 is now ready
 ```
+
+The last two lines are the point. The fact that closes the step has just
+arrived, so the step closes now rather than at the next poll — the same settle
+pass `todo sync` runs. It means a command that reads as "write down what I did
+in Slack" also closes actions and instantiates what follows them, which is why
+it prints what it closed.
 
 Jira is the same arrangement, keyed on the issue rather than the project,
 because an integration would have `CDSS-1744` and not `TD1` — and because an

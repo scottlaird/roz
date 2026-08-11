@@ -29,7 +29,10 @@ func newPRAnnounceCmd() *cobra.Command {
 			"do. It is a separate command rather than an --actor override so that the\n" +
 			"exception is one named verb instead of a hole in the rule, and it is\n" +
 			"logged as sync:slack-manual so the log never claims Slack reported\n" +
-			"something that was typed in.",
+			"something that was typed in.\n\n" +
+			"Recording the announcement closes any send_for_review step waiting on\n" +
+			"it, and whatever that frees, straight away rather than at the next\n" +
+			"poll. What closed is printed.",
 		Args: cobra.ExactArgs(1),
 		RunE: runPRAnnounce,
 	}
@@ -68,12 +71,42 @@ func runPRAnnounce(cmd *cobra.Command, args []string) error {
 	// The actor is fixed by the command, not taken from a flag: this is the
 	// one place a person may write observed columns, and it should be
 	// reachable only on purpose.
-	return updatePR(ctx, cmd, st, store.ActorSlackManual, args[0],
+	err = updatePR(ctx, cmd, st, store.ActorSlackManual, args[0],
 		func(p *store.PR) error {
 			p.AnnouncedAt = sql.NullString{String: at, Valid: true}
 			p.AnnouncedChannel = sql.NullString{String: channel, Valid: true}
 			return nil
 		})
+	if err != nil {
+		return err
+	}
+
+	// The announcement is exactly what send_for_review closes on, and it has
+	// just arrived. Without this the step sits ready with nothing left to
+	// wait for until the next poll — up to a whole sync interval of a queue
+	// showing work that is already done.
+	//
+	// Settling after the transaction rather than inside it, the way sync
+	// does: closing is its own unit of work, under the predicate actor, and a
+	// cascade that fails should not undo the fact that was reported.
+	return settleNow(ctx, cmd, st)
+}
+
+// settleNow closes whatever a newly recorded fact has just satisfied.
+//
+// This is the part of `pr announce` worth being deliberate about: a command
+// that reads as "write down what I did in Slack" now closes actions and
+// instantiates whatever follows them. That is the design working — nobody
+// should type "the pull request was announced" and then separately type "so
+// close the step" — but it means the command is not the innocuous thing its
+// name suggests, which is why it reports what it closed.
+func settleNow(ctx context.Context, cmd *cobra.Command, st *store.Store) error {
+	settled, err := st.Settle(ctx, store.ActorPredicate)
+	if err != nil {
+		return err
+	}
+	reportSettled(cmd.OutOrStdout(), settled)
+	return nil
 }
 
 // announcedAt resolves --at, defaulting to now.

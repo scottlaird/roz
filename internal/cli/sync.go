@@ -9,6 +9,7 @@ import (
 
 	"github.com/scottlaird/todo/internal/ghsync"
 	"github.com/scottlaird/todo/internal/github"
+	"github.com/scottlaird/todo/internal/store"
 )
 
 // syncSources are the external systems this build can read.
@@ -76,7 +77,7 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	for _, key := range sortedKeys(result.Missing) {
 		fmt.Fprintf(out, "%s could not be read: %s\n", key, result.Missing[key])
 	}
-	reportSettled(out, result)
+	reportSettled(out, result.Settled)
 
 	if !quiet {
 		fmt.Fprintf(out, "polled %d, %d changed", result.Polled, result.ChangedCount())
@@ -94,10 +95,13 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 // reportSettled prints what closed itself, and what that freed.
 //
 // It prints even under --quiet, because an action closing without anyone
-// asking is the most surprising thing sync does, and finding out from a
-// later `action list` is worse.
-func reportSettled(out io.Writer, result ghsync.Result) {
-	for _, settled := range result.Settled {
+// asking is the most surprising thing this system does, and finding out from
+// a later `action list` is worse.
+//
+// Shared with `pr announce`, which settles for the same reason sync does: one
+// report rather than two that could describe the same event differently.
+func reportSettled(out io.Writer, all []store.Settled) {
+	for _, settled := range all {
 		fmt.Fprintf(out, "%s closed: %s is %s\n",
 			settled.Action.ID, settled.PR, settled.Action.Verb)
 		for _, freed := range settled.Result.Unblocked {

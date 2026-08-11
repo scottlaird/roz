@@ -20,14 +20,10 @@ and each closure frees the next. Nobody types "the pull request merged".
 
 ## The critical path
 
-In dependency order. Nothing later can be finished first.
-
-- [ ] **The rest of the queue queries.** `--unblocked` and `--expired` exist.
-      Left: `--stale`, which catches an item claiming done whose pull request
-      is still open, and `--waiting`.
-- [ ] **A real `todo render`.** What exists is three `<pre>` blocks and no
-      design worth the name. Templates, the ranking, and the status page the
-      whole thing exists to regenerate are still ahead.
+Empty. Everything the sketch put in dependency order is built: the entities,
+the pipelines, the cascade, sync closing what GitHub finishes, the queue
+queries and a page to read them on. What is left below is depth and polish,
+and none of it blocks anything else.
 
 ## What dogfooding needs
 
@@ -370,6 +366,14 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - **Blocking cycles are refused, not just self-edges.** The `CHECK` catches
   `A → A`; a recursive query catches the rest. A cycle is a set of actions
   that never unblocks.
+- **`--unblocked` and `--waiting` partition what is in play**, and are built
+  from the same conditions so they cannot disagree about it. The page asks the
+  store for both rather than filtering one out of the other.
+- **`--stale` is where a judgement and a fact disagree**: an action closed as
+  completed whose subject pull request is still open. Only completion claims
+  anything — an abandoned action with an open pull request is someone deciding
+  not to finish, which is not a contradiction. A pull request nobody has
+  synced is not evidence either way.
 - **The page is the one place that does not print in creation order.** An
   action has no priority of its own, so it inherits the priority of the
   project it advances; `rank_pin` overrides that, because overriding is what

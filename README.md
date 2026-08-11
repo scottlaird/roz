@@ -43,7 +43,7 @@ directory.
 | **actions** | |
 | `todo action add` | Allocate an action and print its id. |
 | `todo action show` | Print one action, its blockers and its pull request. |
-| `todo action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--open`, `--expired` and filters. |
+| `todo action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--waiting`, `--stale`, `--open`, `--expired` and filters. |
 | `todo action set` | Change authored columns. Closing is not one of them. |
 | `todo action snooze` | Defer an action to a real date. |
 | `todo action wake` | Clear a snooze. |

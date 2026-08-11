@@ -102,6 +102,13 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, j
 	if err != nil {
 		return nil, err
 	}
+	// The same definition the CLI's --waiting uses, rather than a second one
+	// here: a queue and the things it deliberately omits should not be able
+	// to disagree about what is in play.
+	waiting, err := st.ListActions(ctx, store.ActionFilter{Waiting: true, Order: store.OrderPriority})
+	if err != nil {
+		return nil, err
+	}
 	projects, err := st.ListProjects(ctx, store.ProjectFilter{Status: store.ProjectActive, Order: store.OrderPriority})
 	if err != nil {
 		return nil, err
@@ -138,17 +145,11 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, j
 		})
 	}
 
-	inQueue := map[string]bool{}
 	for _, a := range queue {
-		inQueue[a.ID] = true
 		content.Queue = append(content.Queue,
 			actionRow(a, rank, prsByAction, jiraByProject, jiraBase, jiraPrefixes, today))
 	}
-	for _, a := range open {
-		if inQueue[a.ID] || a.State != store.ActionReady ||
-			a.HiddenBehind.Valid || rank[a.Verb] != store.RankWait {
-			continue
-		}
+	for _, a := range waiting {
 		content.Waiting = append(content.Waiting,
 			actionRow(a, rank, prsByAction, jiraByProject, jiraBase, jiraPrefixes, today))
 	}

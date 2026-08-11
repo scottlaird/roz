@@ -259,3 +259,49 @@ func TestServeStreamsWhenTheLogMoves(t *testing.T) {
 		t.Fatal("the log moved and the stream said nothing")
 	}
 }
+
+// TestServeStopsWhenTheSchemaMoves is the wiring test. The guard is a service
+// like any other, so its failure should take the server down with it and be
+// what the command reports — rather than the whole thing carrying on until
+// some query hits a column that no longer exists.
+//
+// It waits out the real check interval rather than reaching past it, since the
+// interval being usable is part of what is being claimed.
+func TestServeStopsWhenTheSchemaMoves(t *testing.T) {
+	db := initDB(t)
+	withFetcher(t, stubFetcher{result: github.Result{}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Wait for the address line rather than for a duration. The guard takes
+	// its baseline as the services start, and migrating before that would put
+	// the migration *into* the baseline — the test would then hang rather than
+	// fail, which is a poor way to find out.
+	log := &syncedBuffer{}
+	done := make(chan error, 1)
+	go func() {
+		done <- runCLIContext(ctx, log,
+			"serve", "--db", db, "--addr", "127.0.0.1:0", "--no-sync", "--no-watch")
+	}()
+	waitForAddress(t, log)
+
+	migrateUnderneath(t, db)
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("serve returned nil, want it to stop over the migration")
+		}
+		if !strings.Contains(err.Error(), "migrated") {
+			t.Errorf("error = %v, want it to say the database migrated", err)
+		}
+		// The service runner names whichever service failed, which is how an
+		// operator tells this apart from the server or the syncer giving up.
+		if !strings.Contains(err.Error(), "schema:") {
+			t.Errorf("error = %v, want the failing service named", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("serve did not stop after the database migrated under it")
+	}
+}

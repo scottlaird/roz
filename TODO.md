@@ -162,22 +162,6 @@ them.
       are a research preview and need
       `--dangerously-load-development-channels`, so this buys reach into
       sessions nobody is watching rather than speed.
-- [ ] **Long-running processes should notice the database migrating under
-      them, and stop.** `serve`, `syncer`, `watch` and `mcp` read the schema
-      once, at startup. An upgrade applied by another process — a rebuilt
-      binary, a second checkout — leaves them querying columns that no longer
-      exist, and the failure surfaces as whatever query happens to run first
-      rather than as "your server is out of date".
-
-      `applied_migration` already records the high-water mark, so the check is
-      reading it on a tick and exiting when it differs from what was current at
-      startup. Exiting rather than reloading, on the grounds that a restart is
-      cheap and a process serving a schema it does not understand is not: for
-      `mcp` the client respawns it, and for `serve` the runner already stops
-      the other services when one fails.
-
-      `0008` dropped five columns from `project`, which is exactly the shape
-      that would have broken a server left running from the morning.
 - [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
       `project` name one tracker in the schema, in the entity, and in `todo
       project jira`. Home projects use GitHub issues, and the reader for them
@@ -303,6 +287,21 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   database to open and cannot be read out of one that has not been chosen yet.
   `--jira-base-url` and `--jira-prefix` are gone; `TODO_JIRA_BASE_URL` and
   `TODO_JIRA_PREFIXES` remain as single-run overrides.
+- **A long-running command exits when the database migrates under it.**
+  `serve`, `syncer`, `watch` and `mcp` read the schema once, at startup, and
+  every query afterwards assumes it; an upgrade applied by another process
+  would otherwise surface as whatever query happened to run first. A guard
+  service compares the applied-migration record against what was there at
+  startup, every five seconds, and returns an error when it moves.
+- **Exiting rather than reloading.** A restart is cheap and a process serving a
+  schema it does not understand is not. `mcp` is respawned by its client, and
+  `serve` already stops its other services when one fails, so the guard needs
+  no mechanism of its own beyond being a service.
+- **The check counts applied migrations as well as taking the highest.** The
+  top version alone can stand still while the set grows, which is the
+  out-of-order case `applied_migration` exists for in the first place. A read
+  that fails is not a migration — a busy database is only a busy database, and
+  the next tick asks again.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

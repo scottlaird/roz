@@ -273,6 +273,43 @@ func MigrationNames(migrations []schema.Migration) string {
 	return strings.Join(names, ", ")
 }
 
+// SchemaState identifies the set of migrations a database has run.
+//
+// It is not a version number and is not meaningful on its own. Comparing two
+// readings of the same database is the whole of what it is for: a
+// long-running process takes one at startup and watches for it to change,
+// which is how it notices being migrated under.
+//
+// Applied as well as Highest, because migrations do not always arrive in
+// order — two branches each adding one and landing the other way round is the
+// case applied_migration exists for — so the top number alone can stand still
+// while the set grows.
+type SchemaState struct {
+	// Applied is how many migrations have run.
+	Applied int
+	// Highest is the largest version among them.
+	Highest int
+}
+
+func (s SchemaState) String() string {
+	return fmt.Sprintf("migration %d (%d applied)", s.Highest, s.Applied)
+}
+
+// SchemaState reads which migrations the database has run.
+//
+// One row-count against a table with a row per migration, so it is cheap
+// enough to ask on a timer.
+func (s *Store) SchemaState(ctx context.Context) (SchemaState, error) {
+	var state SchemaState
+	err := s.db.QueryRowContext(ctx,
+		"SELECT count(*), coalesce(max(version), 0) FROM applied_migration").
+		Scan(&state.Applied, &state.Highest)
+	if err != nil {
+		return SchemaState{}, fmt.Errorf("reading the migration record: %w", err)
+	}
+	return state, nil
+}
+
 // LatestSchemaVersion is the version a fully migrated database reports.
 func LatestSchemaVersion() (int, error) {
 	migrations, err := schema.Migrations()

@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
+	"io"
 	"os"
 	"os/signal"
 
 	"github.com/spf13/cobra"
 
 	"github.com/scottlaird/todo/internal/mcp"
+	"github.com/scottlaird/todo/internal/service"
 )
 
 const flagAgent = "agent"
@@ -47,11 +50,14 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	// Fail here rather than on the first tool call: a server that cannot
 	// reach its database has nothing to offer, and saying so at startup is
 	// what the caller can act on.
+	//
+	// The handle is kept open for the schema guard. Tool calls do not use it —
+	// each one runs the command tree, which opens its own.
 	st, err := openStore()
 	if err != nil {
 		return err
 	}
-	st.Close()
+	defer st.Close()
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
@@ -62,5 +68,36 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		Tools:   &mcpTools{db: dbPath, agent: actorName(agent)},
 		Log:     cmd.ErrOrStderr(),
 	}
-	return server.Serve(ctx, cmd.InOrStdin(), cmd.OutOrStdout())
+	return service.Run(ctx,
+		&mcpService{server: server, in: cmd.InOrStdin(), out: cmd.OutOrStdout()},
+		&schemaGuard{store: st})
+}
+
+// mcpService is the protocol loop as a service, so it can be run beside the
+// schema guard.
+type mcpService struct {
+	server *mcp.Server
+	in     io.Reader
+	out    io.Writer
+}
+
+func (m *mcpService) Name() string { return "mcp" }
+
+// Run returns as soon as the context is cancelled, rather than waiting for
+// Serve to notice.
+//
+// Serve blocks reading stdin and there is no portable way to interrupt that,
+// so on cancellation it is left where it is: the process is on its way out,
+// and the goroutine goes with it. Nothing is served in the meantime, because
+// Serve checks the context before dispatching anything it does read.
+func (m *mcpService) Run(ctx context.Context) error {
+	served := make(chan error, 1)
+	go func() { served <- m.server.Serve(ctx, m.in, m.out) }()
+
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
 }

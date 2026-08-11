@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/scottlaird/todo/internal/service"
 	"github.com/scottlaird/todo/internal/store"
 )
 
@@ -70,7 +71,29 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 
-	return watchEvents(ctx, cmd.OutOrStdout(), st, options)
+	// --once reads and returns, so there is no window for the schema to move
+	// in and nothing to guard.
+	if options.once {
+		return watchEvents(ctx, cmd.OutOrStdout(), st, options)
+	}
+	return service.Run(ctx,
+		&watcher{store: st, out: cmd.OutOrStdout(), options: options},
+		&schemaGuard{store: st})
+}
+
+// watcher is the follow loop as a service, so it can be run beside the schema
+// guard. `todo serve` has its own tailer, which starts at the end of the log
+// rather than replaying a backlog.
+type watcher struct {
+	store   *store.Store
+	out     io.Writer
+	options watchOptions
+}
+
+func (w *watcher) Name() string { return "watch" }
+
+func (w *watcher) Run(ctx context.Context) error {
+	return watchEvents(ctx, w.out, w.store, w.options)
 }
 
 // watchOptions is everything the loop needs, resolved from flags once.

@@ -176,7 +176,6 @@ func pipelineRows(t *testing.T, db *sql.DB) map[string]string {
 	return pipelines
 }
 
-// compareSeeded reports seeded rows that differ, are missing, or are extra.
 // TestSeededConfig: the config row is seeded rather than created by init, so
 // that no reader has to handle its absence. That only holds if both ways of
 // building a database produce it, and produce the same one.
@@ -216,6 +215,7 @@ func configRows(t *testing.T, db *sql.DB) map[string]string {
 	return seeded
 }
 
+// compareSeeded reports seeded rows that differ, are missing, or are extra.
 func compareSeeded(t *testing.T, what string, documented, migrated map[string]string) {
 	t.Helper()
 
@@ -694,5 +694,54 @@ func TestMigrateStampsEachVersion(t *testing.T) {
 		if got != to {
 			t.Errorf("user_version = %d after migrating to %d", got, to)
 		}
+	}
+}
+
+// TestSchemaState: a long-running process compares two readings, so what
+// matters is that a fresh database reports what this build carries and that
+// the value moves when the record does.
+func TestSchemaState(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations() returned error: %v", err)
+	}
+	latest, err := LatestSchemaVersion()
+	if err != nil {
+		t.Fatalf("LatestSchemaVersion() returned error: %v", err)
+	}
+
+	state, err := st.SchemaState(ctx)
+	if err != nil {
+		t.Fatalf("SchemaState() returned error: %v", err)
+	}
+	if state.Applied != len(migrations) {
+		t.Errorf("applied = %d, want %d", state.Applied, len(migrations))
+	}
+	if state.Highest != latest {
+		t.Errorf("highest = %d, want %d", state.Highest, latest)
+	}
+
+	// Out of order on purpose: a migration numbered below one already applied
+	// is the case applied_migration exists for, and the top number does not
+	// move for it.
+	if _, err := st.db.ExecContext(ctx,
+		"INSERT INTO applied_migration (version, name, applied_at) VALUES (?, '0000_earlier.sql', '')",
+		0); err != nil {
+		t.Fatalf("recording a migration: %v", err)
+	}
+
+	moved, err := st.SchemaState(ctx)
+	if err != nil {
+		t.Fatalf("SchemaState() returned error: %v", err)
+	}
+	if moved == state {
+		t.Errorf("state = %s unchanged, want it to move when the record does", moved)
+	}
+	if moved.Highest != state.Highest {
+		t.Errorf("highest = %d, want it unmoved at %d: this is why Applied is counted too",
+			moved.Highest, state.Highest)
 	}
 }

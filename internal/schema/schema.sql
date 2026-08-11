@@ -382,6 +382,16 @@ CREATE TABLE pr_check (
   PRIMARY KEY (pr_id, name)
 ) STRICT;
 
+-- One project waiting on another. The same shape as action_blocks, because it
+-- is the same relationship between different rows. See 0014.
+CREATE TABLE project_blocks (
+  blocker_id TEXT NOT NULL REFERENCES project(id),
+  blocked_id TEXT NOT NULL REFERENCES project(id),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (blocker_id, blocked_id),
+  CHECK (blocker_id <> blocked_id)
+) STRICT;
+
 CREATE TABLE action_pr (
   action_id TEXT NOT NULL REFERENCES action(id),
   pr_id     TEXT NOT NULL REFERENCES pr(id),

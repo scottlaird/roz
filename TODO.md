@@ -350,6 +350,28 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   it is a different wait.
 - **Checked even when nothing is tracked.** A deadline is not a fact about
   GitHub, and `Sync`'s nothing-to-poll return used to skip it entirely.
+- **One project can block another, and the status follows the edge.**
+  `project.status` accepted `blocked` from the start with nothing recording
+  what it was blocked on, so it was a status with no referent: the dependency
+  lived in a summary, and nothing ever cleared it. `project_blocks` is
+  deliberately the same shape as `action_blocks`, down to the CHECK — it is
+  the same relationship between different rows, and two spellings of it would
+  be one too many.
+- **Closing a project frees what was waiting on it.** That cascade existed for
+  actions and not for projects, so a blocked project stayed blocked for ever
+  unless somebody remembered. There is no project equivalent of
+  `hidden_behind`: folding something out of a queue is a judgement about a
+  queue, and the project table is not one.
+- **A blocked project is shown, not hidden.** The page filtered to `active`,
+  so blocking one made it vanish — and blocked is exactly where work goes
+  quiet, which makes it the last thing to hide. `ProjectFilter.Open` is what
+  the page reads now.
+- **Blocked state is decided from a fresh read, never the caller's copy.**
+  Deciding from a stale status writes the old world back: a project snoozed
+  since it was loaded would be quietly woken. The schema catches that one,
+  because `snooze_until` and `status` are coupled by a CHECK, which is how it
+  was found — and `applyBlockedState` had the same bug for actions, where
+  nothing would have caught it at all.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

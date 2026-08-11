@@ -36,7 +36,8 @@ directory.
 | `todo project snooze` | Defer a project to a real date. |
 | `todo project wake` | Clear a snooze. |
 | `todo project supersede` | Record that one project is the same work as another. |
-| `todo project close` | Close it, dropping whatever was still open on it. |
+| `todo project close` | Close it, dropping whatever was still open on it and freeing whatever waited on it. |
+| `todo project block` / `unblock` | Record that one project must finish before another can start, or that it need not. |
 | `todo project jira` | Record by hand what Jira says about an issue — summary, status, sprint, assignee. Stands in for Jira sync. |
 | `todo project link-jira` / `unlink-jira` | Say which issues a project tracks. More than one is allowed. |
 | **jira** | |
@@ -595,6 +596,40 @@ written because it is true, unlogged because it would drown the log.
 
 `checks_state` stays on `pr` — GitHub's rollup, and what the page and
 `pr list` show. The per-check detail is on `pr show`.
+
+## One project waiting on another
+
+`project.status` has accepted `blocked` since the start, and nothing recorded
+what it was blocked *on* — `action_blocks` is action-to-action. So it was a
+status with no referent: the dependency lived in a summary, the project
+vanished from the page, and nothing ever cleared it.
+
+```console
+$ todo project block --from TD2 --to TD1
+TD2 is blocked, waiting on TD1
+$ todo project list
+ID   STATUS   PRI  EFFORT  SNOOZED UNTIL  TITLE
+TD1  active   -    -       -              Thread the --db flag through
+TD2  blocked  -    -       -              MCP over HTTP
+$ todo project close TD1 --status done
+TD1 done
+  TD2 is now active
+```
+
+`--from` is the blocked one and `--to` is its blocker, the same way
+`action add-blocker` reads. The status moves with the edge, and only the
+*last* open blocker closing frees it.
+
+**A blocked project stays on the page**, marked. Blocked is exactly where work
+goes quiet, which makes it the last thing worth hiding.
+
+`todo project unblock` removes the edge for when the dependency was wrong
+rather than satisfied — saying so should not mean closing something unfinished.
+
+A snooze outranks the graph: a project deferred to a date is not un-deferred
+by an edge, because a snooze is a decision about time. There is no project
+equivalent of `hide-behind`, since folding something out of a queue is a
+judgement about a queue and the project table is not one.
 
 ## When a wait goes on too long
 

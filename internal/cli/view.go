@@ -139,7 +139,10 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	if err != nil {
 		return nil, err
 	}
-	projects, err := st.ListProjects(ctx, store.ProjectFilter{Status: store.ProjectActive, Order: store.OrderPriority})
+	// Open rather than active: a blocked project is live work, and hiding it
+	// is how one sat unseen for a session. It shows with its status, which is
+	// the whole information.
+	projects, err := st.ListProjects(ctx, store.ProjectFilter{Open: true, Order: store.OrderPriority})
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +209,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		})
 	}
 
-	content.Stamp = fmt.Sprintf("%d in the queue · %d waiting · %d active projects",
+	content.Stamp = fmt.Sprintf("%d in the queue · %d waiting · %d open projects",
 		len(content.Queue), len(content.Waiting), len(content.Projects))
 	return content, nil
 }

@@ -130,6 +130,12 @@ type ProjectFilter struct {
 	// value query in the system, per the sketch, because a snooze nobody is
 	// watching is how work goes quiet.
 	Expired bool
+	// Open keeps everything not terminal — active, blocked or snoozed.
+	//
+	// The page reads this rather than filtering to active, because a blocked
+	// project vanishing is how SL22 sat invisible for a session: blocked is
+	// exactly where work goes quiet, so it is the last thing to hide.
+	Open bool
 	// Orphaned keeps live projects with no open action and no snooze: work
 	// that is on no surface anyone reads.
 	//
@@ -210,6 +216,14 @@ func (f ProjectFilter) clauses(now string) ([]string, []any) {
 	if f.Status != "" {
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
+	}
+	if f.Open {
+		placeholders := make([]string, len(closedProjectStatuses))
+		for i, status := range closedProjectStatuses {
+			placeholders[i] = "?"
+			args = append(args, status)
+		}
+		where = append(where, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ", ")))
 	}
 	if f.Expired {
 		where = append(where, "status = ? AND snooze_until IS NOT NULL AND snooze_until < ?")

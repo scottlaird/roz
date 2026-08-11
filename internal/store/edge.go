@@ -15,9 +15,13 @@ import (
 // action.state, which the diff already logs; a second event saying the same
 // thing would only be a second thing to keep true.
 const (
-	eventBlocked  = "blocked"
-	eventLinked   = "linked"
-	eventUnlinked = "unlinked"
+	eventBlocked = "blocked"
+	// eventUnblocked is the edge being removed, not the state changing. A
+	// blocker closing shows up as the ordinary state diff; this is somebody
+	// deciding the dependency was wrong rather than satisfied.
+	eventUnblocked = "unblocked"
+	eventLinked    = "linked"
+	eventUnlinked  = "unlinked"
 )
 
 // How a pull request relates to an action.
@@ -77,10 +81,22 @@ func (t *Tx) AddBlocker(ctx context.Context, blocker, blocked *Action) error {
 // dropped are left alone: a snooze is a decision about time and outranks the
 // graph, and a closed action's state is history.
 func (t *Tx) applyBlockedState(ctx context.Context, a *Action) error {
-	if a.State != ActionReady && a.State != ActionBlocked {
+	// Re-read rather than trust the caller's copy, for the reason
+	// applyProjectBlockedState gives: deciding from a stale status writes the
+	// old world back, and an action snoozed since it was loaded would be
+	// quietly woken. Nothing in the schema would catch that one — action has
+	// no CHECK coupling state to snooze_until the way project does — so it
+	// would be silent rather than loud.
+	current, err := t.LoadAction(ctx, a.ID)
+	if err != nil {
+		return err
+	}
+	if current.State != ActionReady && current.State != ActionBlocked {
+		*a = *current
 		return nil
 	}
-	blockers, err := t.OpenBlockers(ctx, a.ID)
+
+	blockers, err := t.OpenBlockers(ctx, current.ID)
 	if err != nil {
 		return err
 	}
@@ -89,13 +105,14 @@ func (t *Tx) applyBlockedState(ctx context.Context, a *Action) error {
 	if len(blockers) > 0 {
 		want = ActionBlocked
 	}
-	if a.State == want {
+	if current.State == want {
+		*a = *current
 		return nil
 	}
 
-	after := a.Clone()
+	after := current.Clone()
 	after.State = want
-	if _, err := t.Update(ctx, a, after); err != nil {
+	if _, err := t.Update(ctx, current, after); err != nil {
 		return err
 	}
 	*a = *after

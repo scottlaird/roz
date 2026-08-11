@@ -62,7 +62,7 @@ func runPRAnnounce(cmd *cobra.Command, args []string) error {
 	if _, _, err := store.ParsePRKey(args[0]); err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

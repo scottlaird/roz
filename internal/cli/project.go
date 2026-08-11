@@ -115,7 +115,7 @@ func runProjectAdd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func runProjectShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -565,7 +565,7 @@ func updateProject(cmd *cobra.Command, id string, change func(context.Context, *
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -636,7 +636,7 @@ func newProjectListCmd() *cobra.Command {
 func runProjectList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -759,7 +759,7 @@ func runProjectClose(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

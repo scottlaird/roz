@@ -94,7 +94,7 @@ func annotate(cmd *cobra.Command, id string, write func(annotateContext) error) 
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

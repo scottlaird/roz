@@ -48,11 +48,6 @@ them.
 
 ## Smaller gaps
 
-- [ ] `--db` is a package-level variable in `internal/cli`, written by flag
-      parsing. Harmless for one-shot commands and for `serve`, which opens the
-      store once before any service starts, but it means two commands cannot
-      safely run in one process — a puzzling test flake in waiting. Thread the
-      flag through instead.
 - [ ] `todo db backup` and `todo db restore` — thin wrappers over SQLite, so
       the syntax does not have to be remembered. `VACUUM INTO` is the backup:
       it is consistent against a live database, which a file copy is not.
@@ -193,6 +188,9 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   in the command, for the same reason the field kinds do.
 - **`--db` is the only setting that stays a flag**, because it says which
   database to open and cannot be read out of one that has not been chosen yet.
+  It is bound to the command tree rather than to a package variable, so two
+  trees in one process each get their own — which `todo mcp` needs, since it
+  builds a fresh tree per tool call.
   `--jira-base-url` and `--jira-prefix` are gone; `TODO_JIRA_BASE_URL` and
   `TODO_JIRA_PREFIXES` remain as single-run overrides.
 - **A long-running command exits when the database migrates under it.**

@@ -53,11 +53,19 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	//
 	// The handle is kept open for the schema guard. Tool calls do not use it —
 	// each one runs the command tree, which opens its own.
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
+
+	// Resolved once here rather than read per call: the tool tree gets the
+	// path handed to it, so nothing it does depends on a flag this process
+	// might parse again.
+	dbPath, err := dbPathFrom(cmd)
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()

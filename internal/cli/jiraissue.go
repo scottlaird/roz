@@ -40,7 +40,7 @@ func runJiraShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func runJiraList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func runJiraLinkChange(cmd *cobra.Command, link bool) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

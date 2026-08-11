@@ -99,7 +99,7 @@ func runPRTrack(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func runPRSet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func runPRShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}
@@ -316,7 +316,7 @@ func runPRList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := openStore()
+	st, err := openStore(cmd)
 	if err != nil {
 		return err
 	}

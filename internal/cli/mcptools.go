@@ -264,7 +264,10 @@ func (m *mcpTools) Call(ctx context.Context, name string, arguments map[string]a
 	}
 
 	// A fresh tree per call: cobra keeps parsed values on the command, so a
-	// reused one would carry the last call's flags into this one.
+	// reused one would carry the last call's flags into this one. Keeping
+	// them there rather than in package variables is also what makes two
+	// calls at once safe, which matters the moment this is served over
+	// anything but stdio.
 	root := NewRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -43,8 +42,9 @@ func newInitCmd() *cobra.Command {
 }
 
 func runInit(cmd *cobra.Command, _ []string) error {
-	if dbPath == "" {
-		return errors.New("no database path: pass --db or set TODO_DB")
+	dbPath, err := dbPathFrom(cmd)
+	if err != nil {
+		return err
 	}
 
 	requested, err := requestedPrefixes(cmd)
@@ -62,7 +62,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(out, "initialised %s (%s)\n", dbPath, store.FormatPrefixes(effective))
 		return nil
 	}
-	if err := reportIgnoredPrefixes(cmd, requested, effective); err != nil {
+	if err := reportIgnoredPrefixes(cmd, dbPath, requested, effective); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "%s is already initialised (%s)\n", dbPath, store.FormatPrefixes(effective))
@@ -87,7 +87,7 @@ func requestedPrefixes(cmd *cobra.Command) (map[store.Entity]string, error) {
 // reportIgnoredPrefixes fails when the user explicitly asked for a prefix the
 // database does not have. Silently ignoring the flag would leave them
 // believing a rename had happened.
-func reportIgnoredPrefixes(cmd *cobra.Command, requested, effective map[store.Entity]string) error {
+func reportIgnoredPrefixes(cmd *cobra.Command, dbPath string, requested, effective map[store.Entity]string) error {
 	for flag, entity := range map[string]store.Entity{
 		projectPrefixFlag: store.EntityProject,
 		actionPrefixFlag:  store.EntityAction,

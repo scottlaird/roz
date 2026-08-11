@@ -70,6 +70,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	services := []service.Service{
+		// First because it governs the rest: if the schema moves, none of them
+		// should keep running, and the service runner stops the others as soon
+		// as this one returns an error.
+		&schemaGuard{store: st},
 		server.New(options.addr, pageFor(st), st.LatestEventSeq, cmd.ErrOrStderr()),
 	}
 	if !options.noSync {

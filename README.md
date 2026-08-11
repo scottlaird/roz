@@ -432,6 +432,22 @@ Nothing in the suite reaches the network or the real `gh`: GitHub reads go
 through an injected runner, and the store tests open a fresh database per test
 with the clock advanced a second per transaction.
 
+## Upgrading while something is running
+
+`serve`, `syncer`, `watch` and `mcp` read the schema once, at startup. If you
+rebuild the binary and run `todo init` from another terminal, they stop:
+
+```console
+$ todo serve
+serving http://127.0.0.1:8737/
+Error: schema: the database migrated while this was running: now migration 10 (10 applied), was migration 9 (9 applied); restart to pick up the new schema
+```
+
+They exit rather than reload, because a restart is cheap and a process serving
+a schema it does not understand is not. Migration `0008` dropped five columns
+from `project`, which is the shape that breaks a server left running from the
+morning — and it would have surfaced as whichever query ran first, not as this.
+
 ## Where to read more
 
 - [`TODO.md`](TODO.md) — what is left, what is settled, and what is

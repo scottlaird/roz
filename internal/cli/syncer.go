@@ -82,5 +82,5 @@ func runSyncer(cmd *cobra.Command, _ []string) error {
 
 	// Run through the service runner even for one service, so that adding a
 	// web server or a log tailer later is a matter of listing them here.
-	return service.Run(ctx, syncer)
+	return service.Run(ctx, syncer, &schemaGuard{store: st})
 }

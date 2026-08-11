@@ -75,6 +75,28 @@ them.
 - [ ] Nothing consumes `todo watch`. Sync raises a `pr_unresolvable` exception
       when a tracked pull request goes invisible, and today only a human
       watching would see it.
+- [ ] **`pr.checks` should be a `pr_check` table rather than a JSON blob.**
+      One column holding the whole map means the diff engine can only say "the
+      map changed", so every job starting or finishing re-emits all of it. Two
+      pull requests produced about fifteen checks events in an hour and none of
+      them said anything useful; the signal worth acting on was always
+      `checks_state`.
+
+      Summarising the blob to counts is not the fix either. The payload is the
+      failing check's *name* — counts still need a follow-up query, and earn a
+      place only as a progress hint.
+
+      A row per check makes the existing machinery do the work: one event per
+      check that actually moved, named. Most transitions are `"" → SUCCESS`,
+      which is `auto`-shaped in the sense `last_synced_at` already establishes
+      — write it, do not log it — leaving transitions into and out of
+      `FAILURE`, `ERROR` and `CANCELLED` as the events worth having. A check
+      reporting `FAILURE` again is not news, and the blob cannot tell *newly
+      broken* from *still broken*.
+
+      It also makes `pr_checks_green` expressible as a predicate, which it is
+      not against a blob, and answers per-check questions — whether a required
+      check passed or merely skipped is not visible today.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
@@ -152,6 +174,87 @@ them.
 - [ ] Tracking a pull request assigned to us rather than authored by us has
       nowhere to record *why* it is tracked. That is a schema change, and it is
       what `review` needs before it can close on a predicate.
+- [ ] **A timeout on waiting — `okay_to_wait_until` on an action.** A
+      `wait_review` or a `merge` that has been sitting long enough should ask
+      for attention. [#47](https://github.com/scottlaird/todo/pull/47) makes
+      this more necessary rather than less: excluding `rank_class = wait` from
+      `--unblocked` was right, since four of ten queue items were waits, but a
+      waiting action now surfaces *nowhere* until someone runs `--open` and
+      reads it. Before it was at least visible and merely noisy.
+
+      Shape: an authored per-action deadline, defaulting from the verb or the
+      repository rather than typed every time, and an `exception` event when it
+      passes. That reuses `severity = 'exception'`, which is already what
+      monitors filter on, rather than inventing a second alerting path.
+
+      It is **not** a snooze. A snooze hides something until a date; this
+      reveals something after one.
+- [ ] **A configuration table.** The Jira base URL, the project prefixes worth
+      linking, and the name the queue belongs to are all flags today, so they
+      have to be passed on every invocation and are absent from anything
+      reading the database directly.
+
+      Columns rather than a string→string store, on the reasoning the rest of
+      the schema follows: an entity with authored columns gets the diff-based
+      event log for free — a settings change is exactly the sort of thing worth
+      having in the log — plus CHECK constraints and typing. A key-value table
+      gives none of that and invites `enable_foo="true"`. The cost is a
+      migration per setting, which for a handful of real settings is the right
+      trade. `sequence` is already this shape: a small table keyed by purpose,
+      not a generic bag.
+- [ ] **Some fields are prose and should say so — `format:"markdown"`.** The
+      candidates are the ones written as sentences rather than values:
+      `action.why`, `project.summary`, both `snooze_reason`s, and the notes.
+      Titles are arguably plain, and a Jira summary is not ours to interpret.
+
+      `format:"json"` is the precedent, and this would work the same way:
+      store the source, render at the edge. `show -o json` keeps returning what
+      was written and the log keeps recording source in `old_value`, so only
+      the page renders.
+
+      The cost is not the renderer. It is that **linkification stops being a
+      regex**: a regex over the string will rewrite an identifier inside a code
+      span or inside an existing link, producing nested anchors and broken
+      code. It wants to become an AST transformer visiting text nodes only.
+
+      Validation barely changes, which is the trap — almost any string is valid
+      Markdown, so the tag buys nothing at the input boundary. The one thing
+      worth rejecting is raw HTML, and rejecting it on input says more than
+      stripping it at render, because the author finds out.
+- [ ] **A `git_ref` entity, and the two predicates it enables.** Waiting for a
+      release is currently a snooze to a guessed date, which is wrong in both
+      directions: if the release slips the item wakes early, and if it ships
+      early the item sleeps through it.
+
+      An observed row — repository, name, kind, commit, created_at — supports
+      both `ref_exists`, for "the vX.Y branch was cut", and `ref_contains`, for
+      "this pull request is in that release". The first is a condition in its
+      own right, and it is also a cheap proxy for the second: where a release
+      is tagged only once the previous one has finished rolling out, waiting
+      for the next `.0` says "the previous one is deployed" without observing
+      any deployment. The proxy can only fire late, never early, which is the
+      harmless direction for a gate.
+
+      Two things to get right. The argument wants to be a pattern or a lower
+      bound rather than a literal name, since at the time the block is written
+      nobody knows whether the next release is `v1.5.0` or `v1.5.1`. And
+      ancestry cannot be `merge-base --is-ancestor` against a merge commit: a
+      change cherry-picked onto a release branch has a different SHA there than
+      on the default branch, so the obvious check reports "not present" for
+      every patch release. That wants `git cherry` or patch-id matching.
+
+      Predicates stay pure over the database — the work is the observation and
+      its sync, not the predicate.
+- [ ] **Declare relationships in the struct, the way columns are declared.**
+      `JiraKey` was visibly a many-to-one. The many-to-many that replaced it is
+      visible nowhere: the join table, its cascade, and what `-o json` should
+      carry are each decided in a different place, by hand, and nothing checks
+      that they agree.
+
+      Four relationship shapes exist and none is declared. The value is not
+      generating the SQL — it is that a reader of the struct can see what an
+      entity is connected to, and that `show`, the page and the cascade stop
+      being three independent answers to the same question.
 
 ## Open questions
 

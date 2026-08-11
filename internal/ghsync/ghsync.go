@@ -40,6 +40,9 @@ type Result struct {
 	// is something a person should hear about.
 	Missing map[string]string
 
+	// Overdue lists the actions that have been waiting longer than their verb
+	// allows. Reported, not changed: what to do about one is a judgement.
+	Overdue []store.Overdue
 	// Settled lists the actions closed because what was observed satisfied
 	// their predicate, with whatever each closure cascaded into.
 	Settled []store.Settled
@@ -48,6 +51,9 @@ type Result struct {
 	// polling on a loop can pace itself.
 	RateLimit github.RateLimit
 }
+
+// OverdueCount is how many waits have gone on too long.
+func (r Result) OverdueCount() int { return len(r.Overdue) }
 
 // SettledCount is how many actions closed on their own.
 func (r Result) SettledCount() int { return len(r.Settled) }
@@ -70,7 +76,10 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 		return Result{}, err
 	}
 	if len(tracked) == 0 {
-		return result, nil
+		// Nothing to poll, but a deadline is not a fact about GitHub: an
+		// action can sit past its allowance in a database with no pull
+		// requests tracked at all.
+		return result, checkOverdue(ctx, st, &result)
 	}
 
 	keys := make([]string, len(tracked))
@@ -109,7 +118,27 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
+
+	// After settling, so a step that just closed is not also reported as
+	// having waited too long. Settle is about what finished; this is about
+	// what has not, and finishing wins.
+	if err := checkOverdue(ctx, st, &result); err != nil {
+		return Result{}, err
+	}
 	return result, nil
+}
+
+// checkOverdue records the waits that have gone on too long.
+//
+// Its own function because it runs on both paths out of Sync: whether or not
+// there was anything to poll, an action can be past its deadline.
+func checkOverdue(ctx context.Context, st *store.Store, result *Result) error {
+	overdue, err := st.OverdueWaits(ctx, store.ActorPredicate)
+	if err != nil {
+		return err
+	}
+	result.Overdue = overdue
+	return nil
 }
 
 func applyOne(ctx context.Context, st *store.Store, observed github.PullRequest) ([]store.Change, error) {
@@ -139,6 +168,14 @@ func applyOne(ctx context.Context, st *store.Store, observed github.PullRequest)
 	// failure leaves neither half applied. ApplyChecks decides for itself
 	// which transitions are worth logging; most are not.
 	if err := tx.ApplyChecks(ctx, observed.Key, observed.Checks); err != nil {
+		return nil, err
+	}
+
+	// When reviewers could first have seen it is a fact about the pull
+	// request, and the actions waiting on it inherit it. This is the only
+	// thing that ever writes action.waiting_since, which the sketch describes
+	// as "derivable from review requests" and nothing had derived.
+	if err := tx.ObserveWaitingSince(ctx, observed.Key, observed.FirstReviewRequestedAt); err != nil {
 		return nil, err
 	}
 

@@ -81,6 +81,16 @@ type Action struct {
 	// An action nobody has touched for a month is fine if it was verified on
 	// Friday and alarming if it was not.
 	LastVerifiedAt sql.NullString `db:"last_verified_at" kind:"observed"`
+
+	// OkayToWaitUntil is when it stops being reasonable to still be waiting
+	// on this one. NULL is the ordinary case and means the verb's WaitDays,
+	// resolved when the deadline is checked rather than copied here — so
+	// changing an allowance reaches the actions that never claimed an
+	// exception to it.
+	//
+	// It is not a snooze, and the difference is the whole point: a snooze
+	// hides something until a date, this reveals something after one.
+	OkayToWaitUntil sql.NullString `db:"okay_to_wait_until"`
 }
 
 func (a *Action) table() string       { return "action" }

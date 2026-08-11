@@ -64,7 +64,7 @@ directory.
 | `todo mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
 | `todo serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
 | **vocabulary** | |
-| `todo verb list` | The verbs, how each closes, and its rank class. |
+| `todo verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
 | `todo pipeline list` | The pipelines and their steps. |
 | **the log** | |
 | `todo watch` | Follow the event log, or `--once` to print and exit. |
@@ -595,6 +595,49 @@ written because it is true, unlogged because it would drown the log.
 
 `checks_state` stays on `pr` — GitHub's rollup, and what the page and
 `pr list` show. The per-check detail is on `pr show`.
+
+## When a wait goes on too long
+
+The queue leaves out what you are only waiting on — four of ten items were
+waits, and a queue full of things you cannot act on is not a queue. That was
+right, and it left nothing speaking up when a wait went bad.
+
+```console
+$ todo sync github
+NA1 has been waiting 9 days: wait for review on the nodepool split
+polled 0, 0 changed, 1 overdue
+$ todo watch --once -n 1
+2026-08-11T05:30:35.567Z  exception  predicate  waited_too_long  NA1  wait_review for 9 days, past 2026-08-04 09:00:00
+```
+
+It is an `exception`, which is what a monitor already filters on, rather than
+a second alerting path.
+
+**Reported, never changed.** Nothing is closed, snoozed or reprioritised —
+what to do about a stuck wait is a judgement, and this only says one is
+wanted. **It is not a snooze:** a snooze hides something until a date, this
+reveals something after one.
+
+The allowance lives on the verb, as `wait_days`, because how long is
+reasonable is a property of the kind of waiting rather than of the item.
+`wait_review` gets three days and `merge` one; every other verb is NULL and
+never times out, which is right for the ones describing your own work —
+nothing is waiting, so nothing can be overdue.
+
+```bash
+todo action set NA1 --okay-to-wait-until 2026-09-01
+```
+
+That is the exception for the one that is different, in either direction. An
+empty value clears it and the verb's allowance applies again.
+
+The clock is `waiting_since` — when reviewers could first have seen it, which
+sync fills from the pull request's first review request — falling back to when
+the action was created where nothing has observed a wait beginning.
+
+A wait is reported once. The log is the record of that, so nothing else has to
+remember; and if the deadline moves out because a fresh review was requested,
+it is reported again, because it is a different wait.
 
 ## Upgrading while something is running
 

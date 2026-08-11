@@ -607,8 +607,7 @@ func writeActionTable(out io.Writer, actions []*store.Action) error {
 	return w.Flush()
 }
 
-// The edges. Closing is still a stub: it walks these, and arrives with the
-// cascade.
+// The edges. Closing walks these: see close.go for the cascade.
 
 const (
 	flagFrom   = "from"

@@ -241,6 +241,11 @@ CREATE TABLE action (
                   ('completed','superseded','dropped','obsolete')),
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
+  -- observed: when this was last checked against reality, as distinct from
+  -- updated_at, which every write moves. Written only by `todo verify`, which
+  -- the sketch groups with sync as a writer of observed fields. Last because
+  -- ADD COLUMN put it there. See 0011.
+  last_verified_at TEXT,
   UNIQUE (kind, n),
   CHECK (id = kind || n),
   CHECK (hidden_behind IS NULL OR hidden_behind <> id),

@@ -33,6 +33,18 @@ const (
 	// claim Jira said it.
 	ActorJiraManual Actor = "sync:jira-manual"
 
+	// ActorVerify records that someone checked an item against reality.
+	//
+	// A sync actor, because last_verified_at is observed: verifying is asking
+	// the world whether the record is still true, not deciding what it should
+	// say. The sketch groups `todo verify` with `todo sync` for that reason —
+	// they are the only writers of observed fields.
+	//
+	// Distinct from the sync sources for the same reason ActorSlackManual is:
+	// nothing reported this, a person went and looked, and the log should say
+	// which.
+	ActorVerify Actor = "sync:verify"
+
 	// ActorPredicate closes actions whose predicate has come true.
 	//
 	// It is deliberately not a sync actor. Closing writes authored columns,

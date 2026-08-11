@@ -119,14 +119,16 @@ func openStore() (*store.Store, error) {
 // order, which is honest about being arbitrary; asking for priority is a
 // choice the caller makes.
 const (
-	sortFlag     = "sort"
-	sortCreated  = "created"
-	sortPriority = "priority"
+	sortFlag      = "sort"
+	sortCreated   = "created"
+	sortPriority  = "priority"
+	sortStaleness = "staleness"
 )
 
 // addSortFlag registers --sort on a list command.
 func addSortFlag(cmd *cobra.Command) {
-	cmd.Flags().String(sortFlag, sortCreated, "order: created or priority")
+	cmd.Flags().String(sortFlag, sortCreated,
+		"order: created, priority, or staleness — longest un-verified first")
 }
 
 // sortFrom resolves --sort into the store's ordering.
@@ -140,8 +142,10 @@ func sortFrom(cmd *cobra.Command) (string, error) {
 		return store.OrderCreated, nil
 	case sortPriority:
 		return store.OrderPriority, nil
+	case sortStaleness:
+		return store.OrderStaleness, nil
 	default:
-		return "", fmt.Errorf("--%s %q is not an order: use %s or %s",
-			sortFlag, value, sortCreated, sortPriority)
+		return "", fmt.Errorf("--%s %q is not an order: use %s, %s or %s",
+			sortFlag, value, sortCreated, sortPriority, sortStaleness)
 	}
 }

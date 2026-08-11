@@ -28,7 +28,7 @@ type loggedEvent struct {
 func newStore(t *testing.T) *Store {
 	t.Helper()
 	path := newDBPath(t)
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	db, err := Open(path)

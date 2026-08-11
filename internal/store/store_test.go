@@ -1,12 +1,15 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/todo/internal/schema"
 )
 
 // newDBPath returns a path inside a fresh temp dir, with a missing parent
@@ -19,12 +22,15 @@ func newDBPath(t *testing.T) string {
 func TestInitCreatesDatabase(t *testing.T) {
 	path := newDBPath(t)
 
-	created, _, err := Init(path, testPrefixes())
+	result, err := Init(path, testPrefixes())
 	if err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
-	if want := true; created != want {
-		t.Errorf("Init() created = %v, want %v", created, want)
+	if want := true; result.Created != want {
+		t.Errorf("Init() created = %v, want %v", result.Created, want)
+	}
+	if result.From != 0 || result.To == 0 {
+		t.Errorf("Init() schema %d → %d, want 0 → the current version", result.From, result.To)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("database file not created: %v", err)
@@ -55,17 +61,20 @@ func TestInitCreatesDatabase(t *testing.T) {
 func TestInitPreservesExistingData(t *testing.T) {
 	path := newDBPath(t)
 
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("first Init() returned error: %v", err)
 	}
 	setNextN(t, path, EntityAction, 42)
 
-	created, _, err := Init(path, testPrefixes())
+	result, err := Init(path, testPrefixes())
 	if err != nil {
 		t.Fatalf("second Init() returned error: %v", err)
 	}
-	if want := false; created != want {
-		t.Errorf("second Init() created = %v, want %v", created, want)
+	if want := false; result.Created != want {
+		t.Errorf("second Init() created = %v, want %v", result.Created, want)
+	}
+	if result.From != result.To {
+		t.Errorf("re-init migrated %d → %d, want nothing to apply", result.From, result.To)
 	}
 
 	// A reset counter would hand out an identifier that has already been used.
@@ -77,7 +86,7 @@ func TestInitPreservesExistingData(t *testing.T) {
 func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 	path := newDBPath(t)
 
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	latest, err := LatestSchemaVersion()
@@ -86,7 +95,7 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 	}
 	recordFutureMigration(t, path, latest+1)
 
-	if _, _, err := Init(path, testPrefixes()); err == nil {
+	if _, err := Init(path, testPrefixes()); err == nil {
 		t.Error("Init() on a newer schema version returned nil, want an error")
 	}
 }
@@ -94,7 +103,7 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 func TestInitCreatesParentDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a", "b", "c", "todo.db")
 
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Dir(path)); err != nil {
@@ -106,7 +115,7 @@ func TestInitCreatesParentDirectory(t *testing.T) {
 // than in schema.sql: they must hold on a connection Init did not open.
 func TestConnectionPragmas(t *testing.T) {
 	path := newDBPath(t)
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -140,7 +149,7 @@ func TestConnectionPragmas(t *testing.T) {
 // TestForeignKeysEnforced checks the pragma has teeth, not just the value.
 func TestForeignKeysEnforced(t *testing.T) {
 	path := newDBPath(t)
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -168,7 +177,7 @@ func TestOpenRejectsNonDatabase(t *testing.T) {
 		t.Fatalf("writing fixture: %v", err)
 	}
 
-	if _, _, err := Init(path, testPrefixes()); err == nil {
+	if _, err := Init(path, testPrefixes()); err == nil {
 		t.Error("Init() on a non-database file returned nil, want an error")
 	}
 }
@@ -252,5 +261,57 @@ func setUserVersion(t *testing.T, path string, version int) {
 
 	if _, err := db.Exec("PRAGMA user_version = " + strconv.Itoa(version)); err != nil {
 		t.Fatalf("setting user_version: %v", err)
+	}
+}
+
+// TestInitReportsAMigration: a re-run that moves the schema has to report the
+// versions it moved between, since saying so is the whole reason to re-run.
+func TestInitReportsAMigration(t *testing.T) {
+	ctx := context.Background()
+	path := newDBPath(t)
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations() returned error: %v", err)
+	}
+	if len(migrations) < 2 {
+		t.Skip("needs at least two migrations to stop short of the newest")
+	}
+	behind := migrations[:len(migrations)-1]
+
+	// Build the database the way a previous build would have left it: every
+	// migration but the last, and seeded, so this is not a new database.
+	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
+		t.Fatalf("creating the directory: %v", err)
+	}
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	if err := ensureBookkeeping(ctx, db); err != nil {
+		t.Fatalf("ensureBookkeeping() returned error: %v", err)
+	}
+	for _, m := range behind {
+		if err := applyMigration(ctx, db, m); err != nil {
+			t.Fatalf("applying %s: %v", m.Name, err)
+		}
+	}
+	if err := seedInTransaction(ctx, db, testPrefixes()); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	db.Close()
+
+	result, err := Init(path, testPrefixes())
+	if err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	if result.Created {
+		t.Error("Init() created = true on a seeded database, want false")
+	}
+	if got, want := result.From, behind[len(behind)-1].Version; got != want {
+		t.Errorf("Init() from = %d, want %d", got, want)
+	}
+	if got, want := result.To, migrations[len(migrations)-1].Version; got != want {
+		t.Errorf("Init() to = %d, want %d", got, want)
 	}
 }

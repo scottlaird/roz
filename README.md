@@ -87,12 +87,24 @@ rather the point of the tool.
 
 ```console
 $ todo init
-initialised /home/scott/.local/share/todo/todo.db (action=NA, project=TD)
+initialised /home/scott/.local/share/todo/todo.db (schema 15, action=NA, project=TD)
 ```
 
 Prefixes are chosen here and are write-once — identifiers get quoted in
 tickets and said out loud, so they cannot be renamed later. Pass
 `--project-prefix` and `--action-prefix` if `TD`/`NA` are not what you want.
+
+`init` is also the upgrade path, and is safe to re-run. It says which of the
+three things happened, so a schema that moved is visible rather than folded
+into a note about the database already existing:
+
+```console
+$ todo init
+migrated /home/scott/.local/share/todo/todo.db: schema 14 → 15 (action=NA, project=TD)
+
+$ todo init
+/home/scott/.local/share/todo/todo.db is up to date (schema 15, action=NA, project=TD)
+```
 
 ```console
 $ todo config set --owner scott --jira-base-url https://example.atlassian.net/browse --jira-prefix CDSS

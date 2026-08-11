@@ -52,21 +52,37 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	created, effective, err := store.Init(dbPath, requested)
+	result, err := store.Init(dbPath, requested)
 	if err != nil {
 		return err
 	}
 
-	out := cmd.OutOrStdout()
-	if created {
-		fmt.Fprintf(out, "initialised %s (%s)\n", dbPath, store.FormatPrefixes(effective))
-		return nil
+	if !result.Created {
+		if err := reportIgnoredPrefixes(cmd, dbPath, requested, result.Prefixes); err != nil {
+			return err
+		}
 	}
-	if err := reportIgnoredPrefixes(cmd, dbPath, requested, effective); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "%s is already initialised (%s)\n", dbPath, store.FormatPrefixes(effective))
+
+	fmt.Fprintln(cmd.OutOrStdout(), initMessage(dbPath, result))
 	return nil
+}
+
+// initMessage reports what init did, in the three states it can leave behind.
+//
+// Three rather than two: migrating an existing database is the whole reason
+// to re-run this, and folding it into "already initialised" hid the one thing
+// that had changed. Nothing here is a complaint — re-running init is a normal
+// way to ask what is there — so the unchanged case states the version too.
+func initMessage(dbPath string, r store.InitResult) string {
+	prefixes := store.FormatPrefixes(r.Prefixes)
+	switch {
+	case r.Created:
+		return fmt.Sprintf("initialised %s (schema %d, %s)", dbPath, r.To, prefixes)
+	case r.From != r.To:
+		return fmt.Sprintf("migrated %s: schema %d → %d (%s)", dbPath, r.From, r.To, prefixes)
+	default:
+		return fmt.Sprintf("%s is up to date (schema %d, %s)", dbPath, r.To, prefixes)
+	}
 }
 
 func requestedPrefixes(cmd *cobra.Command) (map[store.Entity]string, error) {

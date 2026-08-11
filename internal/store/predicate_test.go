@@ -136,7 +136,7 @@ func TestVocabularyMatchesTheSchemasRule(t *testing.T) {
 // for. A verb whose function this build lacks stops the tool at startup.
 func TestOpenStoreRefusesAnUnknownPredicate(t *testing.T) {
 	path := newDBPath(t)
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func TestOpenStoreRefusesAnUnknownPredicate(t *testing.T) {
 // should not stop the tool. Rows are never deleted, only deactivated.
 func TestRetiredVerbsDoNotBlockStartup(t *testing.T) {
 	path := newDBPath(t)
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 

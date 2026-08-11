@@ -32,7 +32,7 @@ func newStore(t *testing.T) (*store.Store, string) {
 	ctx := context.Background()
 
 	path := filepath.Join(t.TempDir(), "todo.db")
-	if _, _, err := store.Init(path, map[store.Entity]string{
+	if _, err := store.Init(path, map[store.Entity]string{
 		store.EntityProject: "SL", store.EntityAction: "NA",
 	}); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
@@ -282,7 +282,7 @@ func TestMissingRaisesAnException(t *testing.T) {
 
 func TestSyncWithNothingTracked(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "todo.db")
-	if _, _, err := store.Init(path, map[store.Entity]string{
+	if _, err := store.Init(path, map[store.Entity]string{
 		store.EntityProject: "SL", store.EntityAction: "NA",
 	}); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
@@ -531,7 +531,7 @@ func bareStore(t *testing.T) *store.Store {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "todo.db")
-	if _, _, err := store.Init(path, map[store.Entity]string{
+	if _, err := store.Init(path, map[store.Entity]string{
 		store.EntityProject: "SL", store.EntityAction: "NA",
 	}); err != nil {
 		t.Fatalf("Init() returned error: %v", err)

@@ -315,6 +315,16 @@ CREATE TABLE pr (
   last_synced_at     TEXT,
   -- unresolved and not outdated; NULL means never synced. See 0003.
   unresolved_threads INTEGER,
+  -- authored, and the only authored column here: everything else about a pull
+  -- request is observed, and the decision to track one is the row's existence.
+  --
+  -- NULL means the repository's, read when the chain is instantiated rather
+  -- than copied at track time. Unlike github_repo.pipeline against the
+  -- default: a default is a guess and freezing it is protective, a
+  -- repository's pipeline is the policy and should reach the pull requests
+  -- that never claimed an exception to it. Last because ADD COLUMN put it
+  -- there. See 0010.
+  pipeline           TEXT REFERENCES action_pipeline(name),
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;

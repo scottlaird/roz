@@ -601,3 +601,140 @@ func TestCloseProjectClearsASnooze(t *testing.T) {
 		t.Errorf("snooze_until = %v, want it cleared", result.Project.SnoozeUntil)
 	}
 }
+
+// setPRPipeline states one pull request's own chain.
+func setPRPipeline(t *testing.T, st *Store, id string, pipeline sql.NullString) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadPR(ctx, id)
+	if err != nil {
+		t.Fatalf("LoadPR() returned error: %v", err)
+	}
+	after := before.Clone()
+	after.Pipeline = pipeline
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+func createdVerbs(created []*Action) []string {
+	verbs := make([]string, len(created))
+	for i, a := range created {
+		verbs[i] = a.Verb
+	}
+	return verbs
+}
+
+// TestPRPipelineOverridesTheRepository is the whole of SL24: the repository
+// says how pull requests normally reach merge, and this one does not.
+func TestPRPipelineOverridesTheRepository(t *testing.T) {
+	st := newStore(t)
+
+	trackRepo(t, st, "scottlaird/todo")
+	setPipeline(t, st, "scottlaird/todo", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+	setPRPipeline(t, st, pr.ID, sql.NullString{String: PipelineDirect, Valid: true})
+	a := addAction(t, st, "hotfix the endpoint", "write")
+
+	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
+
+	if result.Pipeline != PipelineDirect {
+		t.Errorf("Pipeline = %q, want %q", result.Pipeline, PipelineDirect)
+	}
+	// direct is undraft then merge; review would have added the two review
+	// steps between them.
+	if got := createdVerbs(result.Created); !equalStrings(got, []string{"undraft", "merge"}) {
+		t.Errorf("created %v, want the direct chain", got)
+	}
+}
+
+// TestPRWithoutAPipelineFollowsTheRepository: the ordinary case, and the one
+// that must keep working.
+func TestPRWithoutAPipelineFollowsTheRepository(t *testing.T) {
+	st := newStore(t)
+
+	trackRepo(t, st, "scottlaird/todo")
+	setPipeline(t, st, "scottlaird/todo", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+	a := addAction(t, st, "write the endpoint", "write")
+
+	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
+
+	if result.Pipeline != PipelineReview {
+		t.Errorf("Pipeline = %q, want the repository's %q", result.Pipeline, PipelineReview)
+	}
+}
+
+// TestPRPipelineIsReadAtCloseNotAtTrack: unset defers to the repository *now*,
+// so a repository whose policy changes carries the pull requests that never
+// claimed an exception to it. Copying the value at track time would have
+// frozen this one on the old chain.
+func TestPRPipelineIsReadAtCloseNotAtTrack(t *testing.T) {
+	st := newStore(t)
+
+	trackRepo(t, st, "scottlaird/todo")
+	setPipeline(t, st, "scottlaird/todo", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+
+	// The policy changes after the pull request was tracked.
+	setPipeline(t, st, "scottlaird/todo", PipelineDirect)
+
+	a := addAction(t, st, "write the endpoint", "write")
+	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
+
+	if result.Pipeline != PipelineDirect {
+		t.Errorf("Pipeline = %q, want the repository's new %q", result.Pipeline, PipelineDirect)
+	}
+}
+
+// TestClearingAPRPipelineReturnsItToTheRepository: the exception has to be
+// revocable, or naming one is a decision nobody can take back.
+func TestClearingAPRPipelineReturnsItToTheRepository(t *testing.T) {
+	st := newStore(t)
+
+	trackRepo(t, st, "scottlaird/todo")
+	setPipeline(t, st, "scottlaird/todo", PipelineReview)
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+	setPRPipeline(t, st, pr.ID, sql.NullString{String: PipelineDirect, Valid: true})
+	setPRPipeline(t, st, pr.ID, sql.NullString{})
+
+	a := addAction(t, st, "write the endpoint", "write")
+	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
+
+	if result.Pipeline != PipelineReview {
+		t.Errorf("Pipeline = %q, want the repository's %q back", result.Pipeline, PipelineReview)
+	}
+}
+
+// TestPRPipelineIsAuthored: it is a judgement about how this change should be
+// handled, so sync must not be able to write it — the same rule that keeps a
+// repository's pipeline out of sync's hands.
+func TestPRPipelineIsAuthored(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	trackRepo(t, st, "scottlaird/todo")
+	pr := trackPR(t, st, "scottlaird/todo", 1)
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := pr.Clone()
+	after.Pipeline = sql.NullString{String: PipelineDirect, Valid: true}
+	if _, err := tx.Update(ctx, pr, after); err == nil {
+		t.Error("sync wrote pr.pipeline, want the authored rule to refuse it")
+	}
+}

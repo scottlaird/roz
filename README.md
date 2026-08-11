@@ -55,7 +55,8 @@ directory.
 | **GitHub** | |
 | `todo repo track` | Start tracking a repository and choose its pipeline. |
 | `todo repo show` / `list` / `set` | Read and change repository policy. |
-| `todo pr track` | Start tracking a pull request, keyed `owner/repo#number`. |
+| `todo pr track` | Start tracking a pull request, keyed `owner/repo#number`. `--pipeline` if this one reaches merge differently from its repository. |
+| `todo pr set` | Change that pipeline, or clear it. The only authored column a pull request has. |
 | `todo pr show` / `list` | Read tracked pull requests. |
 | `todo pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync. |
 | `todo sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
@@ -384,14 +385,14 @@ and stdout, for an agent to call without shelling out.
 than written out again, so the two cannot drift: the name is the command path
 with an underscore (`action add` → `action_add`), the description is that
 command's own help, and the arguments are its flags and whatever its usage
-line names. Forty-five of them:
+line names. Forty-six of them:
 
 | | |
 |---|---|
 | settings | `config_show` `config_set` |
 | projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_jira` `project_link-jira` `project_unlink-jira` |
 | actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
-| GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_show` `pr_list` `pr_announce` `sync` |
+| GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_set` `pr_show` `pr_list` `pr_announce` `sync` |
 | the log | `note` `exception` `watch` (bounded to one read) |
 | jira | `jira_show` `jira_list` |
 | other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
@@ -431,6 +432,42 @@ gofmt -l . && go vet ./... && go test -race ./...
 Nothing in the suite reaches the network or the real `gh`: GitHub reads go
 through an injected runner, and the store tests open a fresh database per test
 with the clock advanced a second per transaction.
+
+## When one pull request is different
+
+A repository's pipeline is the usual answer — right almost always, and wrong
+exactly when it matters. A hotfix that skips review, or a change to protected
+code needing more than the usual steps, says so for itself:
+
+```console
+$ todo pr track scottlaird/todo#1 --pipeline direct
+scottlaird/todo#1
+$ todo pr list
+ID                 STATE  DRAFT  REVIEW  MERGE  CHECKS  FROZEN  PIPELINE  TITLE
+scottlaird/todo#1  -      -      -       -      -       no      direct    -
+scottlaird/todo#2  -      -      -       -      -       no      -         -
+```
+
+The `PIPELINE` column appears only when something is using it. Unset is the
+ordinary case and means the repository's — **read when the chain is
+instantiated, not copied at track time**, so changing a repository's policy
+reaches the pull requests that never claimed an exception to it. That is
+deliberately unlike `repo track`, which resolves the *default* eagerly: a
+default is a guess made in the absence of policy, and freezing it protects
+repositories already tracked from a pipeline being retired or reordered
+underneath them.
+
+Learning a pull request is a hotfix after tracking it is the common case, so
+the decision is revisable, and an empty value gives it back:
+
+```console
+$ todo pr set scottlaird/todo#1 --pipeline ""
+scottlaird/todo#1 pipeline: "direct" → ""
+```
+
+Changing it affects the chain the next close instantiates. Actions already
+created are left alone — they exist, and something may already be waiting on
+them.
 
 ## Upgrading while something is running
 

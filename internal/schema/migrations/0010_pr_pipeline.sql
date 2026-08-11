@@ -1,0 +1,16 @@
+-- A pull request may differ from its repository's chain.
+--
+-- The repository carries the usual answer, which is right almost always and
+-- wrong exactly when it matters: a hotfix that skips review, or a change to
+-- protected code needing more than the usual steps. There was no way to say
+-- so, and the only workaround was creating the actions by hand — which loses
+-- the thing the pipeline exists for, since nothing then closes them.
+--
+-- NULL means the repository's, read when the chain is instantiated rather
+-- than copied here. That is deliberately unlike github_repo.pipeline, which
+-- resolves the *default* eagerly at track time: a default is a guess made in
+-- the absence of policy and freezing it protects repositories already tracked
+-- from a pipeline being retired or reordered under them. A repository's
+-- pipeline is not a guess, it is the policy — so a pull request that never
+-- claimed an exception should follow it when it changes.
+ALTER TABLE pr ADD COLUMN pipeline TEXT REFERENCES action_pipeline(name);

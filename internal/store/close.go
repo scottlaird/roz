@@ -166,28 +166,38 @@ func (p *closePlan) readPipeline(ctx context.Context, tx *Tx) error {
 	if err != nil {
 		return err
 	}
-	r, err := tx.LoadGitHubRepo(ctx, repo)
-	if err != nil {
-		return err
-	}
-	if !r.Pipeline.Valid {
-		return nil
-	}
-
-	pipeline, err := tx.LoadPipeline(ctx, r.Pipeline.String)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%s names pipeline %q, which does not exist",
-				repo, r.Pipeline.String)
-		}
-		return err
-	}
-	p.pipeline = pipeline.Name
-
 	pr, err := tx.LoadPR(ctx, p.subject)
 	if err != nil {
 		return err
 	}
+	r, err := tx.LoadGitHubRepo(ctx, repo)
+	if err != nil {
+		return err
+	}
+
+	// The pull request's own chain wins when it has one; otherwise the
+	// repository's, read here rather than copied when the pull request was
+	// tracked, so a repository whose policy changes carries the pull requests
+	// that never claimed an exception to it.
+	//
+	// named is whichever said so, and is what an error should blame.
+	chain, named := r.Pipeline, repo
+	if pr.Pipeline.Valid {
+		chain, named = pr.Pipeline, p.subject
+	}
+	if !chain.Valid {
+		return nil
+	}
+
+	pipeline, err := tx.LoadPipeline(ctx, chain.String)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%s names pipeline %q, which does not exist",
+				named, chain.String)
+		}
+		return err
+	}
+	p.pipeline = pipeline.Name
 
 	for _, step := range pipeline.Steps {
 		verb, err := tx.LoadVerb(ctx, step)

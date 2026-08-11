@@ -43,12 +43,12 @@ func newRenderCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: runRender,
 	}
-	cmd.Flags().String("out", "-", "output path, or - for stdout")
+	cmd.Flags().String(flagOut, "-", "output path, or - for stdout")
 	return cmd
 }
 
 func runRender(cmd *cobra.Command, _ []string) error {
-	path, err := cmd.Flags().GetString("out")
+	path, err := cmd.Flags().GetString(flagOut)
 	if err != nil {
 		return err
 	}

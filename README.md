@@ -75,6 +75,7 @@ directory.
 | `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
 | `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `todo config set`. |
 | `todo verify` | Record that a project or action was checked against reality. Feeds `--sort staleness`. |
+| `todo db backup` / `restore` | Copy the database out with `VACUUM INTO`, and put one back. |
 
 ## A walkthrough
 
@@ -737,6 +738,54 @@ They exit rather than reload, because a restart is cheap and a process serving
 a schema it does not understand is not. Migration `0008` dropped five columns
 from `project`, which is the shape that breaks a server left running from the
 morning — and it would have surfaced as whichever query ran first, not as this.
+
+## Backing it up
+
+`VACUUM INTO`, not `cp`. In WAL mode the committed data is split between the
+database and the `-wal` beside it, so copying the file alone can catch a torn
+state — which works most of the time, the worst property a backup can have.
+This is consistent even while `todo serve` is writing.
+
+```console
+$ todo db backup
+/home/scott/.local/share/todo/backups/todo-20260811T065748Z.db
+
+$ todo db backup
+/home/scott/.local/share/todo/backups/todo-20260811T065749Z.db
+```
+
+The default is a timestamped file in `backups/` beside the database.
+Timestamped because SQLite refuses to write over a file that is already there,
+so any fixed name would work once and then start failing. `--out` puts it
+somewhere else and is refused the same way — nothing here takes a `--force`,
+since a backup that can quietly replace another is not one.
+
+Restoring is deliberately harder than backing up. The file is opened and
+checked first, so something that is not a todo database, or is ahead of this
+build, is refused before anything is touched:
+
+```console
+$ todo db restore ~/notes.txt
+Error: reading /home/scott/notes.txt: opening /home/scott/notes.txt: file is not a database (26)
+```
+
+An existing database is left alone unless you say otherwise, and even then it
+is renamed rather than deleted — the database being replaced may be the reason
+for the restore, and a plain rename works on one SQLite cannot open:
+
+```console
+$ todo db restore ~/.local/share/todo/backups/todo-20260811T065748Z.db
+Error: /home/scott/.local/share/todo/todo.db already exists; pass --replace to move it aside and restore over it
+
+$ todo db restore ~/.local/share/todo/backups/todo-20260811T065748Z.db --replace
+moved the previous database to /home/scott/.local/share/todo/todo.db.replaced-20260811T065803Z
+restored /home/scott/.local/share/todo/todo.db from /home/scott/.local/share/todo/backups/todo-20260811T065748Z.db
+```
+
+Stop anything holding the database first. SQLite has no way to tell a running
+process that its file was replaced underneath it, so a `todo serve` left
+running would carry on reading the database that is no longer there — unlike a
+migration, which [it does notice](#upgrading-while-something-is-running).
 
 ## Where to read more
 

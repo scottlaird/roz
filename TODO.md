@@ -34,8 +34,7 @@ finishes them. What would make it pleasant rather than merely possible:
 - [ ] A `todo pr announce` habit, since `send_for_review` closes on the
       announcement and GitHub cannot supply it.
 
-`todo render` and the web server are not needed for it. `todo db backup` is
-not either, but a real database makes it worth having sooner.
+`todo render` and the web server are not needed for it.
 
 ## Entities the sketch specifies but nothing uses
 
@@ -48,9 +47,6 @@ them.
 
 ## Smaller gaps
 
-- [ ] `todo db backup` and `todo db restore` — thin wrappers over SQLite, so
-      the syntax does not have to be remembered. `VACUUM INTO` is the backup:
-      it is consistent against a live database, which a file copy is not.
 - [ ] Nothing consumes `todo watch`. Sync raises a `pr_unresolvable` exception
       when a tracked pull request goes invisible, and today only a human
       watching would see it.
@@ -188,11 +184,20 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   in the command, for the same reason the field kinds do.
 - **`--db` is the only setting that stays a flag**, because it says which
   database to open and cannot be read out of one that has not been chosen yet.
-  It is bound to the command tree rather than to a package variable, so two
-  trees in one process each get their own — which `todo mcp` needs, since it
-  builds a fresh tree per tool call.
   `--jira-base-url` and `--jira-prefix` are gone; `TODO_JIRA_BASE_URL` and
-  `TODO_JIRA_PREFIXES` remain as single-run overrides.
+  `TODO_JIRA_PREFIXES` remain as single-run overrides. The value is bound to
+  the command tree rather than to a package variable, so two trees in one
+  process each get their own — which `todo mcp` needs, since it builds a fresh
+  tree per tool call.
+- **A backup is `VACUUM INTO`, and it never overwrites.** A file copy can
+  catch a torn state in WAL mode, where the committed data is split between
+  the database and the `-wal`. SQLite refuses to write over an existing file
+  and nothing softens that, so the default destination is timestamped —
+  `backups/todo-<UTC>.db` beside the database — because any fixed name would
+  work once. Restore is the asymmetric half: it validates the source before
+  touching anything, refuses an existing database without `--replace`, and
+  renames rather than deletes when it does replace one, since the database
+  being replaced may be the reason for the restore.
 - **A long-running command exits when the database migrates under it.**
   `serve`, `syncer`, `watch` and `mcp` read the schema once, at startup, and
   every query afterwards assumes it; an upgrade applied by another process

@@ -52,12 +52,6 @@ them.
 
 - [ ] `todo verify` — still stubbed, though no longer for want of a design:
       `todo pr announce` set the pattern. See the open question.
-- [ ] Ranking — `rank_class`, then `unblocks_count`, then `effort`. The page
-      now sorts by `rank_pin`, then the priority of the project an action
-      advances, then creation order, which is a first step and not the sketch's
-      ranking: `rank_class` is on every verb already and `unblocks_count`
-      needs the dependency graph. `action list` and `project list` default to
-      creation order and take `--sort priority` for the same ordering.
 - [ ] `action show -o json` omits the edges, which the table shows. They are
       not columns of `action`, and a record marshals from its own columns.
 - [ ] `--db` is a package-level variable in `internal/cli`, written by flag
@@ -311,6 +305,28 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   whether a change is a hotfix is usually learned afterwards. Changing it
   affects the next chain instantiated; actions already created are left alone,
   because they exist and something may be waiting on them.
+- **The action ranking is the sketch's, with priority added as its first
+  term.** `rank_pin`, then the priority of the project it advances, then
+  `rank_class`, then the unblocks count descending, then effort ascending,
+  then creation order. The sketch proposed the middle three and predates
+  priority being used as the planning signal it now is; a one-click action on
+  a barely-wanted project outranking real work on the most wanted one reads as
+  the queue ignoring what it was told.
+- **The unblocks count is transitive, and counts only open followers.** The
+  sketch's argument for the term is "the ones gating chains", and a direct
+  count gives the head of a chain of four the same 1 as something blocking a
+  single leaf — it cannot see a chain at all. Freeing something already closed
+  is worth nothing. `hidden_behind` is excluded: it is the judgement that a
+  follower is not worth looking at, not a statement about ordering, and the
+  sketch is explicit that conflating the two regrows the noise the fold rule
+  removed.
+- **Effort is the project's, because an action has no size of its own.** The
+  sketch's `action` table has no effort column and its `project` table does,
+  so "then effort ascending" can only mean the project's. An action's own size
+  is already carried by `rank_class`.
+- **Unstated sorts last at every term**, so filling nothing in never moves an
+  item up, and nothing is inferred from a title or an age — a queue that
+  quietly promotes things is one you stop trusting.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

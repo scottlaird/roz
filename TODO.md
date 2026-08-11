@@ -94,9 +94,12 @@ them.
       reporting `FAILURE` again is not news, and the blob cannot tell *newly
       broken* from *still broken*.
 
-      It also makes `pr_checks_green` expressible as a predicate, which it is
-      not against a blob, and answers per-check questions — whether a required
-      check passed or merely skipped is not visible today.
+      It also answers per-check questions the blob cannot: whether a required
+      check passed or merely skipped is not visible today, and it is not a
+      question the database can be asked at all while the answer is inside one
+      TEXT column. A `pr_checks_green` predicate could parse the blob in Go, so
+      that much is possible either way — what a table changes is that the
+      condition becomes queryable rather than only computable.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
@@ -178,9 +181,11 @@ them.
       `wait_review` or a `merge` that has been sitting long enough should ask
       for attention. [#47](https://github.com/scottlaird/todo/pull/47) makes
       this more necessary rather than less: excluding `rank_class = wait` from
-      `--unblocked` was right, since four of ten queue items were waits, but a
-      waiting action now surfaces *nowhere* until someone runs `--open` and
-      reads it. Before it was at least visible and merely noisy.
+      `--unblocked` was right, since four of ten queue items were waits, but it
+      left the queue itself silent about them. The page has its own waiting
+      block, so they are visible to anyone who goes and looks; what is missing
+      is anything that speaks up when a wait has gone on too long, which is a
+      page you have to remember to read away from being no signal at all.
 
       Shape: an authored per-action deadline, defaulting from the verb or the
       repository rather than typed every time, and an `exception` event when it

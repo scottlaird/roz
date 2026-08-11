@@ -42,6 +42,9 @@ func newProse(jiraBase string, jiraPrefixes []string) *prose {
 // to be clicked: an identifier that is not a link costs a copy, a search and
 // a guess about which repository it was in. The template escapes every field.
 type pageContent struct {
+	// Owner is whose queue this is, from `todo config`. Empty is normal and
+	// the heading simply reads "todo".
+	Owner       string
 	GeneratedAt string
 	Stamp       string
 	Windows     []windowView
@@ -103,9 +106,9 @@ type projectView struct {
 //
 // Every lookup here is batched. A per-row query would be invisible at this
 // size and wrong at any other, and the shape is the thing that gets copied.
-func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, jiraBase string, jiraPrefixes []string) (*pageContent, error) {
+func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings) (*pageContent, error) {
 	today := now.UTC().Format(store.DateFormat)
-	text := newProse(jiraBase, jiraPrefixes)
+	text := newProse(cfg.jiraBase, cfg.jiraPrefixes)
 
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
 		Upcoming: true,
@@ -155,6 +158,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, j
 	}
 
 	content := &pageContent{
+		Owner:       cfg.owner,
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Live:        live,
 	}

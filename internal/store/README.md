@@ -21,6 +21,7 @@ pipeline.go  what closing a verb instantiates
 edge.go      blocking, hiding and pull request links
 close.go     closing an action, and the cascade that follows
 settle.go    closing the actions whose predicate has come true
+config.go    the settings row, and what counts as a usable one
 project.go  action.go  pr.go  repo.go  calendar.go   the entities
 ```
 
@@ -97,6 +98,24 @@ Markdown, so that is the only thing worth refusing, and refusing it on the way
 in tells the author, where stripping it at render time would leave them
 wondering why half a sentence vanished. `<https://example.com>` is an autolink
 and passes; a literal tag in backticks passes too.
+
+## Settings
+
+`config` is an entity with one row, so settings get the same machinery as
+everything else: a diff-based event log, CHECK constraints, field kinds and
+typing. That is the argument for columns over a string→string table, and it
+costs a migration per setting.
+
+The row is seeded by the migration rather than by `Init`, so no reader has to
+decide what an absent configuration means. `Store.Config` reads it afresh each
+call rather than caching on the `Store`, because `todo serve` outlives a
+`todo config set` in another terminal.
+
+Bespoke validation — that a Jira base URL has a scheme, that a prefix is a
+shape the linker could match — lives in `Tx.SaveConfig`, which is the only
+path to the row. Same argument as the field kinds: a rule stated at the
+database cannot be forgotten at a call site, and the CLI and the MCP server
+both arrive here.
 
 ## Adding an entity
 

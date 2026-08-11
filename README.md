@@ -27,6 +27,7 @@ directory.
 | Command | What it does |
 |---|---|
 | `todo init` | Create the database, apply the schema, and fix the identifier prefixes. Safe to re-run; it also migrates. |
+| `todo config show` / `set` | The settings the database carries: the Jira host, the project keys worth linking, and whose queue this is. |
 | **projects** | |
 | `todo project add` | Allocate a project and print its id. |
 | `todo project show` | Print one project in full. |
@@ -70,7 +71,7 @@ directory.
 | `todo exception` | Record an exception for a monitor to surface. |
 | **other** | |
 | `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
-| `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `--jira-base-url` and `--jira-prefix`. |
+| `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `todo config set`. |
 | `todo verify` | Stamp `last_verified_at`. *Not implemented yet.* |
 
 ## A walkthrough
@@ -90,6 +91,16 @@ initialised /home/scott/.local/share/todo/todo.db (action=NA, project=TD)
 Prefixes are chosen here and are write-once — identifiers get quoted in
 tickets and said out loud, so they cannot be renamed later. Pass
 `--project-prefix` and `--action-prefix` if `TD`/`NA` are not what you want.
+
+```console
+$ todo config set --owner scott --jira-base-url https://example.atlassian.net/browse --jira-prefix CDSS
+config owner: "" → "scott"
+config jira_base_url: "" → "https://example.atlassian.net/browse"
+config jira_prefixes: "[]" → "[\"CDSS\"]"
+```
+
+These are properties of the queue rather than of one command, so they live in
+the database. See [Settings](#settings).
 
 ### Two projects, and a relationship between them
 
@@ -285,6 +296,48 @@ Without `--once` it follows. Every row came from a diff between two versions
 of a record — nothing writes to the log by hand except the edge and lifecycle
 events, which have no column to diff.
 
+## Settings
+
+Three things are properties of the queue rather than of one command: the Jira
+host, the project keys worth linking, and whose queue it is. They were flags,
+which meant passing them on every invocation — and meant anything reading the
+database directly could not know them at all.
+
+```console
+$ todo config show
+created_at     2026-08-11T02:09:46.064Z
+id             config
+jira_base_url  https://example.atlassian.net/browse
+jira_prefixes  ["CDSS"]
+owner          scott
+updated_at     2026-08-11T02:09:46.088Z
+```
+
+They are **columns, not a key-value bag**, which is the same reasoning the
+rest of the schema follows. A settings change then gets the diff-based event
+log for free — `todo watch` shows the page starting to link somewhere new —
+plus CHECK constraints and real types, where a string→string table gets none
+of that and invites `enable_foo = "true"`. The cost is a migration per
+setting, which for a handful of settings is the right trade.
+
+`--jira-prefix` replaces the whole list rather than adding to it, so there is
+a way to remove one; pass it once per key, or `--jira-prefix ""` to link none.
+Keys are upper-cased on the way in, and a base URL with no scheme is refused
+rather than repaired:
+
+```console
+$ todo config set --jira-base-url example.atlassian.net
+Error: jira base URL "example.atlassian.net" needs an http or https scheme, e.g. https://example.atlassian.net/browse
+```
+
+Nothing here is guessed at. Without a base URL and at least one prefix, Jira
+keys render as plain text, because the shape of a key is not distinctive —
+`UTF-8`, `SHA-256` and `CVE-2024-1234` all match it, and a link that goes
+confidently to the wrong place is worse than no link.
+
+`--db` stays a flag, since it says which database to open. `TODO_JIRA_BASE_URL`
+and `TODO_JIRA_PREFIXES` override the stored values for a single run.
+
 ## Prose fields
 
 Some fields are written as sentences rather than as values, and those are
@@ -327,10 +380,11 @@ and stdout, for an agent to call without shelling out.
 than written out again, so the two cannot drift: the name is the command path
 with an underscore (`action add` → `action_add`), the description is that
 command's own help, and the arguments are its flags and whatever its usage
-line names. Forty-three of them:
+line names. Forty-five of them:
 
 | | |
 |---|---|
+| settings | `config_show` `config_set` |
 | projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_jira` `project_link-jira` `project_unlink-jira` |
 | actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
 | GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_show` `pr_list` `pr_announce` `sync` |

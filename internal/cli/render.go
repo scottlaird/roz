@@ -26,14 +26,6 @@ var templates embed.FS
 // a title full of angle brackets and the page is this.
 var page = template.Must(template.ParseFS(templates, "templates/page.html.tmpl"))
 
-// Set by --jira-base-url and --jira-prefix. Neither has a default: guessing
-// at a host, or at what a key looks like, produces links that look right and
-// go nowhere.
-var (
-	jiraBase     string
-	jiraPrefixes []string
-)
-
 // horizon is how far ahead the calendar block looks. Two weeks is what a
 // weekly review can act on; beyond that the answer is "ask again later".
 const horizon = 14 * 24 * time.Hour
@@ -89,7 +81,11 @@ func runRender(cmd *cobra.Command, _ []string) error {
 // the previous page in place: a status page that is truncated looks like an
 // empty queue, which is the one wrong answer that matters.
 func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) ([]byte, error) {
-	content, err := buildPage(ctx, st, now, live, jiraBaseURL(), jiraProjectPrefixes())
+	settings, err := pageSettings(ctx, st)
+	if err != nil {
+		return nil, err
+	}
+	content, err := buildPage(ctx, st, now, live, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -101,28 +97,52 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) 
 	return rendered.Bytes(), nil
 }
 
-// jiraBaseURL is where a Jira key turns into a link. There is no sensible
-// default -- every install has its own host -- so an unset one renders the
-// key as plain text rather than guessing at somebody else's Jira.
-func jiraBaseURL() string {
-	if v := os.Getenv("TODO_JIRA_BASE_URL"); v != "" {
-		return v
-	}
-	return jiraBase
+// settings is what the page needs from `todo config`, resolved.
+type settings struct {
+	owner        string
+	jiraBase     string
+	jiraPrefixes []string
 }
 
-// jiraProjectPrefixes are the project keys worth linking, e.g. CDSS. There is
-// no default for the same reason: a key's shape is not distinctive, and the
-// obvious pattern matches UTF-8 and SHA-256 as readily as CDSS-1744.
-func jiraProjectPrefixes() []string {
-	raw := jiraPrefixes
-	if v := os.Getenv("TODO_JIRA_PREFIXES"); v != "" {
-		raw = strings.Split(v, ",")
+// pageSettings reads the settings for one page.
+//
+// The database is the source; the two environment variables override it for a
+// single run, which is how you render somebody else's queue against your own
+// Jira without writing that decision down. They are the only override left —
+// these used to be flags, which meant passing them on every invocation and
+// left anything reading the database directly with no way to know them.
+func pageSettings(ctx context.Context, st *store.Store) (settings, error) {
+	cfg, err := st.Config(ctx)
+	if err != nil {
+		return settings{}, err
 	}
+	prefixes, err := cfg.Prefixes()
+	if err != nil {
+		return settings{}, err
+	}
+
+	resolved := settings{
+		owner:        cfg.Owner,
+		jiraBase:     cfg.JiraBaseURL,
+		jiraPrefixes: prefixes,
+	}
+	if v := os.Getenv("TODO_JIRA_BASE_URL"); v != "" {
+		resolved.jiraBase = v
+	}
+	if v := os.Getenv("TODO_JIRA_PREFIXES"); v != "" {
+		resolved.jiraPrefixes = splitPrefixes(v)
+	}
+	return resolved, nil
+}
+
+// splitPrefixes reads the comma-separated environment form. It does not
+// validate: `config set` is where a typo gets refused, and refusing one here
+// would fail a render over a setting it could simply not use.
+func splitPrefixes(v string) []string {
 	var out []string
-	for _, p := range raw {
+	for _, p := range strings.Split(v, ",") {
 		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
+			out = append(out, strings.ToUpper(p))
 		}
 	}
 	return out

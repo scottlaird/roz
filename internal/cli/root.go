@@ -33,18 +33,14 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 
+	// --db is the one setting that cannot live in the database, since it says
+	// which database to open. Everything else is `todo config`.
 	root.PersistentFlags().StringVar(&dbPath, "db", defaultDBPath(),
 		"path to the SQLite database (env: TODO_DB)")
-	root.PersistentFlags().StringVar(&jiraBase, "jira-base-url", "",
-		"where a Jira key becomes a link, e.g. https://example.atlassian.net/browse "+
-			"(env: TODO_JIRA_BASE_URL); unset renders keys as plain text")
-	root.PersistentFlags().StringSliceVar(&jiraPrefixes, "jira-prefix", nil,
-		"Jira project keys worth linking, e.g. CDSS; repeatable "+
-			"(env: TODO_JIRA_PREFIXES, comma separated). Without one, no key is linked: "+
-			"the pattern also matches UTF-8 and SHA-256.")
 
 	root.AddCommand(
 		newInitCmd(),
+		newConfigCmd(),
 		newProjectCmd(),
 		newActionCmd(),
 		newPRCmd(),

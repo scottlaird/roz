@@ -55,6 +55,31 @@ BEGIN
   SELECT RAISE(ABORT, 'sequence.entity and sequence.kind are write-once');
 END;
 
+-- ── settings ─────────────────────────────────────────────────────────
+-- Columns rather than a string->string bag, so a settings change gets the
+-- same diff-based event log, CHECK constraints and typing as everything else.
+-- The cost is a migration per setting, which for a handful is the right
+-- trade. One row, enforced by the CHECK rather than by convention, and seeded
+-- by the migration so no reader has to handle its absence.
+CREATE TABLE config (
+  id            TEXT PRIMARY KEY CHECK (id = 'config'),
+  -- Whose queue this is, for the page's heading. A label and nothing more:
+  -- it is not a GitHub login and nothing matches on it.
+  owner         TEXT NOT NULL DEFAULT '',
+  -- Where a Jira key becomes a link, e.g. https://example.atlassian.net/browse
+  jira_base_url TEXT NOT NULL DEFAULT '',
+  -- JSON array of project keys worth linking, e.g. ["CDSS"]. Empty links
+  -- nothing: the shape of a key also matches UTF-8 and SHA-256.
+  jira_prefixes TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(jira_prefixes)),
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+) STRICT;
+
+INSERT INTO config (id, created_at, updated_at)
+VALUES ('config',
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
 -- ── vocabulary ───────────────────────────────────────────────────────
 CREATE TABLE actionverb (
   verb          TEXT PRIMARY KEY,

@@ -456,3 +456,28 @@ func TestRenderProjectTitleStaysLiteral(t *testing.T) {
 		t.Errorf("the summary was not rendered:\n%s", out)
 	}
 }
+
+// TestPageCarriesItsFavicon: the icon is inline because the page is one file,
+// so the thing to check is that it is actually there and actually a PNG.
+//
+// The ZgotmplZ assertion is the one that earns its place. html/template
+// rejects a data: href as an unsafe scheme and silently substitutes that
+// placeholder, so typing Favicon as a plain string produces a page that is
+// valid, renders fine, and quietly has no icon.
+func TestPageCarriesItsFavicon(t *testing.T) {
+	db := initDB(t)
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(out, `<link rel="icon" type="image/png"`) {
+		t.Error("the page has no icon link")
+	}
+	if !strings.Contains(out, "href=\"data:image/png;base64,iVBORw0KGgo") {
+		t.Error("the icon is not an inline PNG data URI")
+	}
+	if strings.Contains(out, "ZgotmplZ") {
+		t.Error("html/template blanked a URL: Favicon needs to be a template.URL, not a string")
+	}
+}

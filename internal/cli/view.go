@@ -54,6 +54,9 @@ type pageContent struct {
 	// Live adds the script that reloads when the server says something moved.
 	// A page written to a file has no server to listen to.
 	Live bool
+	// Favicon is the icon inline, as a data URI. See favicon in render.go for
+	// why it is not a file the page asks for, and why it is a template.URL.
+	Favicon template.URL
 }
 
 type windowView struct {
@@ -167,6 +170,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		Owner:       cfg.owner,
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Live:        live,
+		Favicon:     favicon,
 	}
 
 	for _, w := range windows {

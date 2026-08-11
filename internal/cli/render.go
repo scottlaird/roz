@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"os"
@@ -17,6 +18,23 @@ import (
 
 //go:embed templates/page.html.tmpl
 var templates embed.FS
+
+//go:embed icon/roz-32.png
+var iconPNG []byte
+
+// favicon is the icon as a data URI, built once.
+//
+// Inline rather than served: the page is one file by design — written to disk
+// by `roz render` as readily as served by `roz serve` — and a favicon fetched
+// over a second request is one more thing that can fail, or simply not be
+// there when the file is opened from disk. A 32px PNG costs under a kilobyte
+// of base64, which is cheaper than the request would be.
+//
+// template.URL rather than string: html/template rejects a data: href as an
+// unsafe scheme and substitutes ZgotmplZ. The exemption is safe here for the
+// one reason it ever is — this value is a compile-time constant of our own,
+// not anything that came from the database.
+var favicon = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(iconPNG))
 
 // page is the status page's template, parsed once at startup so a broken one
 // is a build-adjacent failure rather than a surprise at request time.

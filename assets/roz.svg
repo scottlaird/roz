@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="roz">
+  <title>roz</title>
+
+  <defs>
+    <!-- One lens, drawn on the left and mirrored for the right. Wide and
+         shallow, with the outer corner swept up into a point: that flick is
+         the whole shape, and it reaches past the face on purpose. -->
+    <path id="lens" d="M 44 176
+      C 99 190 178 204 228 211
+      C 240 213 244 220 242 229
+      C 240 251 234 270 221 281
+      C 200 298 137 300 101 288
+      C 80 282 67 270 62 255
+      C 55 230 46 197 44 176 Z"/>
+  </defs>
+
+  <!-- Head: widest at the glasses and tapering to a rounded jowly chin — an
+       inverted teardrop, not a dome. No eyes, no mouth, no detail; the
+       glasses are the mark and everything else is a place to hang them. -->
+  <path d="M 256 60
+    C 374 60 464 128 468 214
+    C 470 286 440 358 392 408
+    C 352 450 304 480 256 480
+    C 208 480 160 450 120 408
+    C 72 358 42 286 44 214
+    C 48 128 138 60 256 60 Z"
+    fill="#D8C062"/>
+
+  <!-- Beaded chain, hung from the outer tips and drawn under the frame.
+       Beads are a zero-length dash with a round cap: one dot per gap.
+       Tucked just inside the silhouette rather than hanging beside it, so the
+       chain does not disappear when the logo sits on a dark background. -->
+  <g fill="none" stroke="#2A2419" stroke-width="13" stroke-linecap="round"
+     stroke-dasharray="0 22">
+    <path d="M 48 188 C 44 252 64 336 116 394"/>
+    <path d="M 464 188 C 468 252 448 336 396 394"/>
+  </g>
+
+  <!-- Glasses. -->
+  <g>
+    <!-- Lenses: a pale wash so they read as glass over the face. -->
+    <use href="#lens" fill="#FBF3C0" fill-opacity="0.55"/>
+    <use href="#lens" fill="#FBF3C0" fill-opacity="0.55" transform="translate(512,0) scale(-1,1)"/>
+
+    <!-- Frames. Mitred, so the flick stays a point instead of a blob. -->
+    <g fill="none" stroke="#2A2419" stroke-width="16"
+       stroke-linejoin="miter" stroke-miterlimit="7">
+      <use href="#lens"/>
+      <use href="#lens" transform="translate(512,0) scale(-1,1)"/>
+      <path d="M 243 226 C 249 216 263 216 269 226"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>

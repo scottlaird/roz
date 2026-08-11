@@ -2,6 +2,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>roz{{with .Owner}} · {{.}}{{end}}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="{{.Favicon}}">
 {{/* One file, no assets: this is served from loopback and written to disk, and
      either way a second request is a thing that can fail. Colours come from
      the verb's rank class, so a class that was never styled is not

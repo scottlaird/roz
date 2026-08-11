@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/todo/internal/store"
 )
 
 // TestDefaultPrefixes pins what a fresh database issues, since the prefixes
@@ -56,12 +58,53 @@ func TestInitIsSafeToRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second init returned error: %v", err)
 	}
-	if !strings.Contains(out, "already initialised") {
-		t.Errorf("second init said %q", out)
+	if !strings.Contains(out, "up to date") {
+		t.Errorf("second init said %q, want it to report the state", out)
+	}
+	if !strings.Contains(out, "schema ") {
+		t.Errorf("second init said %q, want it to name the schema version", out)
 	}
 
 	// Re-running init must not have moved the prefixes or the counter.
 	if got := addProject(t, db, "the second one"); got != "TD2" {
 		t.Errorf("project add printed %q after a re-init, want TD2 (was %s)", got, id)
+	}
+}
+
+// TestInitMessage covers the three states init can leave behind. Only the
+// unchanged one is reachable from the CLI without an out-of-date database, so
+// the wording is checked here rather than through the command.
+func TestInitMessage(t *testing.T) {
+	prefixes := map[store.Entity]string{
+		store.EntityProject: "TD",
+		store.EntityAction:  "NA",
+	}
+
+	for _, tc := range []struct {
+		name   string
+		result store.InitResult
+		want   string
+	}{
+		{
+			name:   "created",
+			result: store.InitResult{Created: true, From: 0, To: 15, Prefixes: prefixes},
+			want:   "initialised /tmp/todo.db (schema 15, action=NA, project=TD)",
+		},
+		{
+			name:   "migrated",
+			result: store.InitResult{From: 13, To: 15, Prefixes: prefixes},
+			want:   "migrated /tmp/todo.db: schema 13 → 15 (action=NA, project=TD)",
+		},
+		{
+			name:   "unchanged",
+			result: store.InitResult{From: 15, To: 15, Prefixes: prefixes},
+			want:   "/tmp/todo.db is up to date (schema 15, action=NA, project=TD)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := initMessage("/tmp/todo.db", tc.result); got != tc.want {
+				t.Errorf("initMessage() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

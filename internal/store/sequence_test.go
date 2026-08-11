@@ -79,12 +79,12 @@ func TestInitSeedsSequences(t *testing.T) {
 	path := newDBPath(t)
 	want := map[Entity]string{EntityProject: "PRJ", EntityAction: "ACT"}
 
-	_, effective, err := Init(path, want)
+	result, err := Init(path, want)
 	if err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
-	if !equalPrefixes(effective, want) {
-		t.Errorf("Init() prefixes = %v, want %v", effective, want)
+	if !equalPrefixes(result.Prefixes, want) {
+		t.Errorf("Init() prefixes = %v, want %v", result.Prefixes, want)
 	}
 
 	db, err := Open(path)
@@ -114,26 +114,26 @@ func TestInitIgnoresRequestedPrefixesOnRerun(t *testing.T) {
 	path := newDBPath(t)
 	first := map[Entity]string{EntityProject: "SL", EntityAction: "NA"}
 
-	if _, _, err := Init(path, first); err != nil {
+	if _, err := Init(path, first); err != nil {
 		t.Fatalf("first Init() returned error: %v", err)
 	}
 
-	created, effective, err := Init(path, map[Entity]string{EntityProject: "XX", EntityAction: "YY"})
+	result, err := Init(path, map[Entity]string{EntityProject: "XX", EntityAction: "YY"})
 	if err != nil {
 		t.Fatalf("second Init() returned error: %v", err)
 	}
-	if created {
+	if result.Created {
 		t.Error("second Init() created = true, want false")
 	}
-	if !equalPrefixes(effective, first) {
-		t.Errorf("second Init() prefixes = %v, want the stored %v", effective, first)
+	if !equalPrefixes(result.Prefixes, first) {
+		t.Errorf("second Init() prefixes = %v, want the stored %v", result.Prefixes, first)
 	}
 }
 
 func TestInitRejectsInvalidPrefixes(t *testing.T) {
 	path := newDBPath(t)
 
-	_, _, err := Init(path, map[Entity]string{EntityProject: "SL", EntityAction: "N4"})
+	_, err := Init(path, map[Entity]string{EntityProject: "SL", EntityAction: "N4"})
 	if err == nil {
 		t.Fatal("Init() with an invalid prefix returned nil, want an error")
 	}
@@ -148,7 +148,7 @@ func TestInitRejectsInvalidPrefixes(t *testing.T) {
 // next_n.
 func TestPrefixImmutability(t *testing.T) {
 	path := newDBPath(t)
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -189,7 +189,7 @@ func TestPrefixImmutability(t *testing.T) {
 
 func TestLoadPrefixesRejectsMissingRow(t *testing.T) {
 	path := newDBPath(t)
-	if _, _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 

@@ -82,7 +82,7 @@ func TestEntityForID(t *testing.T) {
 // database rather than from a hardcoded SL, which is the point of storing it.
 func TestEntityForIDFollowsConfiguredPrefixes(t *testing.T) {
 	path := newDBPath(t)
-	if _, _, err := Init(path, map[Entity]string{EntityProject: "PRJ", EntityAction: "TASK"}); err != nil {
+	if _, err := Init(path, map[Entity]string{EntityProject: "PRJ", EntityAction: "TASK"}); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	db, err := Open(path)

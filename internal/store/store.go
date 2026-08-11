@@ -28,49 +28,66 @@ const dirPerm = 0o700
 // its prefixes; nothing is dropped or overwritten. A database ahead of this
 // build is an error rather than something to guess at.
 //
-// created reports whether the sequences were seeded here, which is the real
-// signal that the database is new. The returned prefixes are the ones now in
-// force: for an existing database the stored ones, not the requested ones,
-// since prefixes are write-once.
-//
 // Seeding is separate from migrating, so a run that migrates but fails to
 // seed leaves a valid schema and seeds on the next attempt.
-func Init(path string, requested map[Entity]string) (created bool, effective map[Entity]string, err error) {
+func Init(path string, requested map[Entity]string) (InitResult, error) {
 	ctx := context.Background()
 
 	if err := validatePrefixes(requested); err != nil {
-		return false, nil, err
+		return InitResult{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
-		return false, nil, fmt.Errorf("creating database directory: %w", err)
+		return InitResult{}, fmt.Errorf("creating database directory: %w", err)
 	}
 
 	db, err := Open(path)
 	if err != nil {
-		return false, nil, err
+		return InitResult{}, err
 	}
 	defer db.Close()
 
-	if _, _, err := migrate(ctx, db); err != nil {
-		return false, nil, err
+	from, to, err := migrate(ctx, db)
+	if err != nil {
+		return InitResult{}, err
 	}
+	result := InitResult{From: from, To: to}
 
 	seeded, err := sequencesSeeded(db)
 	if err != nil {
-		return false, nil, err
+		return InitResult{}, err
 	}
 	if seeded {
 		stored, err := LoadPrefixes(db)
 		if err != nil {
-			return false, nil, err
+			return InitResult{}, err
 		}
-		return false, stored, nil
+		result.Prefixes = stored
+		return result, nil
 	}
 
 	if err := seedInTransaction(ctx, db, requested); err != nil {
-		return false, nil, err
+		return InitResult{}, err
 	}
-	return true, requested, nil
+	result.Created = true
+	result.Prefixes = requested
+	return result, nil
+}
+
+// InitResult is what Init found and what it did, so a caller can report the
+// database's state rather than infer it from a boolean.
+type InitResult struct {
+	// Created reports whether the sequences were seeded here, which is the
+	// real signal that the database is new.
+	Created bool
+
+	// From and To are the schema versions either side of the run. They are
+	// equal when there was nothing to apply, and From is zero for a database
+	// that did not exist.
+	From, To int
+
+	// Prefixes are the ones now in force: for an existing database the stored
+	// ones, not the requested ones, since prefixes are write-once.
+	Prefixes map[Entity]string
 }
 
 func sequencesSeeded(db *sql.DB) (bool, error) {

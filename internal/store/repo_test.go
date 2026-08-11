@@ -14,11 +14,11 @@ func TestParseRepoID(t *testing.T) {
 		wantName  string
 		wantErr   bool
 	}{
-		{id: "scottlaird/todo", wantOwner: "scottlaird", wantName: "todo"},
+		{id: "scottlaird/roz", wantOwner: "scottlaird", wantName: "roz"},
 		{id: "a/b", wantOwner: "a", wantName: "b"},
 		{id: "", wantErr: true},
-		{id: "todo", wantErr: true},
-		{id: "/todo", wantErr: true},
+		{id: "roz", wantErr: true},
+		{id: "/roz", wantErr: true},
 		{id: "scottlaird/", wantErr: true},
 		{id: "a/b/c", wantErr: true},
 		// A pull request key is not a repository.
@@ -51,7 +51,7 @@ func TestParseRepoID(t *testing.T) {
 func TestPipelineIsAuthored(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	r := trackRepo(t, st, "scottlaird/todo")
+	r := trackRepo(t, st, "scottlaird/roz")
 
 	sync, err := st.Begin(ctx, ActorSyncGitHub)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestPipelineIsAuthored(t *testing.T) {
 func TestHumanSetsPipelineAndSyncSetsDefaultBranch(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	r := trackRepo(t, st, "scottlaird/todo")
+	r := trackRepo(t, st, "scottlaird/roz")
 
 	human, err := st.Begin(ctx, ActorHuman)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestListGitHubRepos(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
+	trackRepo(t, st, "scottlaird/roz")
 	trackRepo(t, st, "anotherowner/thing")
 	trackRepo(t, st, "scottlaird/other")
 
@@ -147,7 +147,7 @@ func TestListGitHubRepos(t *testing.T) {
 	for i, r := range got {
 		ids[i] = r.ID
 	}
-	want := []string{"anotherowner/thing", "scottlaird/other", "scottlaird/todo"}
+	want := []string{"anotherowner/thing", "scottlaird/other", "scottlaird/roz"}
 	if !equalStrings(ids, want) {
 		t.Errorf("ListGitHubRepos() = %v, want %v", ids, want)
 	}
@@ -156,7 +156,7 @@ func TestListGitHubRepos(t *testing.T) {
 func TestLoadSubjectResolvesRepositories(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	r := trackRepo(t, st, "scottlaird/todo")
+	r := trackRepo(t, st, "scottlaird/roz")
 
 	tx, err := st.Begin(ctx, ActorHuman)
 	if err != nil {

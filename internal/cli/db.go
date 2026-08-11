@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -33,7 +33,7 @@ func newDBBackupCmd() *cobra.Command {
 			"split between the database and the -wal beside it, so copying the\n" +
 			"file alone can catch a torn state — safe most of the time, which is\n" +
 			"the worst kind of unsafe for a backup. This is consistent even while\n" +
-			"`todo serve` is writing.\n\n" +
+			"`roz serve` is writing.\n\n" +
 			"The default destination is a timestamped file in backups/ beside the\n" +
 			"database. Timestamped because SQLite refuses to write over an\n" +
 			"existing file, so any fixed name would work once and then start\n" +
@@ -78,14 +78,14 @@ func newDBRestoreCmd() *cobra.Command {
 		Use:   "restore <file>",
 		Short: "Replace the database with a backup",
 		Long: "The file is opened and checked before anything is touched, so a path\n" +
-			"that is not a todo database, or is ahead of this build, is refused\n" +
+			"that is not a roz database, or is ahead of this build, is refused\n" +
 			"rather than half-applied.\n\n" +
 			"An existing database is left alone unless --replace is passed, and\n" +
 			"even then it is renamed aside rather than deleted — the database\n" +
 			"being replaced may well be the reason for the restore, and where it\n" +
 			"went is printed.\n\n" +
 			"Stop anything holding the database first. SQLite cannot tell a\n" +
-			"running process that its file has been replaced, so a `todo serve`\n" +
+			"running process that its file has been replaced, so a `roz serve`\n" +
 			"left running would carry on reading the one that is no longer there.",
 		Args: cobra.ExactArgs(1),
 		RunE: runDBRestore,

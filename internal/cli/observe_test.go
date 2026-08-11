@@ -65,7 +65,7 @@ func TestVerifyOnAnAction(t *testing.T) {
 func TestVerifyRejections(t *testing.T) {
 	db := initDB(t)
 	addProject(t, db, "Split the nodepool")
-	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/todo"); err != nil {
+	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz"); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
 
@@ -76,17 +76,17 @@ func TestVerifyRejections(t *testing.T) {
 	}{
 		{
 			name:    "something with no such timestamp",
-			args:    []string{"verify", "scottlaird/todo"},
+			args:    []string{"verify", "scottlaird/roz"},
 			wantErr: "cannot be verified",
 		},
 		{
 			name:    "an unknown subject",
-			args:    []string{"verify", "TD99"},
-			wantErr: "TD99",
+			args:    []string{"verify", "ROZ99"},
+			wantErr: "ROZ99",
 		},
 		{
 			name:    "a date that is not one",
-			args:    []string{"verify", "TD1", "--at", "next week"},
+			args:    []string{"verify", "ROZ1", "--at", "next week"},
 			wantErr: "is not a date",
 		},
 	}

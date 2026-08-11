@@ -9,14 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scottlaird/todo/internal/schema"
+	"github.com/scottlaird/roz/internal/schema"
 )
 
 // newDBPath returns a path inside a fresh temp dir, with a missing parent
 // directory so Init has to create one.
 func newDBPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "sub", "todo.db")
+	return filepath.Join(t.TempDir(), "sub", "roz.db")
 }
 
 func TestInitCreatesDatabase(t *testing.T) {
@@ -101,7 +101,7 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 }
 
 func TestInitCreatesParentDirectory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "a", "b", "c", "todo.db")
+	path := filepath.Join(t.TempDir(), "a", "b", "c", "roz.db")
 
 	if _, err := Init(path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)

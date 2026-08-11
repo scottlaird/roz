@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // schemaCheckInterval is how often a long-running command asks whether the
@@ -58,7 +58,7 @@ func (g *schemaGuard) Run(ctx context.Context) error {
 	started, err := g.store.SchemaState(ctx)
 	if err != nil {
 		// Cancellation can land inside this read, when another service finishes
-		// as this one starts — `todo mcp` against a client that hung up
+		// as this one starts — `roz mcp` against a client that hung up
 		// immediately. A service must return nil for that, or a clean shutdown
 		// is reported as a failure. Same treatment the loop below gives.
 		if ctx.Err() != nil {

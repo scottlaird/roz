@@ -94,9 +94,9 @@ func TestSubjectAndContextAreSeparateRelations(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	subject := trackPR(t, st, "scottlaird/todo", 1)
-	background := trackPR(t, st, "scottlaird/todo", 2)
+	trackRepo(t, st, "scottlaird/roz")
+	subject := trackPR(t, st, "scottlaird/roz", 1)
+	background := trackPR(t, st, "scottlaird/roz", 2)
 	a := addAction(t, st, "write the endpoint", "write")
 
 	tx, err := st.Begin(ctx, ActorHuman)
@@ -128,8 +128,8 @@ func TestPRRelationsNameTheWork(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 	a := addAction(t, st, "write the endpoint", "write")
 
 	tx, err := st.Begin(ctx, ActorHuman)

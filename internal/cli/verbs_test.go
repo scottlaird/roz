@@ -27,7 +27,7 @@ func TestProjectShow(t *testing.T) {
 	}
 	// design_refs is a list of names, and reads as one: the detail table
 	// joins a JSON array of strings rather than printing its brackets.
-	for _, want := range []string{"a title", "TD1", "priority", "docs/a.md"} {
+	for _, want := range []string{"a title", "ROZ1", "priority", "docs/a.md"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output does not contain %q:\n%s", want, out)
 		}
@@ -60,11 +60,11 @@ func TestProjectShowJSON(t *testing.T) {
 func TestProjectShowMissing(t *testing.T) {
 	db := initDB(t)
 
-	_, err := runCLI(t, "project", "show", "--db", db, "TD404")
+	_, err := runCLI(t, "project", "show", "--db", db, "ROZ404")
 	if err == nil {
 		t.Fatal("project show on a missing project returned nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "TD404") {
+	if !strings.Contains(err.Error(), "ROZ404") {
 		t.Errorf("error = %v, want it to name the identifier", err)
 	}
 }
@@ -221,7 +221,7 @@ func TestSubjectResolutionUsesThePrefixRegistry(t *testing.T) {
 	if err == nil {
 		t.Fatal("note on an unknown prefix returned nil, want an error")
 	}
-	for _, want := range []string{"ZZ9", "project=TD", "action=NA"} {
+	for _, want := range []string{"ZZ9", "project=ROZ", "action=NA"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %v, want it to mention %q", err, want)
 		}
@@ -236,37 +236,37 @@ func TestVerbRejections(t *testing.T) {
 	}{
 		{
 			name:    "snooze without a real date",
-			args:    []string{"project", "snooze", "TD1", "--snooze-until", "next week"},
+			args:    []string{"project", "snooze", "ROZ1", "--snooze-until", "next week"},
 			wantErr: "not a date or timestamp",
 		},
 		{
 			name:    "wake something that is not snoozed",
-			args:    []string{"project", "wake", "TD1"},
+			args:    []string{"project", "wake", "ROZ1"},
 			wantErr: "not snoozed",
 		},
 		{
 			name:    "wake into snoozed",
-			args:    []string{"project", "wake", "TD1", "--status", "snoozed"},
+			args:    []string{"project", "wake", "ROZ1", "--status", "snoozed"},
 			wantErr: "would not wake anything",
 		},
 		{
 			name:    "supersede itself",
-			args:    []string{"project", "supersede", "--from", "TD1", "--into", "TD1"},
+			args:    []string{"project", "supersede", "--from", "ROZ1", "--into", "ROZ1"},
 			wantErr: "cannot supersede itself",
 		},
 		{
 			name:    "supersede into a missing project",
-			args:    []string{"project", "supersede", "--from", "TD1", "--into", "TD999"},
-			wantErr: "no such item: TD999",
+			args:    []string{"project", "supersede", "--from", "ROZ1", "--into", "ROZ999"},
+			wantErr: "no such item: ROZ999",
 		},
 		{
 			name:    "note on a missing project",
-			args:    []string{"note", "TD404", "text"},
-			wantErr: "no such item: TD404",
+			args:    []string{"note", "ROZ404", "text"},
+			wantErr: "no such item: ROZ404",
 		},
 		{
 			name:    "sync actor on a write verb",
-			args:    []string{"project", "snooze", "TD1", "--snooze-until", "2030-01-01", "--actor", "sync:jira"},
+			args:    []string{"project", "snooze", "ROZ1", "--snooze-until", "2030-01-01", "--actor", "sync:jira"},
 			wantErr: "not allowed",
 		},
 	}

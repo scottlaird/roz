@@ -7,8 +7,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/scottlaird/todo/internal/github"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // Defaults for a Syncer. They are exported so the command's flag help and the
@@ -23,7 +23,7 @@ const (
 // Syncer polls GitHub on a loop.
 //
 // It reports nothing on a quiet cycle. The event log is the output: a change
-// shows up in `todo watch`, and printing a line per poll would bury it. Only
+// shows up in `roz watch`, and printing a line per poll would bury it. Only
 // the exceptional gets written to Log — slowing down, backing off, failing.
 type Syncer struct {
 	Store  *store.Store

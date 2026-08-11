@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scottlaird/todo/internal/github"
+	"github.com/scottlaird/roz/internal/github"
 )
 
 // addAction creates one action and returns its id.
@@ -149,13 +149,13 @@ func TestActionRejections(t *testing.T) {
 		},
 		{
 			name:    "missing project",
-			args:    []string{"action", "add", "--title", "x", "--verb", "write", "--project", "TD404"},
-			wantErr: "no such item: TD404",
+			args:    []string{"action", "add", "--title", "x", "--verb", "write", "--project", "ROZ404"},
+			wantErr: "no such item: ROZ404",
 		},
 		{
 			name:    "closing through set",
 			args:    []string{"action", "set", "NA1", "--status", "done"},
-			wantErr: "use `todo action close",
+			wantErr: "use `roz action close",
 		},
 		{
 			name:    "a snooze date without the state",

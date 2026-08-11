@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 //go:embed templates/page.html.tmpl
@@ -97,7 +97,7 @@ func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) 
 	return rendered.Bytes(), nil
 }
 
-// settings is what the page needs from `todo config`, resolved.
+// settings is what the page needs from `roz config`, resolved.
 type settings struct {
 	owner        string
 	jiraBase     string
@@ -126,10 +126,10 @@ func pageSettings(ctx context.Context, st *store.Store) (settings, error) {
 		jiraBase:     cfg.JiraBaseURL,
 		jiraPrefixes: prefixes,
 	}
-	if v := os.Getenv("TODO_JIRA_BASE_URL"); v != "" {
+	if v := os.Getenv("ROZ_JIRA_BASE_URL"); v != "" {
 		resolved.jiraBase = v
 	}
-	if v := os.Getenv("TODO_JIRA_PREFIXES"); v != "" {
+	if v := os.Getenv("ROZ_JIRA_PREFIXES"); v != "" {
 		resolved.jiraPrefixes = splitPrefixes(v)
 	}
 	return resolved, nil

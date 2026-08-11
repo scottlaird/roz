@@ -9,7 +9,7 @@ Built: the schema and its migration machinery; the diff-and-emit layer; six
 entities — `project`, `action`, `pr`, `github_repo`, `calendar_window` and
 `actionverb`; GitHub sync, one-shot and as a polling loop; the predicate
 registry the verb vocabulary resolves against; and the pipelines a repository
-chooses between. `todo watch` tails the log.
+chooses between. `roz watch` tails the log.
 
 Every command in the tree is implemented; nothing is a stub any more.
 
@@ -28,13 +28,13 @@ and none of it blocks anything else.
 ## What dogfooding needs
 
 Nothing blocking. Track the repo, track a pull request, `action add --verb
-write`, `action close --pr`, and let `todo syncer` close the steps as GitHub
+write`, `action close --pr`, and let `roz syncer` close the steps as GitHub
 finishes them. What would make it pleasant rather than merely possible:
 
-- [ ] A `todo pr announce` habit, since `send_for_review` closes on the
+- [ ] A `roz pr announce` habit, since `send_for_review` closes on the
       announcement and GitHub cannot supply it.
 
-`todo render` and the web server are not needed for it.
+`roz render` and the web server are not needed for it.
 
 ## Entities the sketch specifies but nothing uses
 
@@ -47,7 +47,7 @@ them.
 
 ## Smaller gaps
 
-- [ ] Nothing consumes `todo watch`. Sync raises a `pr_unresolvable` exception
+- [ ] Nothing consumes `roz watch`. Sync raises a `pr_unresolvable` exception
       when a tracked pull request goes invisible, and today only a human
       watching would see it.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
@@ -100,7 +100,7 @@ them.
       `--dangerously-load-development-channels`, so this buys reach into
       sessions nobody is watching rather than speed.
 - [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
-      `project` name one tracker in the schema, in the entity, and in `todo
+      `project` name one tracker in the schema, in the entity, and in `roz
       project jira`. Home projects use GitHub issues, and the reader for them
       already exists — `gh api graphql` and the batching that polls pull
       requests. The refactor is generalising the columns to a tracker and a
@@ -139,7 +139,7 @@ poll writes nothing. What remains open is whether a minute is often enough to
 catch states that do not persist — `UNSTABLE` and `BEHIND` in particular.
 
 **`--json` can reach columns that have a dedicated verb.** `project set --json
-'{"superseded_by":"TD94"}'` skips the target-existence check that `project
+'{"superseded_by":"ROZ94"}'` skips the target-existence check that `project
 supersede` performs. The foreign key still catches a bad target, so the cost is
 a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 
@@ -184,16 +184,16 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   in the command, for the same reason the field kinds do.
 - **`--db` is the only setting that stays a flag**, because it says which
   database to open and cannot be read out of one that has not been chosen yet.
-  `--jira-base-url` and `--jira-prefix` are gone; `TODO_JIRA_BASE_URL` and
-  `TODO_JIRA_PREFIXES` remain as single-run overrides. The value is bound to
+  `--jira-base-url` and `--jira-prefix` are gone; `ROZ_JIRA_BASE_URL` and
+  `ROZ_JIRA_PREFIXES` remain as single-run overrides. The value is bound to
   the command tree rather than to a package variable, so two trees in one
-  process each get their own — which `todo mcp` needs, since it builds a fresh
+  process each get their own — which `roz mcp` needs, since it builds a fresh
   tree per tool call.
 - **A backup is `VACUUM INTO`, and it never overwrites.** A file copy can
   catch a torn state in WAL mode, where the committed data is split between
   the database and the `-wal`. SQLite refuses to write over an existing file
   and nothing softens that, so the default destination is timestamped —
-  `backups/todo-<UTC>.db` beside the database — because any fixed name would
+  `backups/roz-<UTC>.db` beside the database — because any fixed name would
   work once. Restore is the asymmetric half: it validates the source before
   touching anything, refuses an existing database without `--replace`, and
   renames rather than deletes when it does replace one, since the database
@@ -223,7 +223,7 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   default is a guess made in the absence of policy and freezing it protects
   repositories already tracked, while a repository's pipeline **is** the policy
   and should reach the pull requests that never claimed an exception to it.
-- **`todo pr set` exists so the exception is revocable.** A `--pipeline` only
+- **`roz pr set` exists so the exception is revocable.** A `--pipeline` only
   settable at track time would be a decision nobody could take back, and
   whether a change is a hotfix is usually learned afterwards. Changing it
   affects the next chain instantiated; actions already created are left alone,
@@ -272,9 +272,9 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   `last_verified_at` is that, on projects and on actions — the sketch left it
   off actions, which is the wrong way round, since an action claims something
   is worth doing *now* and rots faster than a plan does.
-- **`todo verify` writes an observed column, under an actor of its own.**
+- **`roz verify` writes an observed column, under an actor of its own.**
   Verifying is asking the world whether the record is still true, not deciding
-  what it should say, which is why the sketch lists it beside `todo sync` as a
+  what it should say, which is why the sketch lists it beside `roz sync` as a
   writer of observed fields. Like `pr announce` it is a named command rather
   than an `--actor` override — one verb instead of a hole in the rule — and it
   logs as `sync:verify` so the log says a person went and looked. This settles
@@ -435,7 +435,7 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   `--actor`, which keeps the exception to one named verb instead of a hole in
   the rule.
 - **Jira observations are keyed on the issue, not the project.** An
-  integration has `CDSS-1744`, not `TD106`. Every project carrying the key
+  integration has `CDSS-1744`, not `ROZ106`. Every project carrying the key
   gets the observation, and a key nobody carries is reported rather than
   refused: this tracks a subset of what Jira holds.
 - A verb naming a predicate the build lacks is refused when the store opens.
@@ -490,7 +490,7 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
 - **An MCP write is `agent:<client>`**, taken from what the client calls
   itself at initialize and falling back to `--agent`. `--actor` is not offered
   as a tool argument, so there is no way to write as a person from there.
-- **One renderer, used twice.** `todo serve` calls the same function `todo
+- **One renderer, used twice.** `roz serve` calls the same function `roz
   render` writes to a file, per request. Two ways of building the page would
   eventually be two different pages.
 - **The server listens on loopback and has no authentication.** It is a
@@ -530,7 +530,7 @@ From the sketch, and still true:
   for whether it belongs.
 
 Jira and Slack sync remain out for scheduling reasons rather than design ones.
-`todo pr announce` and `todo project jira` cover both by hand, which is enough
+`roz pr announce` and `roz project jira` cover both by hand, which is enough
 to work with and enough to know what the real sync has to produce.
 Without it, `send_for_review` cannot close on its own — that verb is the only
 predicate GitHub cannot satisfy.

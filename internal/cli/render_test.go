@@ -128,7 +128,7 @@ func TestRenderEscapes(t *testing.T) {
 func TestRenderProseIsMarkdown(t *testing.T) {
 	db := initDB(t)
 	addAction(t, db, "--title", "the *old* pipeline", "--verb", "write",
-		"--why", "unblocks the *split*, once `todo sync github` runs")
+		"--why", "unblocks the *split*, once `roz sync github` runs")
 
 	out, err := runCLI(t, "render", "--db", db)
 	if err != nil {
@@ -136,7 +136,7 @@ func TestRenderProseIsMarkdown(t *testing.T) {
 	}
 	for _, want := range []string{
 		"<em>split</em>",
-		"<code>todo sync github</code>",
+		"<code>roz sync github</code>",
 		"the *old* pipeline",
 	} {
 		if !strings.Contains(out, want) {
@@ -186,7 +186,7 @@ func TestTemplateIsTheOneOnDisk(t *testing.T) {
 	if strings.Contains(out, "{{") {
 		t.Errorf("the page has an unexpanded action in it:\n%s", out)
 	}
-	for _, want := range []string{"<title>todo</title>", "nothing to do"} {
+	for _, want := range []string{"<title>roz</title>", "nothing to do"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the page is missing %q:\n%s", want, out)
 		}
@@ -368,7 +368,7 @@ func TestRenderShowsTheOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
-	if !strings.Contains(before, "<h1>todo</h1>") {
+	if !strings.Contains(before, "<h1>roz</h1>") {
 		t.Errorf("an unconfigured page has an odd heading:\n%s", before)
 	}
 
@@ -379,7 +379,7 @@ func TestRenderShowsTheOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
-	if !strings.Contains(after, "scott") || !strings.Contains(after, "<title>todo · scott</title>") {
+	if !strings.Contains(after, "scott") || !strings.Contains(after, "<title>roz · scott</title>") {
 		t.Errorf("the owner is missing from the page:\n%s", after)
 	}
 }
@@ -395,13 +395,13 @@ func TestRenderPrefersTheEnvironment(t *testing.T) {
 		t.Fatalf("config set returned error: %v", err)
 	}
 
-	t.Setenv("TODO_JIRA_BASE_URL", "https://override.example.com/browse")
+	t.Setenv("ROZ_JIRA_BASE_URL", "https://override.example.com/browse")
 	out, err := runCLI(t, "render", "--db", db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
 	if !strings.Contains(out, "https://override.example.com/browse/CDSS-1557") {
-		t.Errorf("TODO_JIRA_BASE_URL did not override the stored value:\n%s", out)
+		t.Errorf("ROZ_JIRA_BASE_URL did not override the stored value:\n%s", out)
 	}
 	if strings.Contains(out, "stored.example.com") {
 		t.Errorf("the stored base URL was used as well:\n%s", out)

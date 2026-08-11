@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -28,7 +28,7 @@ func newConfigCmd() *cobra.Command {
 			"live in the database with everything else and are visible to anything\n" +
 			"reading it.\n\n" +
 			"There is one row and no way to make a second. Changing a setting is\n" +
-			"logged like any other change, so `todo watch` shows it and the log\n" +
+			"logged like any other change, so `roz watch` shows it and the log\n" +
 			"says when the page started linking somewhere new.\n\n" +
 			"Which database to open stays a flag: it cannot be read out of a\n" +
 			"database that has not been chosen yet.",

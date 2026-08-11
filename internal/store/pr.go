@@ -22,7 +22,7 @@ const (
 // PR is a tracked pull request.
 //
 // It keeps its natural key instead of drawing from a sequence, which is why
-// subject_id in the log is heterogeneous by design: it holds TD200 or
+// subject_id in the log is heterogeneous by design: it holds ROZ200 or
 // myrepo#4174, and nothing joins on it.
 //
 // Almost every column is observed. Two are authored, and both are judgements

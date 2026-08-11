@@ -86,10 +86,10 @@ type JiraApplied struct {
 // ObserveJira applies Jira observations, creating issues it has not seen.
 //
 // It is keyed on the issue rather than on a project because that is what an
-// integration would have: a Jira issue does not know it is TD106.
+// integration would have: a Jira issue does not know it is ROZ106.
 //
 // The actor must be a sync actor, since every column written here is
-// observed. `todo project jira` passes sync:jira-manual, so the log never
+// observed. `roz project jira` passes sync:jira-manual, so the log never
 // claims an integration reported something typed in by hand.
 func (s *Store) ObserveJira(ctx context.Context, actor Actor, observations []JiraObservation) (*JiraResult, error) {
 	if actor.writes() != Observed {

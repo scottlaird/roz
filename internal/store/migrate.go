@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scottlaird/todo/internal/schema"
+	"github.com/scottlaird/roz/internal/schema"
 )
 
 // nowStamp is when a migration ran. Migrations happen outside any Tx, so
@@ -242,7 +242,7 @@ func checkForeignKeys(ctx context.Context, tx *sql.Tx) error {
 
 // PendingMigrations returns the migrations a database has not run, in order.
 //
-// This is what tells a command to say "run todo init" rather than guessing
+// This is what tells a command to say "run roz init" rather than guessing
 // from a version number, and it is what makes an out-of-order migration
 // visible instead of silently skipped.
 func PendingMigrations(ctx context.Context, db *sql.DB) ([]schema.Migration, error) {

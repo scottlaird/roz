@@ -12,8 +12,8 @@ import (
 func TestBackupPathIsTimestampedBesideTheDatabase(t *testing.T) {
 	at := time.Date(2026, 8, 11, 6, 42, 31, 0, time.UTC)
 
-	got := BackupPath("/home/scott/.local/share/todo/todo.db", at)
-	want := "/home/scott/.local/share/todo/backups/todo-20260811T064231Z.db"
+	got := BackupPath("/home/scott/.local/share/roz/roz.db", at)
+	want := "/home/scott/.local/share/roz/backups/roz-20260811T064231Z.db"
 	if got != want {
 		t.Errorf("BackupPath() = %q, want %q", got, want)
 	}
@@ -25,7 +25,7 @@ func TestBackupPathIsUTC(t *testing.T) {
 	zone := time.FixedZone("UTC+10", 10*60*60)
 	at := time.Date(2026, 8, 11, 16, 42, 31, 0, zone)
 
-	if got, want := BackupPath("/db/todo.db", at), "/db/backups/todo-20260811T064231Z.db"; got != want {
+	if got, want := BackupPath("/db/roz.db", at), "/db/backups/roz-20260811T064231Z.db"; got != want {
 		t.Errorf("BackupPath() = %q, want %q", got, want)
 	}
 }
@@ -35,7 +35,7 @@ func TestBackupIsAReadableDatabase(t *testing.T) {
 	st := newStore(t)
 	want := addProject(t, st, "worth keeping")
 
-	dest := filepath.Join(t.TempDir(), "backups", "todo.db")
+	dest := filepath.Join(t.TempDir(), "backups", "roz.db")
 	if err := st.Backup(ctx, dest); err != nil {
 		t.Fatalf("Backup() returned error: %v", err)
 	}
@@ -87,7 +87,7 @@ func newStoreAt(t *testing.T) (*Store, string) {
 func TestBackupRefusesToOverwrite(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
-	dest := filepath.Join(t.TempDir(), "todo.db")
+	dest := filepath.Join(t.TempDir(), "roz.db")
 
 	if err := st.Backup(ctx, dest); err != nil {
 		t.Fatalf("first Backup() returned error: %v", err)
@@ -106,7 +106,7 @@ func TestBackupCreatesItsDirectory(t *testing.T) {
 	st := newStore(t)
 
 	// VACUUM INTO will not make one, so Backup has to.
-	dest := filepath.Join(t.TempDir(), "backups", "todo.db")
+	dest := filepath.Join(t.TempDir(), "backups", "roz.db")
 	if err := st.Backup(ctx, dest); err != nil {
 		t.Fatalf("Backup() returned error: %v", err)
 	}
@@ -151,7 +151,7 @@ func titleOf(t *testing.T, path string) string {
 
 func TestRestoreIntoAnEmptyPath(t *testing.T) {
 	src, want := backupOf(t, "the backed up one")
-	dst := filepath.Join(t.TempDir(), "sub", "todo.db")
+	dst := filepath.Join(t.TempDir(), "sub", "roz.db")
 
 	movedAside, err := Restore(context.Background(), src, dst, false)
 	if err != nil {
@@ -244,7 +244,7 @@ func TestRestoreRejectsSomethingThatIsNotADatabase(t *testing.T) {
 	if err := os.WriteFile(src, []byte("this is not a database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join(dir, "todo.db")
+	dst := filepath.Join(dir, "roz.db")
 
 	if _, err := Restore(context.Background(), src, dst, false); err == nil {
 		t.Fatal("Restore() from a text file returned nil, want an error")

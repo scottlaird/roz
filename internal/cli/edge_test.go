@@ -82,14 +82,14 @@ func TestHideBehindAndBack(t *testing.T) {
 
 func TestLinkPR(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+	trackRepo(t, db, "scottlaird/roz")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 	action := addAction(t, db, "--title", "write it", "--verb", "write")
 
 	out, err := runCLI(t, "action", "link-pr", "--db", db,
-		"--action", action, "--pr", "scottlaird/todo#1")
+		"--action", action, "--pr", "scottlaird/roz#1")
 	if err != nil {
 		t.Fatalf("action link-pr returned error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestLinkPR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("action show returned error: %v", err)
 	}
-	if !strings.Contains(shown, "subject_pr") || !strings.Contains(shown, "scottlaird/todo#1") {
+	if !strings.Contains(shown, "subject_pr") || !strings.Contains(shown, "scottlaird/roz#1") {
 		t.Errorf("show does not name the pull request:\n%s", shown)
 	}
 }

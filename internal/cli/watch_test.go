@@ -34,7 +34,7 @@ func TestWatchOncePrintsBacklog(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("watch --once printed %d lines, want 2:\n%s", len(lines), out)
 	}
-	for _, want := range []string{"TD1", "created", "human"} {
+	for _, want := range []string{"ROZ1", "created", "human"} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("first line does not contain %q: %s", want, lines[0])
 		}
@@ -56,7 +56,7 @@ func TestWatchOrdersOldestFirst(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("got %d lines, want 2:\n%s", len(lines), out)
 	}
-	if !strings.Contains(lines[0], "TD1") || !strings.Contains(lines[1], "TD2") {
+	if !strings.Contains(lines[0], "ROZ1") || !strings.Contains(lines[1], "ROZ2") {
 		t.Errorf("events are not oldest first:\n%s", out)
 	}
 }
@@ -232,7 +232,7 @@ func TestWatchFollowsNewEvents(t *testing.T) {
 		t.Fatalf("project add returned error: %v", err)
 	}
 
-	if err := waitFor(func() bool { return strings.Contains(out.String(), "TD3") }); err != nil {
+	if err := waitFor(func() bool { return strings.Contains(out.String(), "ROZ3") }); err != nil {
 		t.Fatalf("watch did not report the new event: %v\n%s", err, out.String())
 	}
 

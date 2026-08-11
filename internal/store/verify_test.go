@@ -124,8 +124,8 @@ func TestVerifyRefusesWhatCannotGoStale(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	trackRepo(t, st, "scottlaird/todo")
-	pr := trackPR(t, st, "scottlaird/todo", 1)
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
 
 	tx, err := st.Begin(ctx, ActorVerify)
 	if err != nil {

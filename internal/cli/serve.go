@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/ghsync"
-	"github.com/scottlaird/todo/internal/server"
-	"github.com/scottlaird/todo/internal/service"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/ghsync"
+	"github.com/scottlaird/roz/internal/server"
+	"github.com/scottlaird/roz/internal/service"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const flagAddr = "addr"
@@ -22,8 +22,8 @@ func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Sync, tail the log and serve the status page, until interrupted",
-		Long: "The three long-running pieces in one command: `todo syncer`, `todo\n" +
-			"watch` and a web server for the page `todo render` produces.\n\n" +
+		Long: "The three long-running pieces in one command: `roz syncer`, `roz\n" +
+			"watch` and a web server for the page `roz render` produces.\n\n" +
 			"They are separate services sharing a process, so the first one to fail\n" +
 			"stops the others rather than leaving a half-working system that looks\n" +
 			"fine. Ctrl-C stops all three.\n\n" +
@@ -65,7 +65,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	// Ctrl-C stops every service cleanly, the way `todo watch` does.
+	// Ctrl-C stops every service cleanly, the way `roz watch` does.
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 
@@ -92,7 +92,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	return service.Run(ctx, services...)
 }
 
-// pageFor builds the same page `todo render` writes, per request. One
+// pageFor builds the same page `roz render` writes, per request. One
 // renderer rather than two, since two would eventually disagree.
 //
 // Live, because this one has a server behind it to tell it when to reload.
@@ -140,11 +140,11 @@ func serveOptionsFrom(cmd *cobra.Command) (serveOptions, error) {
 	return o, nil
 }
 
-// tailer follows the log as a service, so `todo serve` prints what changed
-// without anyone running `todo watch` beside it.
+// tailer follows the log as a service, so `roz serve` prints what changed
+// without anyone running `roz watch` beside it.
 //
 // It starts at the end rather than replaying a backlog: what happened before
-// the process started is history, and `todo watch --since` is how to read it.
+// the process started is history, and `roz watch --since` is how to read it.
 type tailer struct {
 	store *store.Store
 	out   io.Writer

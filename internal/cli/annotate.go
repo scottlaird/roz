@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -39,13 +39,13 @@ func newExceptionCmd() *cobra.Command {
 		Use:   "exception",
 		Short: "Record an exception event for a monitor to surface",
 		Long: "Changes nothing. Severity is separate from kind so a monitor can watch\n" +
-			"for exceptions without knowing the kind vocabulary — see `todo watch\n" +
+			"for exceptions without knowing the kind vocabulary — see `roz watch\n" +
 			"--severity exception`.",
 		Args: cobra.NoArgs,
 		RunE: runException,
 	}
 	f := cmd.Flags()
-	f.String(flagSubject, "", "subject id, e.g. TD48 (required)")
+	f.String(flagSubject, "", "subject id, e.g. ROZ48 (required)")
 	f.String(flagKind, "", "e.g. unexpected_review_state (required)")
 	f.String(flagNote, "", "free text")
 	_ = cmd.MarkFlagRequired(flagSubject)

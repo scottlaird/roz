@@ -194,7 +194,7 @@ func TestRunNeedsAPage(t *testing.T) {
 	}
 }
 
-// TestAddressInUseIsReported: two `todo serve` processes should not leave the
+// TestAddressInUseIsReported: two `roz serve` processes should not leave the
 // second one silently serving nothing.
 func TestAddressInUseIsReported(t *testing.T) {
 	page := func(context.Context) ([]byte, error) { return []byte("the page"), nil }
@@ -417,7 +417,7 @@ func TestEventsSurviveAFailedFirstRead(t *testing.T) {
 	}
 }
 
-// TestNoEventsWithoutAChangeSource: `todo render` has no server, and a server
+// TestNoEventsWithoutAChangeSource: `roz render` has no server, and a server
 // with nothing to watch should say so rather than hold a connection open
 // promising events that cannot come.
 func TestNoEventsWithoutAChangeSource(t *testing.T) {

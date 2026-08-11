@@ -54,7 +54,7 @@ func BackupPath(dbPath string, at time.Time) string {
 
 // Restore replaces the database at dst with the contents of src.
 //
-// The source is opened and checked first, so a path that is not a todo
+// The source is opened and checked first, so a path that is not a roz
 // database, or is ahead of this build, is refused before anything at dst is
 // touched. It is then written out with VACUUM INTO rather than copied, which
 // folds any -wal into one file, and moved into place with a rename.
@@ -65,7 +65,7 @@ func BackupPath(dbPath string, at time.Time) string {
 // reason for the restore, and a plain rename works on one SQLite cannot open.
 //
 // Nothing may have dst open. SQLite has no way to tell a running process its
-// file was replaced underneath it, so a `todo serve` left running alongside
+// file was replaced underneath it, so a `roz serve` left running alongside
 // this would carry on reading the database that is no longer there.
 func Restore(ctx context.Context, src, dst string, replace bool) (movedAside string, err error) {
 	source, err := OpenStore(src)

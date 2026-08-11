@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/scottlaird/todo/internal/github"
-	"github.com/scottlaird/todo/internal/store"
+	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // fakeFetcher returns a fixed answer and records what it was asked for.
@@ -31,7 +31,7 @@ func newStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
 	ctx := context.Background()
 
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	if _, err := store.Init(path, map[store.Entity]string{
 		store.EntityProject: "SL", store.EntityAction: "NA",
 	}); err != nil {
@@ -281,7 +281,7 @@ func TestMissingRaisesAnException(t *testing.T) {
 }
 
 func TestSyncWithNothingTracked(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	if _, err := store.Init(path, map[store.Entity]string{
 		store.EntityProject: "SL", store.EntityAction: "NA",
 	}); err != nil {
@@ -530,7 +530,7 @@ func TestSyncLeavesWaitingSinceAloneWhenGitHubSaysNothing(t *testing.T) {
 func bareStore(t *testing.T) *store.Store {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "todo.db")
+	path := filepath.Join(t.TempDir(), "roz.db")
 	if _, err := store.Init(path, map[store.Entity]string{
 		store.EntityProject: "SL", store.EntityAction: "NA",
 	}); err != nil {

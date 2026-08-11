@@ -58,7 +58,7 @@ type rpcError struct {
 }
 
 // Tools is what the server exposes. The implementation lives next door, so
-// this file knows about the protocol and nothing about todo.
+// this file knows about the protocol and nothing about roz.
 type Tools interface {
 	// List returns the callable tools.
 	List() []Tool

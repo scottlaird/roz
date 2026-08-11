@@ -107,7 +107,7 @@ func TestPRRejections(t *testing.T) {
 		{name: "no repo at all", args: []string{"pr", "track", "#812"}, wantErr: "not a repository"},
 		{name: "not a number", args: []string{"pr", "track", "owner/myrepo#abc"}, wantErr: "no pull request number"},
 		{name: "two separators", args: []string{"pr", "track", "owner/my#repo#812"}, wantErr: "more than one"},
-		{name: "untracked repository", args: []string{"pr", "track", "owner/unknown#1"}, wantErr: "run `todo repo track"},
+		{name: "untracked repository", args: []string{"pr", "track", "owner/unknown#1"}, wantErr: "run `roz repo track"},
 		{name: "show untracked", args: []string{"pr", "show", "owner/myrepo#999"}, wantErr: "no such item"},
 		{name: "sync actor", args: []string{"pr", "track", "owner/myrepo#1", "--actor", "sync:github"}, wantErr: "not allowed"},
 	}
@@ -145,7 +145,7 @@ func TestPRTrackIsNotIdempotent(t *testing.T) {
 }
 
 // TestNoteOnAPullRequest checks the log's heterogeneous subject_id end to end:
-// the same command annotates TD1 and myrepo#812.
+// the same command annotates ROZ1 and myrepo#812.
 func TestNoteOnAPullRequest(t *testing.T) {
 	db := initDB(t)
 	trackRepo(t, db, "owner/myrepo")
@@ -168,14 +168,14 @@ func TestNoteOnAPullRequest(t *testing.T) {
 
 func TestPRTrackWithAPipeline(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1",
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1",
 		"--pipeline", "direct"); err != nil {
 		t.Fatalf("pr track --pipeline returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/todo#1", "-o", "json")
+	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/roz#1", "-o", "json")
 	if err != nil {
 		t.Fatalf("pr show returned error: %v", err)
 	}
@@ -195,13 +195,13 @@ func TestPRTrackWithAPipeline(t *testing.T) {
 // which resolves the default eagerly.
 func TestPRTrackWithoutAPipelineStaysUnset(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/todo#1", "-o", "json")
+	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/roz#1", "-o", "json")
 	if err != nil {
 		t.Fatalf("pr show returned error: %v", err)
 	}
@@ -218,12 +218,12 @@ func TestPRTrackWithoutAPipelineStaysUnset(t *testing.T) {
 
 func TestPRSet(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+	trackRepo(t, db, "scottlaird/roz")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1", "--pipeline", "direct")
+	out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/roz#1", "--pipeline", "direct")
 	if err != nil {
 		t.Fatalf("pr set returned error: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestPRSet(t *testing.T) {
 	}
 
 	// Setting it again is a no-op, because the diff decides.
-	if out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1",
+	if out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/roz#1",
 		"--pipeline", "direct"); err != nil {
 		t.Fatalf("pr set returned error: %v", err)
 	} else if !strings.Contains(out, "unchanged") {
@@ -240,7 +240,7 @@ func TestPRSet(t *testing.T) {
 	}
 
 	// An empty value returns it to the repository's chain.
-	if out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1",
+	if out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/roz#1",
 		"--pipeline", ""); err != nil {
 		t.Fatalf("pr set --pipeline \"\" returned error: %v", err)
 	} else if !strings.Contains(out, "pipeline") {
@@ -256,25 +256,25 @@ func TestPRPipelineRejections(t *testing.T) {
 	}{
 		{
 			name:    "an unknown pipeline at track",
-			args:    []string{"pr", "track", "scottlaird/todo#2", "--pipeline", "nonsense"},
+			args:    []string{"pr", "track", "scottlaird/roz#2", "--pipeline", "nonsense"},
 			wantErr: "is not a pipeline",
 		},
 		{
 			name:    "nothing to set",
-			args:    []string{"pr", "set", "scottlaird/todo#1"},
+			args:    []string{"pr", "set", "scottlaird/roz#1"},
 			wantErr: "nothing to set",
 		},
 		{
 			name:    "sync may not write it",
-			args:    []string{"pr", "set", "scottlaird/todo#1", "--pipeline", "direct", "--actor", "sync:github"},
+			args:    []string{"pr", "set", "scottlaird/roz#1", "--pipeline", "direct", "--actor", "sync:github"},
 			wantErr: "sync actors are set by",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db := initDB(t)
-			trackRepo(t, db, "scottlaird/todo")
-			if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+			trackRepo(t, db, "scottlaird/roz")
+			if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 				t.Fatalf("pr track returned error: %v", err)
 			}
 
@@ -293,8 +293,8 @@ func TestPRPipelineRejections(t *testing.T) {
 // column of dashes in an already-wide table is not.
 func TestPRListShowsAPipelineOnlyWhenOneIsSet(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+	trackRepo(t, db, "scottlaird/roz")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
@@ -306,7 +306,7 @@ func TestPRListShowsAPipelineOnlyWhenOneIsSet(t *testing.T) {
 		t.Errorf("the column appears with nothing in it:\n%s", plain)
 	}
 
-	if _, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1",
+	if _, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/roz#1",
 		"--pipeline", "direct"); err != nil {
 		t.Fatalf("pr set returned error: %v", err)
 	}
@@ -324,9 +324,9 @@ func TestPRListShowsAPipelineOnlyWhenOneIsSet(t *testing.T) {
 // different thing from one you wrote.
 func TestTrackedBecause(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1",
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1",
 		"--because", "reviewing"); err != nil {
 		t.Fatalf("pr track --because returned error: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestTrackedBecause(t *testing.T) {
 	var pr struct {
 		Because *string `json:"tracked_because"`
 	}
-	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/todo#1", "-o", "json")
+	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/roz#1", "-o", "json")
 	if err != nil {
 		t.Fatalf("pr show returned error: %v", err)
 	}
@@ -350,12 +350,12 @@ func TestTrackedBecause(t *testing.T) {
 // of the time and still be the tool inventing a fact it cannot check.
 func TestTrackedBecauseHasNoDefault(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+	trackRepo(t, db, "scottlaird/roz")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/todo#1", "-o", "json")
+	out, err := runCLI(t, "pr", "show", "--db", db, "scottlaird/roz#1", "-o", "json")
 	if err != nil {
 		t.Fatalf("pr show returned error: %v", err)
 	}
@@ -374,9 +374,9 @@ func TestTrackedBecauseHasNoDefault(t *testing.T) {
 // "what am I on the hook to review" is the question the column exists for.
 func TestListByReason(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 	for number, because := range map[string]string{"1": "authored", "2": "reviewing", "3": ""} {
-		args := []string{"pr", "track", "--db", db, "scottlaird/todo#" + number}
+		args := []string{"pr", "track", "--db", db, "scottlaird/roz#" + number}
 		if because != "" {
 			args = append(args, "--because", because)
 		}
@@ -389,10 +389,10 @@ func TestListByReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pr list --because returned error: %v", err)
 	}
-	if !strings.Contains(out, "scottlaird/todo#2") {
+	if !strings.Contains(out, "scottlaird/roz#2") {
 		t.Errorf("the reviewing pull request is missing:\n%s", out)
 	}
-	for _, unwanted := range []string{"scottlaird/todo#1", "scottlaird/todo#3"} {
+	for _, unwanted := range []string{"scottlaird/roz#1", "scottlaird/roz#3"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("%s should not match --because reviewing:\n%s", unwanted, out)
 		}
@@ -403,8 +403,8 @@ func TestListByReason(t *testing.T) {
 // follows: an exception is worth seeing and its absence is not.
 func TestBecauseColumnAppearsOnlyWhenUsed(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+	trackRepo(t, db, "scottlaird/roz")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
@@ -416,7 +416,7 @@ func TestBecauseColumnAppearsOnlyWhenUsed(t *testing.T) {
 		t.Errorf("the column appears with nothing in it:\n%s", plain)
 	}
 
-	if _, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1",
+	if _, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/roz#1",
 		"--because", "watching"); err != nil {
 		t.Fatalf("pr set returned error: %v", err)
 	}
@@ -437,12 +437,12 @@ func TestTrackedBecauseRejections(t *testing.T) {
 	}{
 		{
 			name:    "not a reason, at track",
-			args:    []string{"pr", "track", "scottlaird/todo#2", "--because", "curious"},
+			args:    []string{"pr", "track", "scottlaird/roz#2", "--because", "curious"},
 			wantErr: "is not recognised",
 		},
 		{
 			name:    "not a reason, at set",
-			args:    []string{"pr", "set", "scottlaird/todo#1", "--because", "curious"},
+			args:    []string{"pr", "set", "scottlaird/roz#1", "--because", "curious"},
 			wantErr: "authored, reviewing, watching",
 		},
 		{
@@ -454,8 +454,8 @@ func TestTrackedBecauseRejections(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db := initDB(t)
-			trackRepo(t, db, "scottlaird/todo")
-			if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1"); err != nil {
+			trackRepo(t, db, "scottlaird/roz")
+			if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1"); err != nil {
 				t.Fatalf("pr track returned error: %v", err)
 			}
 			_, err := runCLI(t, append(tt.args, "--db", db)...)
@@ -472,13 +472,13 @@ func TestTrackedBecauseRejections(t *testing.T) {
 // TestClearingTheReason returns it to unstated, for when it was set wrongly.
 func TestClearingTheReason(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
-	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/todo#1",
+	trackRepo(t, db, "scottlaird/roz")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#1",
 		"--because", "reviewing"); err != nil {
 		t.Fatalf("pr track returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/todo#1", "--because", "")
+	out, err := runCLI(t, "pr", "set", "--db", db, "scottlaird/roz#1", "--because", "")
 	if err != nil {
 		t.Fatalf("pr set --because \"\" returned error: %v", err)
 	}

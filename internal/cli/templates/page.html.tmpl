@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>todo{{with .Owner}} · {{.}}{{end}}</title>
+<title>roz{{with .Owner}} · {{.}}{{end}}</title>
 {{/* One file, no assets: this is served from loopback and written to disk, and
      either way a second request is a thing that can fail. Colours come from
      the verb's rank class, so a class that was never styled is not
@@ -119,10 +119,10 @@
 
 <div class="wrap">
   <header>
-    {{/* The owner is a label from `todo config`, and usually unset. When it
+    {{/* The owner is a label from `roz config`, and usually unset. When it
          is, the heading is what it always was rather than a dangling
          separator. */}}
-    <h1>todo{{with .Owner}} <span class="owner">· {{.}}</span>{{end}}</h1>
+    <h1>roz{{with .Owner}} <span class="owner">· {{.}}</span>{{end}}</h1>
     <div class="stamp">{{.GeneratedAt}} · {{.Stamp}}</div>
   </header>
 

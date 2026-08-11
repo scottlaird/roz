@@ -143,7 +143,7 @@ func subjectOf(ctx context.Context, tx *Tx, a *Action, linking string) (string, 
 	if linking != "" {
 		if _, err := tx.LoadPR(ctx, linking); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return "", fmt.Errorf("%s is not tracked; `todo pr track` it first", linking)
+				return "", fmt.Errorf("%s is not tracked; `roz pr track` it first", linking)
 			}
 			return "", err
 		}
@@ -434,7 +434,7 @@ func (s *Store) CloseProject(ctx context.Context, actor Actor, id, status string
 	switch status {
 	case ProjectDone, ProjectRetired:
 	case ProjectSuperseded:
-		return nil, fmt.Errorf("use `todo project supersede` for %s: it records where the work went",
+		return nil, fmt.Errorf("use `roz project supersede` for %s: it records where the work went",
 			ProjectSuperseded)
 	default:
 		return nil, fmt.Errorf("%q does not close a project: use %s or %s",

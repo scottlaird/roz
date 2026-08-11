@@ -1,8 +1,8 @@
-# todo
+# roz
 
 A work queue that stays correct mechanically.
 
-Projects (`TD`) are what you plan from; actions (`NA`) are what you read. An
+Projects (`ROZ`) are what you plan from; actions (`NA`) are what you read. An
 action's verb decides how it closes — a *predicate* verb closes when GitHub
 says the work is done, a *human* verb only when you say so — so the only items
 that reach the queue as thinking work are the ones that need thinking about.
@@ -16,99 +16,99 @@ never overwrite a judgement, and a judgement can never invent a fact.
 Go, SQLite (`modernc.org/sqlite`, no cgo), and `gh` for GitHub reads.
 
 ```
-go install github.com/scottlaird/todo@latest
+go install github.com/scottlaird/roz@latest
 ```
 
 ## Commands
 
-The database is `--db`, or `$TODO_DB`, defaulting to a per-platform user data
+The database is `--db`, or `$ROZ_DB`, defaulting to a per-platform user data
 directory.
 
 | Command | What it does |
 |---|---|
-| `todo init` | Create the database, apply the schema, and fix the identifier prefixes. Safe to re-run; it also migrates. |
-| `todo config show` / `set` | The settings the database carries: the Jira host, the project keys worth linking, and whose queue this is. |
+| `roz init` | Create the database, apply the schema, and fix the identifier prefixes. Safe to re-run; it also migrates. |
+| `roz config show` / `set` | The settings the database carries: the Jira host, the project keys worth linking, and whose queue this is. |
 | **projects** | |
-| `todo project add` | Allocate a project and print its id. |
-| `todo project show` | Print one project in full. |
-| `todo project list` | The projects table, in creation order or `--sort priority`; with `--orphaned` and `--expired`. |
-| `todo project set` | Change authored columns. |
-| `todo project snooze` | Defer a project to a real date. |
-| `todo project wake` | Clear a snooze. |
-| `todo project supersede` | Record that one project is the same work as another. |
-| `todo project close` | Close it, dropping whatever was still open on it and freeing whatever waited on it. |
-| `todo project block` / `unblock` | Record that one project must finish before another can start, or that it need not. |
-| `todo project jira` | Record by hand what Jira says about an issue — summary, status, sprint, assignee. Stands in for Jira sync. |
-| `todo project link-jira` / `unlink-jira` | Say which issues a project tracks. More than one is allowed. |
+| `roz project add` | Allocate a project and print its id. |
+| `roz project show` | Print one project in full. |
+| `roz project list` | The projects table, in creation order or `--sort priority`; with `--orphaned` and `--expired`. |
+| `roz project set` | Change authored columns. |
+| `roz project snooze` | Defer a project to a real date. |
+| `roz project wake` | Clear a snooze. |
+| `roz project supersede` | Record that one project is the same work as another. |
+| `roz project close` | Close it, dropping whatever was still open on it and freeing whatever waited on it. |
+| `roz project block` / `unblock` | Record that one project must finish before another can start, or that it need not. |
+| `roz project jira` | Record by hand what Jira says about an issue — summary, status, sprint, assignee. Stands in for Jira sync. |
+| `roz project link-jira` / `unlink-jira` | Say which issues a project tracks. More than one is allowed. |
 | **jira** | |
-| `todo jira show` / `list` | Issues as last observed, and which projects track them. |
+| `roz jira show` / `list` | Issues as last observed, and which projects track them. |
 | **actions** | |
-| `todo action add` | Allocate an action and print its id. |
-| `todo action show` | Print one action, with what blocks it, what it blocks, and its pull requests. `-o json` carries the same. |
-| `todo action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--waiting`, `--stale`, `--open`, `--expired` and filters. |
-| `todo action set` | Change authored columns. Closing is not one of them. |
-| `todo action snooze` | Defer an action to a real date. |
-| `todo action wake` | Clear a snooze. |
-| `todo action add-blocker` | Record that one action must precede another. |
-| `todo action hide-behind` | Fold an action out of the queue until another clears. |
-| `todo action link-pr` | Attach a pull request as subject or context. |
-| `todo action close` | Close it, and run the cascade. |
+| `roz action add` | Allocate an action and print its id. |
+| `roz action show` | Print one action, with what blocks it, what it blocks, and its pull requests. `-o json` carries the same. |
+| `roz action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--waiting`, `--stale`, `--open`, `--expired` and filters. |
+| `roz action set` | Change authored columns. Closing is not one of them. |
+| `roz action snooze` | Defer an action to a real date. |
+| `roz action wake` | Clear a snooze. |
+| `roz action add-blocker` | Record that one action must precede another. |
+| `roz action hide-behind` | Fold an action out of the queue until another clears. |
+| `roz action link-pr` | Attach a pull request as subject or context. |
+| `roz action close` | Close it, and run the cascade. |
 | **GitHub** | |
-| `todo repo track` | Start tracking a repository and choose its pipeline. |
-| `todo repo show` / `list` / `set` | Read and change repository policy. |
-| `todo pr track` | Start tracking a pull request, keyed `owner/repo#number`. `--pipeline` if this one reaches merge differently from its repository. |
-| `todo pr set` | Change the pipeline or the tracking reason, or clear either. The two authored columns a pull request has. |
-| `todo pr show` / `list` | Read tracked pull requests; `--because reviewing` for what you owe a review on. |
-| `todo pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync, and closes the `send_for_review` step waiting on it. |
-| `todo sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
-| `todo syncer` | The same on a loop, backing off as rate limit heads down. |
-| `todo mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
-| `todo serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
+| `roz repo track` | Start tracking a repository and choose its pipeline. |
+| `roz repo show` / `list` / `set` | Read and change repository policy. |
+| `roz pr track` | Start tracking a pull request, keyed `owner/repo#number`. `--pipeline` if this one reaches merge differently from its repository. |
+| `roz pr set` | Change the pipeline or the tracking reason, or clear either. The two authored columns a pull request has. |
+| `roz pr show` / `list` | Read tracked pull requests; `--because reviewing` for what you owe a review on. |
+| `roz pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync, and closes the `send_for_review` step waiting on it. |
+| `roz sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
+| `roz syncer` | The same on a loop, backing off as rate limit heads down. |
+| `roz mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
+| `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
 | **vocabulary** | |
-| `todo verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
-| `todo pipeline list` | The pipelines and their steps. |
+| `roz verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
+| `roz pipeline list` | The pipelines and their steps. |
 | **the log** | |
-| `todo watch` | Follow the event log, or `--once` to print and exit. |
-| `todo note` | Append a note to a subject's history without changing it. |
-| `todo exception` | Record an exception for a monitor to surface. |
+| `roz watch` | Follow the event log, or `--once` to print and exit. |
+| `roz note` | Append a note to a subject's history without changing it. |
+| `roz exception` | Record an exception for a monitor to surface. |
 | **other** | |
-| `todo calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
-| `todo render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `todo config set`. |
-| `todo verify` | Record that a project or action was checked against reality. Feeds `--sort staleness`. |
-| `todo db backup` / `restore` | Copy the database out with `VACUUM INTO`, and put one back. |
+| `roz calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
+| `roz render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `roz config set`. |
+| `roz verify` | Record that a project or action was checked against reality. Feeds `--sort staleness`. |
+| `roz db backup` / `restore` | Copy the database out with `VACUUM INTO`, and put one back. |
 
 ## A walkthrough
 
 Everything below is real output, captured by running these commands in order
-against a fresh database and the live `scottlaird/todo#39`. That pull request
+against a fresh database and the live `scottlaird/roz#39`. That pull request
 has moved on since, so re-running it today will answer differently — which is
 rather the point of the tool.
 
 ### Set up
 
 ```console
-$ todo init
-initialised /home/scott/.local/share/todo/todo.db (schema 15, action=NA, project=TD)
+$ roz init
+initialised /home/scott/.local/share/roz/roz.db (schema 15, action=NA, project=ROZ)
 ```
 
 Prefixes are chosen here and are write-once — identifiers get quoted in
 tickets and said out loud, so they cannot be renamed later. Pass
-`--project-prefix` and `--action-prefix` if `TD`/`NA` are not what you want.
+`--project-prefix` and `--action-prefix` if `ROZ`/`NA` are not what you want.
 
 `init` is also the upgrade path, and is safe to re-run. It says which of the
 three things happened, so a schema that moved is visible rather than folded
 into a note about the database already existing:
 
 ```console
-$ todo init
-migrated /home/scott/.local/share/todo/todo.db: schema 14 → 15 (action=NA, project=TD)
+$ roz init
+migrated /home/scott/.local/share/roz/roz.db: schema 14 → 15 (action=NA, project=ROZ)
 
-$ todo init
-/home/scott/.local/share/todo/todo.db is up to date (schema 15, action=NA, project=TD)
+$ roz init
+/home/scott/.local/share/roz/roz.db is up to date (schema 15, action=NA, project=ROZ)
 ```
 
 ```console
-$ todo config set --owner scott --jira-base-url https://example.atlassian.net/browse --jira-prefix CDSS
+$ roz config set --owner scott --jira-base-url https://example.atlassian.net/browse --jira-prefix CDSS
 config owner: "" → "scott"
 config jira_base_url: "" → "https://example.atlassian.net/browse"
 config jira_prefixes: "[]" → "[\"CDSS\"]"
@@ -120,82 +120,82 @@ the database. See [Settings](#settings).
 ### Two projects, and a relationship between them
 
 ```console
-$ todo project add --title "Split the nodepool" --priority 1 --effort weeks --jira-key CDSS-1744
-TD1
-$ todo project add --title "Retire the old pool" --priority 3 --effort days
-TD2
+$ roz project add --title "Split the nodepool" --priority 1 --effort weeks --jira-key CDSS-1744
+ROZ1
+$ roz project add --title "Retire the old pool" --priority 3 --effort days
+ROZ2
 ```
 
 It turns out those are the same work:
 
 ```console
-$ todo project supersede --from TD2 --into TD1
-TD2 status: "active" → "superseded"
-TD2 superseded_by: "" → "TD1"
+$ roz project supersede --from ROZ2 --into ROZ1
+ROZ2 status: "active" → "superseded"
+ROZ2 superseded_by: "" → "ROZ1"
 ```
 
 Superseding records both ends and keeps the identifier. Nothing is deleted,
-because `TD2` may already be written down somewhere this tool cannot reach.
+because `ROZ2` may already be written down somewhere this tool cannot reach.
 
 ```console
-$ todo project list
-ID   STATUS      PRI  EFFORT  SNOOZED UNTIL  TITLE
-TD1  active      1    weeks   -              Split the nodepool
-TD2  superseded  3    days    -              Retire the old pool
+$ roz project list
+ID    STATUS      PRI  EFFORT  SNOOZED UNTIL  TITLE
+ROZ1  active      1    weeks   -              Split the nodepool
+ROZ2  superseded  3    days    -              Retire the old pool
 ```
 
 ### A repository and a pull request
 
 ```console
-$ todo repo track scottlaird/todo --announce-channel '#infra-reviews'
-scottlaird/todo
-$ todo repo list
-ID               PIPELINE  DEFAULT BRANCH  ANNOUNCE        DISPOSITION
-scottlaird/todo  review    -               #infra-reviews  -
+$ roz repo track scottlaird/roz --announce-channel '#infra-reviews'
+scottlaird/roz
+$ roz repo list
+ID              PIPELINE  DEFAULT BRANCH  ANNOUNCE        DISPOSITION
+scottlaird/roz  review    -               #infra-reviews  -
 ```
 
 The repository took the `review` pipeline, which is the lowest-numbered active
-one. `todo pipeline list` shows the choices; `--pipeline direct` at track time
+one. `roz pipeline list` shows the choices; `--pipeline direct` at track time
 picks the other.
 
 A repository must be tracked before its pull requests, because the pipeline
 decides what a pull request against it will need doing to it.
 
 ```console
-$ todo pr track scottlaird/todo#39
-scottlaird/todo#39
+$ roz pr track scottlaird/roz#39
+scottlaird/roz#39
 ```
 
 ### Two actions, one waiting on the other
 
 ```console
-$ todo action add --title "Split the pool config" --verb write --project TD1 \
+$ roz action add --title "Split the pool config" --verb write --project ROZ1 \
     --why "everything else waits on it"
 NA1
-$ todo action add --title "Roll the change out" --verb run --project TD1
+$ roz action add --title "Roll the change out" --verb run --project ROZ1
 NA2
-$ todo action add-blocker --from NA2 --to NA1
+$ roz action add-blocker --from NA2 --to NA1
 NA2 is blocked, waiting on NA1
 ```
 
-`--verb` comes from the vocabulary (`todo verb list`) and is load-bearing
+`--verb` comes from the vocabulary (`roz verb list`) and is load-bearing
 rather than descriptive. `write` and `run` are human-closed, so both sit in
 the queue until you say otherwise.
 
 ### Sync
 
 ```console
-$ todo sync github
-scottlaird/todo#39 title: "" → "Default new databases to the TD project prefix"
-scottlaird/todo#39 author: "" → "scottlaird"
-scottlaird/todo#39 url: "" → "https://github.com/scottlaird/todo/pull/39"
-scottlaird/todo#39 state: "" → "OPEN"
-scottlaird/todo#39 is_draft: "" → "0"
-scottlaird/todo#39 merge_state_status: "" → "CLEAN"
-scottlaird/todo#39 in_merge_queue: "" → "0"
-scottlaird/todo#39 base_ref: "" → "main"
-scottlaird/todo#39 head_sha: "" → "6d7450f3ce139e323fa2264191598ff0d1418f1a"
-scottlaird/todo#39 unresolved_threads: "" → "0"
+$ roz sync github
+scottlaird/roz#39 title: "" → "Default new databases to the TD project prefix"
+scottlaird/roz#39 author: "" → "scottlaird"
+scottlaird/roz#39 url: "" → "https://github.com/scottlaird/roz/pull/39"
+scottlaird/roz#39 state: "" → "OPEN"
+scottlaird/roz#39 is_draft: "" → "0"
+scottlaird/roz#39 merge_state_status: "" → "CLEAN"
+scottlaird/roz#39 in_merge_queue: "" → "0"
+scottlaird/roz#39 base_ref: "" → "main"
+scottlaird/roz#39 head_sha: "" → "6d7450f3ce139e323fa2264191598ff0d1418f1a"
+scottlaird/roz#39 unresolved_threads: "" → "0"
 polled 1, 1 changed
 ```
 
@@ -206,7 +206,7 @@ nothing, the stored value is left alone: absence is not a fact.
 Sync also closes any action whose predicate the new observations satisfy; the
 walkthrough gets to that below.
 
-`todo syncer` runs the same thing on a loop, slowing down as the rate limit
+`roz syncer` runs the same thing on a loop, slowing down as the rate limit
 budget drops and backing off on a 429.
 
 ### Closing, and the cascade
@@ -214,12 +214,12 @@ budget drops and backing off on a 429.
 This is where the queue moves on its own.
 
 ```console
-$ todo action close NA1 --pr scottlaird/todo#39
+$ roz action close NA1 --pr scottlaird/roz#39
 NA1 done (completed)
   skipped undraft: already true
-  created NA3 send for review scottlaird/todo#39
-  created NA4 wait for review scottlaird/todo#39 (blocked by NA3)
-  created NA5 merge scottlaird/todo#39 (blocked by NA4)
+  created NA3 send for review scottlaird/roz#39
+  created NA4 wait for review scottlaird/roz#39 (blocked by NA3)
+  created NA5 merge scottlaird/roz#39 (blocked by NA4)
   NA2 is now ready
 ```
 
@@ -241,25 +241,25 @@ Four things happened under one correlation id:
 cannot supply. Until Slack sync exists, that is recorded by hand:
 
 ```console
-$ todo pr announce scottlaird/todo#39 --channel '#infra-reviews'
-scottlaird/todo#39 announced_at: "" → "2026-08-10T14:47:22.041Z"
-scottlaird/todo#39 announced_channel: "" → "#infra-reviews"
-NA3 closed: scottlaird/todo#39 is send_for_review
+$ roz pr announce scottlaird/roz#39 --channel '#infra-reviews'
+scottlaird/roz#39 announced_at: "" → "2026-08-10T14:47:22.041Z"
+scottlaird/roz#39 announced_channel: "" → "#infra-reviews"
+NA3 closed: scottlaird/roz#39 is send_for_review
   NA4 is now ready
 ```
 
 The last two lines are the point. The fact that closes the step has just
 arrived, so the step closes now rather than at the next poll — the same settle
-pass `todo sync` runs. It means a command that reads as "write down what I did
+pass `roz sync` runs. It means a command that reads as "write down what I did
 in Slack" also closes actions and instantiates what follows them, which is why
 it prints what it closed.
 
 Jira is the same arrangement, keyed on the issue rather than the project,
-because an integration would have `CDSS-1744` and not `TD1` — and because an
+because an integration would have `CDSS-1744` and not `ROZ1` — and because an
 issue is a record in its own right, so one nothing tracks is still stored:
 
 ```console
-$ todo project jira CDSS-1744 --status "In Progress" --sprint "Sprint 42" --assignee scott
+$ roz project jira CDSS-1744 --status "In Progress" --sprint "Sprint 42" --assignee scott
 CDSS-1744 status: "" → "In Progress"
 CDSS-1744 sprint: "" → "Sprint 42"
 CDSS-1744 assignee: "" → "scott"
@@ -274,21 +274,21 @@ Now the announcement is a fact, `send_for_review` is satisfied, and the next
 sync notices:
 
 ```console
-$ todo sync github
-NA3 closed: scottlaird/todo#39 is send_for_review
+$ roz sync github
+NA3 closed: scottlaird/roz#39 is send_for_review
   NA4 is now ready
 polled 1, 0 changed, 1 closed
 
-$ todo action list --open
+$ roz action list --open
 ID   STATE    VERB         PROJECT  SNOOZED UNTIL  TITLE
-NA2  ready    run          TD1      -              Roll the change out
-NA4  ready    wait_review  TD1      -              wait for review scottlaird/todo#39
-NA5  blocked  merge        TD1      -              merge scottlaird/todo#39
+NA2  ready    run          ROZ1     -              Roll the change out
+NA4  ready    wait_review  ROZ1     -              wait for review scottlaird/roz#39
+NA5  blocked  merge        ROZ1     -              merge scottlaird/roz#39
 ```
 
 Nobody closed `NA3`. A predicate verb says how its action closes, and sync is
 what asks. `NA4` and `NA5` go the same way once GitHub reports the approval
-and the merge — leave `todo syncer` running and the chain empties itself.
+and the merge — leave `roz syncer` running and the chain empties itself.
 
 Closing a step frees the next through exactly the same unblocking any action
 gets, whether a person closed it or a predicate did. There is no separate
@@ -303,7 +303,7 @@ action is done are different acts, and the log keeps them apart.
 ### The log
 
 ```console
-$ todo watch --once -n 5
+$ roz watch --once -n 5
 2026-08-10T14:47:22.053Z  info  sync:jira-manual  changed  CDSS-1744  synced_at: "" → "2026-08-10T14:47:22.053Z"
 2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  state: "ready" → "done"
 2026-08-10T14:47:22.567Z  info  predicate         changed  NA3  closed_at: "" → "2026-08-10T14:47:22.567Z"
@@ -327,7 +327,7 @@ which meant passing them on every invocation — and meant anything reading the
 database directly could not know them at all.
 
 ```console
-$ todo config show
+$ roz config show
 created_at     2026-08-11T02:09:46.064Z
 id             config
 jira_base_url  https://example.atlassian.net/browse
@@ -338,7 +338,7 @@ updated_at     2026-08-11T02:09:46.088Z
 
 They are **columns, not a key-value bag**, which is the same reasoning the
 rest of the schema follows. A settings change then gets the diff-based event
-log for free — `todo watch` shows the page starting to link somewhere new —
+log for free — `roz watch` shows the page starting to link somewhere new —
 plus CHECK constraints and real types, where a string→string table gets none
 of that and invites `enable_foo = "true"`. The cost is a migration per
 setting, which for a handful of settings is the right trade.
@@ -349,7 +349,7 @@ Keys are upper-cased on the way in, and a base URL with no scheme is refused
 rather than repaired:
 
 ```console
-$ todo config set --jira-base-url example.atlassian.net
+$ roz config set --jira-base-url example.atlassian.net
 Error: jira base URL "example.atlassian.net" needs an http or https scheme, e.g. https://example.atlassian.net/browse
 ```
 
@@ -360,9 +360,9 @@ confidently to the wrong place is worse than no link.
 
 `--db` stays a flag, since it says which database to open. Its value lives on
 the command tree that parsed it rather than in a package variable, so two
-command trees in one process — which is what `todo mcp` builds, one per tool
-call — cannot end up pointed at each other's database. `TODO_JIRA_BASE_URL`
-and `TODO_JIRA_PREFIXES` override the stored values for a single run.
+command trees in one process — which is what `roz mcp` builds, one per tool
+call — cannot end up pointed at each other's database. `ROZ_JIRA_BASE_URL`
+and `ROZ_JIRA_PREFIXES` override the stored values for a single run.
 
 ## Ranking
 
@@ -378,18 +378,18 @@ Unprioritised sorts last — unstated is not the same as low, but it has to go
 somewhere, and behind the stated ones is the reading that does no harm.
 
 ```bash
-todo project set SL10 --priority 1
+roz project set SL10 --priority 1
 ```
 
 **Actions** sort on six terms, each breaking ties in the one before:
 
 | # | term | lives on | set with |
 |---|---|---|---|
-| 1 | `rank_pin` | `action` | `todo action set NA7 --rank-pin 1` (`0` clears it) |
-| 2 | `priority` | the `project` it advances | `todo project set SL10 --priority 1` |
-| 3 | `rank_class` | the `actionverb` it uses | choose the verb; `todo verb list` shows the classes |
-| 4 | unblocks count | computed from `action_blocks` | `todo action add-blocker --from NA8 --to NA7` raises NA7's, since `--from` is the blocked one |
-| 5 | `effort` | the `project` it advances | `todo project set SL10 --effort hours` |
+| 1 | `rank_pin` | `action` | `roz action set NA7 --rank-pin 1` (`0` clears it) |
+| 2 | `priority` | the `project` it advances | `roz project set SL10 --priority 1` |
+| 3 | `rank_class` | the `actionverb` it uses | choose the verb; `roz verb list` shows the classes |
+| 4 | unblocks count | computed from `action_blocks` | `roz action add-blocker --from NA8 --to NA7` raises NA7's, since `--from` is the blocked one |
+| 5 | `effort` | the `project` it advances | `roz project set SL10 --effort hours` |
 | 6 | `n` | `action` | nothing: it is creation order, so the result is stable |
 
 Reading down: the pin exists to override whatever the system worked out, so
@@ -425,16 +425,16 @@ last *looked at it and was satisfied*, and those are different questions: an
 item nobody has touched for a month is fine if it was reviewed on Friday and
 alarming if it was not.
 
-`todo verify` records the second one, on projects and actions:
+`roz verify` records the second one, on projects and actions:
 
 ```console
-$ todo verify TD1
-TD1 verified at 2026-08-11T04:45:50.628Z
-$ todo project list --sort staleness
-ID   STATUS  PRI  EFFORT  SNOOZED UNTIL  TITLE
-TD3  active  -    -       -              never checked
-TD1  active  -    -       -              checked last week
-TD2  active  -    -       -              checked yesterday
+$ roz verify ROZ1
+ROZ1 verified at 2026-08-11T04:45:50.628Z
+$ roz project list --sort staleness
+ID    STATUS  PRI  EFFORT  SNOOZED UNTIL  TITLE
+ROZ3  active  -    -       -              never checked
+ROZ1  active  -    -       -              checked last week
+ROZ2  active  -    -       -              checked yesterday
 ```
 
 **Never checked sorts first**, which inverts the rule everywhere else that
@@ -448,9 +448,9 @@ because the check usually happened before anyone got round to recording it.
 
 It writes an **observed** column, which a person normally may not do.
 Verifying is asking the world whether the record is still true rather than
-deciding what it should say, which is why the design sketch lists `todo verify`
-alongside `todo sync` as the only writers of observed fields. Like
-`todo pr announce`, it is a separate command rather than an `--actor`
+deciding what it should say, which is why the design sketch lists `roz verify`
+alongside `roz sync` as the only writers of observed fields. Like
+`roz pr announce`, it is a separate command rather than an `--actor`
 override — one named verb instead of a hole in the rule — and it is logged as
 `sync:verify`, so the log says a person went and looked rather than that
 something reported it.
@@ -463,12 +463,12 @@ calendar note. A title is *not* — it is a name, so asterisks in one stay
 asterisks.
 
 ```console
-$ todo action set NA7 --why 'unblocks the *split*, once `todo sync github` runs'
-NA7 why: "" → "unblocks the *split*, once `todo sync github` runs"
+$ roz action set NA7 --why 'unblocks the *split*, once `roz sync github` runs'
+NA7 why: "" → "unblocks the *split*, once `roz sync github` runs"
 ```
 
 The database keeps what you typed. `show -o json` returns the source, the
-event log records the source, and only `todo render` turns it into HTML — so
+event log records the source, and only `roz render` turns it into HTML — so
 nothing is lost if you decide later that a field should have been plain.
 
 On the page, an action's `--why` sits under its title in the queue, and a
@@ -476,7 +476,7 @@ project's `--summary` gets a row of its own beneath the project, spanning the
 table. A summary is prose and does not fit a cell.
 
 Identifiers are linked wherever they appear, including inside a sentence:
-`CDSS-1557` and `scottlaird/todo#54` both become links, while a bare `#54`
+`CDSS-1557` and `scottlaird/roz#54` both become links, while a bare `#54`
 does not, because which repository it means is a guess. Linking happens on the
 parsed document rather than on the text, so an identifier inside a code span
 or inside a link you wrote yourself is left alone.
@@ -484,7 +484,7 @@ or inside a link you wrote yourself is left alone.
 The one thing rejected on input is raw HTML:
 
 ```console
-$ todo action set NA7 --why 'see <b>this</b>'
+$ roz action set NA7 --why 'see <b>this</b>'
 Error: action.why: raw HTML is not allowed here: "<b>" — write it as Markdown, or wrap it in backticks to show it literally
 ```
 
@@ -494,7 +494,7 @@ the page.
 
 ## For an agent
 
-`todo mcp` serves the same commands over the Model Context Protocol, on stdin
+`roz mcp` serves the same commands over the Model Context Protocol, on stdin
 and stdout, for an agent to call without shelling out.
 
 **The tools are the commands.** They are derived from the command tree rather
@@ -531,7 +531,7 @@ different database.
 ```jsonc
 // → {"jsonrpc":"2.0","id":1,"method":"tools/call",
 //    "params":{"name":"project_add","arguments":{"title":"from the agent","priority":2}}}
-// ← TD1
+// ← ROZ1
 ```
 
 ## Checks
@@ -556,12 +556,12 @@ exactly when it matters. A hotfix that skips review, or a change to protected
 code needing more than the usual steps, says so for itself:
 
 ```console
-$ todo pr track scottlaird/todo#1 --pipeline direct
-scottlaird/todo#1
-$ todo pr list
-ID                 STATE  DRAFT  REVIEW  MERGE  CHECKS  FROZEN  PIPELINE  TITLE
-scottlaird/todo#1  -      -      -       -      -       no      direct    -
-scottlaird/todo#2  -      -      -       -      -       no      -         -
+$ roz pr track scottlaird/roz#1 --pipeline direct
+scottlaird/roz#1
+$ roz pr list
+ID                STATE  DRAFT  REVIEW  MERGE  CHECKS  FROZEN  PIPELINE  TITLE
+scottlaird/roz#1  -      -      -       -      -       no      direct    -
+scottlaird/roz#2  -      -      -       -      -       no      -         -
 ```
 
 The `PIPELINE` column appears only when something is using it. Unset is the
@@ -577,8 +577,8 @@ Learning a pull request is a hotfix after tracking it is the common case, so
 the decision is revisable, and an empty value gives it back:
 
 ```console
-$ todo pr set scottlaird/todo#1 --pipeline ""
-scottlaird/todo#1 pipeline: "direct" → ""
+$ roz pr set scottlaird/roz#1 --pipeline ""
+scottlaird/roz#1 pipeline: "direct" → ""
 ```
 
 Changing it affects the chain the next close instantiates. Actions already
@@ -592,7 +592,7 @@ one per check, rather than a single JSON column — and the difference is what
 the log says when one moves:
 
 ```
-2026-08-11T05:01:00.000Z  info  sync:github  changed  scottlaird/todo#67  checks/test: "SUCCESS" → "FAILURE"
+2026-08-11T05:01:00.000Z  info  sync:github  changed  scottlaird/roz#67  checks/test: "SUCCESS" → "FAILURE"
 ```
 
 The blob could only ever diff as "the map changed", so every job starting or
@@ -621,11 +621,11 @@ not write: a review has different actions, and a different reason to stop
 tracking it, from your own work.
 
 ```console
-$ todo pr track scottlaird/todo#2 --because reviewing
-scottlaird/todo#2
-$ todo pr list --because reviewing
-ID                 STATE  DRAFT  REVIEW  MERGE  CHECKS  FROZEN  BECAUSE    TITLE
-scottlaird/todo#2  -      -      -       -      -       no      reviewing  -
+$ roz pr track scottlaird/roz#2 --because reviewing
+scottlaird/roz#2
+$ roz pr list --because reviewing
+ID                STATE  DRAFT  REVIEW  MERGE  CHECKS  FROZEN  BECAUSE    TITLE
+scottlaird/roz#2  -      -      -       -      -       no      reviewing  -
 ```
 
 Three reasons, as a closed set: `authored` (you wrote it), `reviewing`
@@ -654,15 +654,15 @@ status with no referent: the dependency lived in a summary, the project
 vanished from the page, and nothing ever cleared it.
 
 ```console
-$ todo project block --from TD2 --to TD1
-TD2 is blocked, waiting on TD1
-$ todo project list
-ID   STATUS   PRI  EFFORT  SNOOZED UNTIL  TITLE
-TD1  active   -    -       -              Thread the --db flag through
-TD2  blocked  -    -       -              MCP over HTTP
-$ todo project close TD1 --status done
-TD1 done
-  TD2 is now active
+$ roz project block --from ROZ2 --to ROZ1
+ROZ2 is blocked, waiting on ROZ1
+$ roz project list
+ID    STATUS   PRI  EFFORT  SNOOZED UNTIL  TITLE
+ROZ1  active   -    -       -              Thread the --db flag through
+ROZ2  blocked  -    -       -              MCP over HTTP
+$ roz project close ROZ1 --status done
+ROZ1 done
+  ROZ2 is now active
 ```
 
 `--from` is the blocked one and `--to` is its blocker, the same way
@@ -672,7 +672,7 @@ TD1 done
 **A blocked project stays on the page**, marked. Blocked is exactly where work
 goes quiet, which makes it the last thing worth hiding.
 
-`todo project unblock` removes the edge for when the dependency was wrong
+`roz project unblock` removes the edge for when the dependency was wrong
 rather than satisfied — saying so should not mean closing something unfinished.
 
 A snooze outranks the graph: a project deferred to a date is not un-deferred
@@ -687,10 +687,10 @@ waits, and a queue full of things you cannot act on is not a queue. That was
 right, and it left nothing speaking up when a wait went bad.
 
 ```console
-$ todo sync github
+$ roz sync github
 NA1 has been waiting 9 days: wait for review on the nodepool split
 polled 0, 0 changed, 1 overdue
-$ todo watch --once -n 1
+$ roz watch --once -n 1
 2026-08-11T05:30:35.567Z  exception  predicate  waited_too_long  NA1  wait_review for 9 days, past 2026-08-04 09:00:00
 ```
 
@@ -709,7 +709,7 @@ never times out, which is right for the ones describing your own work —
 nothing is waiting, so nothing can be overdue.
 
 ```bash
-todo action set NA1 --okay-to-wait-until 2026-09-01
+roz action set NA1 --okay-to-wait-until 2026-09-01
 ```
 
 That is the exception for the one that is different, in either direction. An
@@ -726,10 +726,10 @@ it is reported again, because it is a different wait.
 ## Upgrading while something is running
 
 `serve`, `syncer`, `watch` and `mcp` read the schema once, at startup. If you
-rebuild the binary and run `todo init` from another terminal, they stop:
+rebuild the binary and run `roz init` from another terminal, they stop:
 
 ```console
-$ todo serve
+$ roz serve
 serving http://127.0.0.1:8737/
 Error: schema: the database migrated while this was running: now migration 10 (10 applied), was migration 9 (9 applied); restart to pick up the new schema
 ```
@@ -744,14 +744,14 @@ morning — and it would have surfaced as whichever query ran first, not as this
 `VACUUM INTO`, not `cp`. In WAL mode the committed data is split between the
 database and the `-wal` beside it, so copying the file alone can catch a torn
 state — which works most of the time, the worst property a backup can have.
-This is consistent even while `todo serve` is writing.
+This is consistent even while `roz serve` is writing.
 
 ```console
-$ todo db backup
-/home/scott/.local/share/todo/backups/todo-20260811T065748Z.db
+$ roz db backup
+/home/scott/.local/share/roz/backups/roz-20260811T065748Z.db
 
-$ todo db backup
-/home/scott/.local/share/todo/backups/todo-20260811T065749Z.db
+$ roz db backup
+/home/scott/.local/share/roz/backups/roz-20260811T065749Z.db
 ```
 
 The default is a timestamped file in `backups/` beside the database.
@@ -761,11 +761,11 @@ somewhere else and is refused the same way — nothing here takes a `--force`,
 since a backup that can quietly replace another is not one.
 
 Restoring is deliberately harder than backing up. The file is opened and
-checked first, so something that is not a todo database, or is ahead of this
+checked first, so something that is not a roz database, or is ahead of this
 build, is refused before anything is touched:
 
 ```console
-$ todo db restore ~/notes.txt
+$ roz db restore ~/notes.txt
 Error: reading /home/scott/notes.txt: opening /home/scott/notes.txt: file is not a database (26)
 ```
 
@@ -774,16 +774,16 @@ is renamed rather than deleted — the database being replaced may be the reason
 for the restore, and a plain rename works on one SQLite cannot open:
 
 ```console
-$ todo db restore ~/.local/share/todo/backups/todo-20260811T065748Z.db
-Error: /home/scott/.local/share/todo/todo.db already exists; pass --replace to move it aside and restore over it
+$ roz db restore ~/.local/share/roz/backups/roz-20260811T065748Z.db
+Error: /home/scott/.local/share/roz/roz.db already exists; pass --replace to move it aside and restore over it
 
-$ todo db restore ~/.local/share/todo/backups/todo-20260811T065748Z.db --replace
-moved the previous database to /home/scott/.local/share/todo/todo.db.replaced-20260811T065803Z
-restored /home/scott/.local/share/todo/todo.db from /home/scott/.local/share/todo/backups/todo-20260811T065748Z.db
+$ roz db restore ~/.local/share/roz/backups/roz-20260811T065748Z.db --replace
+moved the previous database to /home/scott/.local/share/roz/roz.db.replaced-20260811T065803Z
+restored /home/scott/.local/share/roz/roz.db from /home/scott/.local/share/roz/backups/roz-20260811T065748Z.db
 ```
 
 Stop anything holding the database first. SQLite has no way to tell a running
-process that its file was replaced underneath it, so a `todo serve` left
+process that its file was replaced underneath it, so a `roz serve` left
 running would carry on reading the database that is no longer there — unlike a
 migration, which [it does notice](#upgrading-while-something-is-running).
 

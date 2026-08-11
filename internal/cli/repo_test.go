@@ -9,11 +9,11 @@ import (
 func TestRepoTrackAndList(t *testing.T) {
 	db := initDB(t)
 
-	out, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/todo")
+	out, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz")
 	if err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
-	if got := strings.TrimSpace(out); got != "scottlaird/todo" {
+	if got := strings.TrimSpace(out); got != "scottlaird/roz" {
 		t.Errorf("repo track printed %q, want the id", got)
 	}
 
@@ -21,7 +21,7 @@ func TestRepoTrackAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repo list returned error: %v", err)
 	}
-	if !strings.Contains(listed, "scottlaird/todo") {
+	if !strings.Contains(listed, "scottlaird/roz") {
 		t.Errorf("repo list does not contain the repository:\n%s", listed)
 	}
 }
@@ -76,9 +76,9 @@ func repoJSON(t *testing.T, db, id string) map[string]any {
 
 func TestRepoSet(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	out, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo",
+	out, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/roz",
 		"--pipeline", "direct", "--announce-channel", "#reviews")
 	if err != nil {
 		t.Fatalf("repo set returned error: %v", err)
@@ -89,7 +89,7 @@ func TestRepoSet(t *testing.T) {
 		}
 	}
 
-	object := repoJSON(t, db, "scottlaird/todo")
+	object := repoJSON(t, db, "scottlaird/roz")
 	if object["pipeline"] != "direct" || object["announce_channel"] != "#reviews" {
 		t.Errorf("repository = %#v, want the values set", object)
 	}
@@ -97,16 +97,16 @@ func TestRepoSet(t *testing.T) {
 
 func TestRepoSetClearsPolicy(t *testing.T) {
 	db := initDB(t)
-	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/todo",
+	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz",
 		"--pipeline", "direct"); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
 
-	if _, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo",
+	if _, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/roz",
 		"--pipeline", ""); err != nil {
 		t.Fatalf("repo set returned error: %v", err)
 	}
-	if got := repoJSON(t, db, "scottlaird/todo")["pipeline"]; got != nil {
+	if got := repoJSON(t, db, "scottlaird/roz")["pipeline"]; got != nil {
 		t.Errorf("pipeline = %#v, want null after clearing", got)
 	}
 }
@@ -114,9 +114,9 @@ func TestRepoSetClearsPolicy(t *testing.T) {
 // TestSyncMayNotSetThePipeline is the rule the entity exists to encode.
 func TestSyncMayNotSetThePipeline(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	_, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo",
+	_, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/roz",
 		"--pipeline", "direct", "--actor", "sync:github")
 	if err == nil {
 		t.Fatal("sync set the pipeline through the CLI, want an error")
@@ -133,14 +133,14 @@ func TestRepoRejections(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{name: "no owner", args: []string{"repo", "track", "todo"}, wantErr: "expected owner/name"},
-		{name: "empty owner", args: []string{"repo", "track", "/todo"}, wantErr: "no owner"},
+		{name: "no owner", args: []string{"repo", "track", "roz"}, wantErr: "expected owner/name"},
+		{name: "empty owner", args: []string{"repo", "track", "/roz"}, wantErr: "no owner"},
 		{name: "empty name", args: []string{"repo", "track", "scottlaird/"}, wantErr: "no repository name"},
 		{name: "too many parts", args: []string{"repo", "track", "a/b/c"}, wantErr: "more than one"},
 		{name: "pull request key", args: []string{"repo", "track", "owner/repo#1"}, wantErr: "pull request key"},
 		{
 			name:    "unknown pipeline",
-			args:    []string{"repo", "track", "scottlaird/todo", "--pipeline", "maybe"},
+			args:    []string{"repo", "track", "scottlaird/roz", "--pipeline", "maybe"},
 			wantErr: "is not a pipeline",
 		},
 		{name: "show untracked", args: []string{"repo", "show", "nobody/nothing"}, wantErr: "no such item"},
@@ -165,9 +165,9 @@ func TestRepoRejections(t *testing.T) {
 
 func TestRepoSetWithNoFlags(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	_, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/todo")
+	_, err := runCLI(t, "repo", "set", "--db", db, "scottlaird/roz")
 	if err == nil {
 		t.Fatal("repo set with no flags returned nil, want an error")
 	}
@@ -178,9 +178,9 @@ func TestRepoSetWithNoFlags(t *testing.T) {
 
 func TestRepoTrackTwice(t *testing.T) {
 	db := initDB(t)
-	trackRepo(t, db, "scottlaird/todo")
+	trackRepo(t, db, "scottlaird/roz")
 
-	_, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/todo")
+	_, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz")
 	if err == nil {
 		t.Fatal("tracking twice returned nil, want an error")
 	}

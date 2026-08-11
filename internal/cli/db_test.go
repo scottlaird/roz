@@ -117,7 +117,7 @@ func TestDBRestoreSaysWhereTheOldOneWent(t *testing.T) {
 // TestDBIsNotAnMCPTool: restoring replaces the database wholesale, which is
 // not a decision an agent gets to make on its own.
 func TestDBIsNotAnMCPTool(t *testing.T) {
-	tools := (&mcpTools{db: "/tmp/todo.db", agent: "test"}).List()
+	tools := (&mcpTools{db: "/tmp/roz.db", agent: "test"}).List()
 	for _, tool := range tools {
 		if strings.HasPrefix(tool.Name, "db_") {
 			t.Errorf("MCP offers %q, want the db commands left out", tool.Name)

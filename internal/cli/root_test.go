@@ -10,7 +10,7 @@ import (
 // TestConcurrentTreesKeepTheirOwnDatabase is the reason --db is bound to the
 // command rather than to the package.
 //
-// `todo mcp` builds a fresh tree per tool call, so two calls in flight mean
+// `roz mcp` builds a fresh tree per tool call, so two calls in flight mean
 // two trees parsing --db at once. While the value lived in a package variable
 // that was a write/write race, and the losing tree opened the winner's
 // database. Run under -race this fails loudly against that version; run

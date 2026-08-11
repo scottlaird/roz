@@ -15,7 +15,7 @@ schema.go               embeds both, and orders the migrations
 ## Which file is real
 
 **The migrations are.** They are the only thing ever executed, including on a
-fresh `todo init` — there is no separate "create from scratch" path, so a new
+fresh `roz init` — there is no separate "create from scratch" path, so a new
 database and an upgraded one cannot end up different.
 
 `schema.sql` is documentation. It is never run except by two tests, which

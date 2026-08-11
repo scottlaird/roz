@@ -60,7 +60,7 @@ func TestProseAcceptsMarkdown(t *testing.T) {
 	ctx := context.Background()
 
 	a := NewAction("write the endpoint", "write")
-	a.Why = "unblocks the *split*, once `todo sync github` runs — see [the sketch](https://example.com/s)"
+	a.Why = "unblocks the *split*, once `roz sync github` runs — see [the sketch](https://example.com/s)"
 	if err := st.AllocateAction(ctx, a); err != nil {
 		t.Fatalf("AllocateAction() returned error: %v", err)
 	}

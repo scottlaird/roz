@@ -61,31 +61,6 @@ them.
 - [ ] Nothing consumes `todo watch`. Sync raises a `pr_unresolvable` exception
       when a tracked pull request goes invisible, and today only a human
       watching would see it.
-- [ ] **`pr.checks` should be a `pr_check` table rather than a JSON blob.**
-      One column holding the whole map means the diff engine can only say "the
-      map changed", so every job starting or finishing re-emits all of it. Two
-      pull requests produced about fifteen checks events in an hour and none of
-      them said anything useful; the signal worth acting on was always
-      `checks_state`.
-
-      Summarising the blob to counts is not the fix either. The payload is the
-      failing check's *name* — counts still need a follow-up query, and earn a
-      place only as a progress hint.
-
-      A row per check makes the existing machinery do the work: one event per
-      check that actually moved, named. Most transitions are `"" → SUCCESS`,
-      which is `auto`-shaped in the sense `last_synced_at` already establishes
-      — write it, do not log it — leaving transitions into and out of
-      `FAILURE`, `ERROR` and `CANCELLED` as the events worth having. A check
-      reporting `FAILURE` again is not news, and the blob cannot tell *newly
-      broken* from *still broken*.
-
-      It also answers per-check questions the blob cannot: whether a required
-      check passed or merely skipped is not visible today, and it is not a
-      question the database can be asked at all while the answer is inside one
-      TEXT column. A `pr_checks_green` predicate could parse the blob in Go, so
-      that much is possible either way — what a table changes is that the
-      condition becomes queryable rather than only computable.
 - [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
       per-repository "poll everything of mine" would want a `search` query and
       a rule for when a pull request stops being tracked.
@@ -332,6 +307,26 @@ a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
   diff already logs `last_verified_at` moving, and hand-writing a second event
   beside it is exactly what "events come from diffs, never hand-written calls"
   rules out. Worth revisiting only if something needs to filter on it.
+- **`pr.checks` is a row per check, not a JSON blob.** One column holding the
+  whole map could only ever diff as "the map changed", so every job starting
+  or finishing re-emitted all of it — about fifteen useless events an hour
+  across two pull requests. A row per check names the one that moved.
+  `checks_state`, the rollup, stays on `pr`: that is GitHub's summary and it
+  is what every reader was already acting on.
+- **Every check transition is written; only some are logged.** That is not a
+  hole in "every mutation is an event" but the argument `auto` columns already
+  make: `pr.last_synced_at` is written and unlogged because it moves on every
+  poll and would bury what matters. A check going green does the same. So
+  crossing *into* a broken state is news, crossing back *out* is news, and
+  everything else is written silently — which is what finally distinguishes
+  newly broken from still broken.
+- **PENDING is not broken.** A check that has not finished is not a failure,
+  and treating it as one would raise something on every push. The broken set
+  is `FAILURE`, `ERROR`, `CANCELLED`, `TIMED_OUT`.
+- **A check GitHub stops reporting is deleted, not kept.** Contexts come and
+  go with the workflow file, and a check nobody runs any more is not a check
+  that failed. Its disappearance is logged only if it was broken, since that
+  is a question being answered rather than a row being tidied.
 - Identifier prefixes live in the database, chosen at init, write-once.
 - Pull request keys are `owner/repo#123`; a repository must be tracked first.
 - `github_repo.pipeline` is authored, not observed — reading branch protection

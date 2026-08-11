@@ -133,9 +133,17 @@ func applyOne(ctx context.Context, st *store.Store, observed github.PullRequest)
 	if err != nil {
 		return nil, err
 	}
-	if len(changes) == 0 {
-		return nil, nil
+
+	// The checks are rows rather than a column, so they are written beside
+	// the update rather than diffed with it — in the same transaction, so a
+	// failure leaves neither half applied. ApplyChecks decides for itself
+	// which transitions are worth logging; most are not.
+	if err := tx.ApplyChecks(ctx, observed.Key, observed.Checks); err != nil {
+		return nil, err
 	}
+
+	// Commit even when no column moved: a check may have, and that is a
+	// change to the pull request whether or not the rollup noticed.
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -171,12 +179,6 @@ func merge(before *store.PR, observed github.PullRequest) (*store.PR, error) {
 	// text columns this is always written.
 	after.UnresolvedThreads = sql.NullInt64{Int64: int64(observed.UnresolvedThreads), Valid: true}
 
-	checks, err := encodeChecks(observed.Checks)
-	if err != nil {
-		return nil, err
-	}
-	after.Checks = checks
-
 	teams, err := encodeStrings(observed.ReviewerTeams)
 	if err != nil {
 		return nil, err
@@ -190,21 +192,6 @@ func merge(before *store.PR, observed github.PullRequest) (*store.PR, error) {
 	after.Approvals = approvals
 
 	return after, nil
-}
-
-// encodeChecks renders the rollup as a JSON object with sorted keys, so an
-// unchanged set of checks encodes identically each time and does not read as
-// a change.
-func encodeChecks(checks map[string]string) (string, error) {
-	if len(checks) == 0 {
-		return "{}", nil
-	}
-	// encoding/json sorts map keys, so this is already stable.
-	encoded, err := json.Marshal(checks)
-	if err != nil {
-		return "", fmt.Errorf("encoding checks: %w", err)
-	}
-	return string(encoded), nil
 }
 
 // encodeStrings renders a list as a JSON array, sorted for the same reason.

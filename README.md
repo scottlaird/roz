@@ -560,6 +560,34 @@ Changing it affects the chain the next close instantiates. Actions already
 created are left alone — they exist, and something may already be waiting on
 them.
 
+## Checks
+
+GitHub reports a conclusion per check context. Those are rows in `pr_check`,
+one per check, rather than a single JSON column — and the difference is what
+the log says when one moves:
+
+```
+2026-08-11T05:01:00.000Z  info  sync:github  changed  scottlaird/todo#67  checks/test: "SUCCESS" → "FAILURE"
+```
+
+The blob could only ever diff as "the map changed", so every job starting or
+finishing re-emitted the lot: about fifteen events an hour across two pull
+requests, none of them saying anything worth reading.
+
+**Most transitions are written and not logged.** Going green is the common
+case and burying a real failure underneath it is the harm this exists to
+stop, so only crossing into a broken state — `FAILURE`, `ERROR`, `CANCELLED`,
+`TIMED_OUT` — and crossing back out of one produce an event. A check that was
+already failing and still is produces nothing, which is what tells *newly
+broken* from *still broken*. `PENDING` is not broken; a check that has not
+finished is not a failure.
+
+That is the same trade `pr.last_synced_at` already makes as an `auto` column:
+written because it is true, unlogged because it would drown the log.
+
+`checks_state` stays on `pr` — GitHub's rollup, and what the page and
+`pr list` show. The per-check detail is on `pr show`.
+
 ## Upgrading while something is running
 
 `serve`, `syncer`, `watch` and `mcp` read the schema once, at startup. If you

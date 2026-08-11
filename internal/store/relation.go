@@ -113,6 +113,7 @@ func (p *Project) relations() []Relation {
 func (r *PR) relations() []Relation {
 	return []Relation{
 		{Name: "actions", Load: actionsAboutPR},
+		{Name: "checks", Load: checkStates},
 	}
 }
 
@@ -177,6 +178,21 @@ func actionsAboutPR(ctx context.Context, tx *Tx, id string) (any, error) {
 		return nil, err
 	}
 	return actionIDs(actions), nil
+}
+
+// checkStates renders the checks as name to state, which is the shape the old
+// blob had — the difference is where it lives and how it is logged, not how a
+// reader wants to see it.
+func checkStates(ctx context.Context, tx *Tx, id string) (any, error) {
+	checks, err := tx.ChecksFor(ctx, id)
+	if err != nil || len(checks) == 0 {
+		return nil, err
+	}
+	byName := make(map[string]string, len(checks))
+	for _, c := range checks {
+		byName[c.Name] = c.State
+	}
+	return byName, nil
 }
 
 func actionIDs(actions []*Action) []string {

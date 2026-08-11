@@ -407,3 +407,52 @@ func TestRenderPrefersTheEnvironment(t *testing.T) {
 		t.Errorf("the stored base URL was used as well:\n%s", out)
 	}
 }
+
+// TestRenderProjectSummary: project.summary carries format:"markdown", and
+// the page is the only thing that renders it — so without this the tag on
+// that column is not exercised anywhere.
+func TestRenderProjectSummary(t *testing.T) {
+	db := initDB(t)
+	addProject(t, db, "Rank the queue", "--summary",
+		"**Ranking**, then `unblocks_count`.\n\n- first\n- second")
+	addProject(t, db, "No summary here")
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+
+	for _, want := range []string{
+		"<strong>Ranking</strong>",
+		"<code>unblocks_count</code>",
+		"<li>first</li>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the page does not contain %q:\n%s", want, out)
+		}
+	}
+
+	// One row per summary, and none for the project without one: a blank row
+	// under every project would be a rule drawn across the table for nothing.
+	if n := strings.Count(out, `class="detail`); n != 1 {
+		t.Errorf("the page has %d summary rows, want 1", n)
+	}
+}
+
+// TestRenderProjectTitleStaysLiteral: the title beside the summary is a name,
+// so it is escaped and linked but never parsed as Markdown.
+func TestRenderProjectTitleStaysLiteral(t *testing.T) {
+	db := initDB(t)
+	addProject(t, db, "the *old* pipeline", "--summary", "replaced by the *new* one")
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(out, "the *old* pipeline") {
+		t.Errorf("the title was interpreted as Markdown:\n%s", out)
+	}
+	if !strings.Contains(out, "the <em>new</em> one") {
+		t.Errorf("the summary was not rendered:\n%s", out)
+	}
+}

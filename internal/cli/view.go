@@ -91,8 +91,11 @@ type jiraView struct {
 }
 
 type projectView struct {
-	ID       string
+	ID string
+	// Title is a name and stays literal; Summary is prose and renders as
+	// Markdown. Both link the same identifiers.
 	Title    template.HTML
+	Summary  template.HTML
 	Status   string
 	Priority string
 	Effort   string
@@ -192,6 +195,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		content.Projects = append(content.Projects, projectView{
 			ID:       p.ID,
 			Title:    text.links.Text(p.Title),
+			Summary:  text.markdown.Render(p.Summary),
 			Status:   p.Status,
 			Priority: nullIntText(p.Priority),
 			Effort:   nullText(p.Effort),

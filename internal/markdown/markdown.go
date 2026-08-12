@@ -36,13 +36,28 @@ var (
 	// why a match only becomes a link when the prefix is a registered short
 	// name.
 	shortPattern = regexp.MustCompile(`\b([\w.-]+)#(\d+)\b`)
+	// idPattern is deliberately loose — it matches UTF8 and SHA256 as readily
+	// as NA57 — because the prefixes are configurable and this cannot know
+	// them. Refs is what decides; see Config.
+	idPattern = regexp.MustCompile(`\b([A-Za-z]+[0-9]+)\b`)
+	// wikiPattern is the explicit form, for a reference somebody wants linked
+	// without relying on the bare one being recognised.
+	wikiPattern = regexp.MustCompile(`\[\[\s*([^\]\s][^\]]*?)\s*\]\]`)
 )
 
 // Kinds of thing a link can point at.
 const (
-	KindPR   = "pr"
-	KindJira = "jira"
+	KindPR      = "pr"
+	KindJira    = "jira"
+	KindAction  = "action"
+	KindProject = "project"
 )
+
+// Ref is where an action or project lives on the page, and what kind it is.
+type Ref struct {
+	Kind string
+	Href string
+}
 
 // Target is what a link destination resolves to: a kind and the identifier
 // roz knows that thing by.
@@ -73,6 +88,7 @@ type Linker struct {
 	jiraBase string
 	jira     map[string]bool
 	repos    map[string]string
+	refs     map[string]Ref
 	titles   TitleFunc
 }
 
@@ -88,6 +104,15 @@ type Config struct {
 	// write api#1234. Only registered names expand: that is what keeps the
 	// rule from surprising text that was never about a pull request.
 	Repos map[string]string
+	// Refs maps an action or project identifier to where it lives on the page.
+	//
+	// Membership is the whole rule for linking one. Prefixes are configurable
+	// per installation and short, so a pattern for them would collide with
+	// ordinary words and with other people's identifiers; asking whether the
+	// thing exists settles that, and the lookup is needed for the tooltip
+	// anyway. A reference to something not here stays text, which is also the
+	// right answer for one written before its target was created.
+	Refs map[string]Ref
 	// Titles supplies tooltips. Nil means none.
 	Titles TitleFunc
 }
@@ -107,6 +132,12 @@ var prURLPattern = regexp.MustCompile(
 func (l *Linker) Resolve(dest string) (Target, bool) {
 	if m := prURLPattern.FindStringSubmatch(dest); m != nil {
 		return Target{Kind: KindPR, Key: m[1] + "/" + m[2] + "#" + m[3]}, true
+	}
+	if after, found := strings.CutPrefix(dest, "#"); found {
+		if target, ok := l.refs[after]; ok {
+			return Target{Kind: target.Kind, Key: after}, true
+		}
+		return Target{}, false
 	}
 	if l.jiraBase != "" && strings.HasPrefix(dest, l.jiraBase+"/") {
 		key := strings.TrimPrefix(dest, l.jiraBase+"/")
@@ -160,6 +191,7 @@ func NewLinker(cfg Config) *Linker {
 	l := &Linker{
 		jiraBase: strings.TrimSuffix(cfg.JiraBase, "/"),
 		repos:    cfg.Repos,
+		refs:     cfg.Refs,
 		titles:   cfg.Titles,
 	}
 	if l.jiraBase == "" {
@@ -177,7 +209,12 @@ func NewLinker(cfg Config) *Linker {
 // ref is one identifier found in a string: where it sits, and where it points.
 type ref struct {
 	start, end int
-	dest       string
+	// label is the span rendered as the link's text, which is the whole match
+	// except for [[…]], where it is what sits inside the brackets.
+	labelStart, labelEnd int
+	// dest is empty for a reference that resolves to nothing. Such a ref still
+	// exists so that [[NA999]] can shed its brackets and render as text.
+	dest string
 }
 
 // find returns the identifiers in s, in order and never overlapping.
@@ -190,11 +227,8 @@ type ref struct {
 func (l *Linker) find(s string) []ref {
 	var refs []ref
 	for _, m := range prPattern.FindAllStringSubmatchIndex(s, -1) {
-		refs = append(refs, ref{
-			start: m[0],
-			end:   m[1],
-			dest:  "https://github.com/" + s[m[2]:m[3]] + "/pull/" + s[m[4]:m[5]],
-		})
+		refs = append(refs, whole(m[0], m[1],
+			"https://github.com/"+s[m[2]:m[3]]+"/pull/"+s[m[4]:m[5]]))
 	}
 	// Short names after full references, so the `api#1234` inside
 	// `acme/api#1234` is already covered and skipped by the overlap check
@@ -205,16 +239,39 @@ func (l *Linker) find(s string) []ref {
 			if !ok || overlaps(refs, m[0], m[1]) {
 				continue
 			}
-			refs = append(refs, ref{
-				start: m[0],
-				end:   m[1],
-				// /pull/ rather than /issues/: a bare number does not say
-				// which, GitHub redirects between them, and detecting it would
-				// mean a request per reference.
-				dest: "https://github.com/" + repo + "/pull/" + s[m[4]:m[5]],
-			})
+			// /pull/ rather than /issues/: a bare number does not say which,
+			// GitHub redirects between them, and detecting it would mean a
+			// request per reference.
+			refs = append(refs, whole(m[0], m[1],
+				"https://github.com/"+repo+"/pull/"+s[m[4]:m[5]]))
 		}
 		sort.Slice(refs, func(i, j int) bool { return refs[i].start < refs[j].start })
+	}
+	// The explicit form first: it is unambiguous, and claiming its span keeps
+	// the bare pass from linking the identifier inside the brackets as well.
+	if len(l.refs) > 0 {
+		for _, m := range wikiPattern.FindAllStringSubmatchIndex(s, -1) {
+			if overlaps(refs, m[0], m[1]) {
+				continue
+			}
+			// A reference to something that does not exist keeps its text and
+			// loses its brackets: the brackets are markup asking for a link,
+			// and showing them to a reader who did not write them says nothing.
+			r := ref{start: m[0], end: m[1], labelStart: m[2], labelEnd: m[3]}
+			if target, ok := l.refs[s[m[2]:m[3]]]; ok {
+				r.dest = target.Href
+			}
+			refs = append(refs, r)
+		}
+	}
+	if len(l.refs) > 0 {
+		for _, m := range idPattern.FindAllStringSubmatchIndex(s, -1) {
+			target, ok := l.refs[s[m[2]:m[3]]]
+			if !ok || overlaps(refs, m[0], m[1]) {
+				continue
+			}
+			refs = append(refs, whole(m[0], m[1], target.Href))
+		}
 	}
 	if len(l.jira) > 0 {
 		for _, m := range jiraKeyPattern.FindAllStringIndex(s, -1) {
@@ -223,11 +280,16 @@ func (l *Linker) find(s string) []ref {
 			if !l.jira[project] || overlaps(refs, m[0], m[1]) {
 				continue
 			}
-			refs = append(refs, ref{start: m[0], end: m[1], dest: l.jiraBase + "/" + key})
+			refs = append(refs, whole(m[0], m[1], l.jiraBase+"/"+key))
 		}
-		sort.Slice(refs, func(i, j int) bool { return refs[i].start < refs[j].start })
 	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].start < refs[j].start })
 	return refs
+}
+
+// whole is a reference whose rendered text is its entire match.
+func whole(start, end int, dest string) ref {
+	return ref{start: start, end: end, labelStart: start, labelEnd: end, dest: dest}
 }
 
 func overlaps(refs []ref, start, end int) bool {
@@ -258,6 +320,13 @@ func (l *Linker) Text(s string) template.HTML {
 	at := 0
 	for _, r := range refs {
 		b.WriteString(template.HTMLEscapeString(s[at:r.start]))
+		label := template.HTMLEscapeString(s[r.labelStart:r.labelEnd])
+		if r.dest == "" {
+			// A [[…]] pointing at nothing: the text stays, the markup goes.
+			b.WriteString(label)
+			at = r.end
+			continue
+		}
 		b.WriteString(`<a href="`)
 		b.WriteString(template.HTMLEscapeString(r.dest))
 		if title := l.titleFor(r.dest); title != "" {
@@ -265,7 +334,7 @@ func (l *Linker) Text(s string) template.HTML {
 			b.WriteString(template.HTMLEscapeString(title))
 		}
 		b.WriteString(`">`)
-		b.WriteString(template.HTMLEscapeString(s[r.start:r.end]))
+		b.WriteString(label)
 		b.WriteString(`</a>`)
 		at = r.end
 	}
@@ -408,11 +477,17 @@ func (t *linkTransformer) rewrite(node *ast.Text, source []byte) {
 		if r.start > at {
 			insert(ast.NewTextSegment(text.NewSegment(segment.Start+at, segment.Start+r.start)))
 		}
+		label := ast.NewTextSegment(
+			text.NewSegment(segment.Start+r.labelStart, segment.Start+r.labelEnd))
+		if r.dest == "" {
+			insert(label)
+			at = r.end
+			continue
+		}
 		link := ast.NewLink()
 		link.Destination = []byte(r.dest)
 		t.annotate(link)
-		link.AppendChild(link, ast.NewTextSegment(
-			text.NewSegment(segment.Start+r.start, segment.Start+r.end)))
+		link.AppendChild(link, label)
 		insert(link)
 		at = r.end
 	}

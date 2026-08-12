@@ -143,7 +143,7 @@
     {{if .Queue}}
     <ol class="queue">
       {{range .Queue}}
-      <li class="{{.RankClass}}{{if .Expired}} expired{{end}}">
+      <li id="{{.ID}}" class="{{.RankClass}}{{if .Expired}} expired{{end}}">
         <div class="do">
           {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
           <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
@@ -161,7 +161,7 @@
     <h2>waiting — not the queue, but not nothing</h2>
     <ol class="queue">
       {{range .Waiting}}
-      <li class="wait{{if .Expired}} expired{{end}}">
+      <li id="{{.ID}}" class="wait{{if .Expired}} expired{{end}}">
         <div class="do">
           {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
           <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
@@ -185,7 +185,7 @@
         </tr></thead>
         <tbody>
           {{range .Projects}}
-          <tr{{if .Expired}} class="expired"{{end}}>
+          <tr id="{{.ID}}"{{if .Expired}} class="expired"{{end}}>
             <td class="n">{{.ID}}</td>
             <td>{{.Title}}</td>
             <td>{{.Status}}</td>
@@ -211,6 +211,56 @@
     </div>
     {{else}}<p class="empty">no active projects</p>{{end}}
   </section>
+
+  {{/* Everything the sections above leave out. Not a view anybody reads top to
+       bottom: it exists so that every identifier on the page has somewhere to
+       point, including the ones that are closed, blocked or deferred. Each
+       entity appears exactly once across the whole page, which is what keeps
+       an id unique and lets a link ignore which section its target ended up
+       in. */}}
+  {{if .Elsewhere}}
+  <section class="index">
+    <h2>every other action</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>id</th><th>title</th><th>state</th><th>verb</th><th>project</th></tr></thead>
+        <tbody>
+          {{range .Elsewhere}}
+          <tr id="{{.ID}}">
+            <td class="n">{{.ID}}</td>
+            <td>{{.Title}}</td>
+            <td>{{.State}}</td>
+            <td>{{.Verb}}</td>
+            <td class="n">{{.Project}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .Closed}}
+  <section class="index">
+    <h2>every other project</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>id</th><th>title</th><th>status</th><th>pri</th><th>effort</th></tr></thead>
+        <tbody>
+          {{range .Closed}}
+          <tr id="{{.ID}}">
+            <td class="n">{{.ID}}</td>
+            <td>{{.Title}}</td>
+            <td>{{.Status}}</td>
+            <td class="num">{{.Priority}}</td>
+            <td>{{.Effort}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
 
   <footer>The page is a view; the database is the truth. Nothing reads it back.</footer>
 </div>

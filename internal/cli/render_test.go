@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -75,16 +76,39 @@ func TestRender(t *testing.T) {
 		}
 	}
 
+	// The index of everything sits below the blocks and holds what they leave
+	// out, so "not in the queue" is now a claim about the part above it.
+	blocks, index := aboveTheIndex(t, out)
+
 	for _, unwanted := range []string{
 		"Roll the change out", // blocked
 		"Tidy up after",       // hidden
 		"Retire the old pool", // superseded
-		"away",                // beyond the horizon
 	} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("the page contains %q, which belongs in none of the blocks:\n%s", unwanted, out)
+		if strings.Contains(blocks, unwanted) {
+			t.Errorf("the page shows %q in a block it does not belong in:\n%s", unwanted, blocks)
+		}
+		// But it is still reachable, which is the point of the index.
+		if !strings.Contains(index, unwanted) {
+			t.Errorf("%q is nowhere on the page, so a reference to it lands nowhere", unwanted)
 		}
 	}
+
+	// A calendar window beyond the horizon is not an entity anything links to,
+	// so it stays off the page entirely.
+	if strings.Contains(out, "away") {
+		t.Errorf("the page contains a window beyond the horizon:\n%s", out)
+	}
+}
+
+// aboveTheIndex splits the page at the index of everything.
+func aboveTheIndex(t *testing.T, page string) (blocks, index string) {
+	t.Helper()
+	blocks, index, found := strings.Cut(page, `<section class="index">`)
+	if !found {
+		t.Fatalf("the page has no index section:\n%s", page)
+	}
+	return blocks, index
 }
 
 func TestRenderToAFile(t *testing.T) {
@@ -524,8 +548,15 @@ func TestPageLeavesALiveSnoozeHidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
-	if strings.Contains(page, "still deferred") {
-		t.Errorf("a snooze that has not expired reached the page:\n%s", page)
+	// Deferring means out of the queue, not out of existence: the index below
+	// still lists it, so a reference to it has somewhere to land. What a
+	// snooze promises is that it is not competing for attention.
+	blocks, index := aboveTheIndex(t, page)
+	if strings.Contains(blocks, "still deferred") {
+		t.Errorf("a snooze that has not expired reached the queue:\n%s", blocks)
+	}
+	if !strings.Contains(index, "still deferred") {
+		t.Errorf("a snoozed action is nowhere on the page, so a reference to it lands nowhere")
 	}
 }
 
@@ -578,5 +609,71 @@ func TestPageLeavesUntrackedLinksBare(t *testing.T) {
 	// Still linked, though — the link is right, only the caption is unknown.
 	if !strings.Contains(page, "owner/other/pull/99") {
 		t.Errorf("the link itself is missing:\n%s", page)
+	}
+}
+
+// TestPageAnchorsEveryEntityExactlyOnce is the constraint the split exists
+// for: an id must be unique in a document, so an action cannot be anchored
+// both in the queue and in an index of everything.
+func TestPageAnchorsEveryEntityExactlyOnce(t *testing.T) {
+	db := renderedFixture(t)
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+
+	ids := map[string]int{}
+	for _, m := range regexp.MustCompile(`id="((?:NA|SL)\d+)"`).FindAllStringSubmatch(page, -1) {
+		ids[m[1]]++
+	}
+	if len(ids) == 0 {
+		t.Fatalf("nothing on the page is anchored:\n%s", page)
+	}
+	for id, n := range ids {
+		if n != 1 {
+			t.Errorf("%s is anchored %d times, want exactly once", id, n)
+		}
+	}
+}
+
+// TestPageLinksAnActionToItsProject: the column named a project and sat a few
+// hundred pixels above it without linking.
+func TestPageLinksAnActionToItsProject(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "the project")
+	addAction(t, db, "--title", "do it", "--verb", "decide", "--project", project)
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(page, `<a href="#`+project+`">`+project+`</a>`) {
+		t.Errorf("the action's project is not a link:\n%s", page)
+	}
+	if !strings.Contains(page, `id="`+project+`"`) {
+		t.Errorf("the link has no anchor to land on:\n%s", page)
+	}
+}
+
+// TestPageLinksReferencesInProse, and only the ones that exist.
+func TestPageLinksReferencesInProse(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "the target")
+	addAction(t, db, "--title", "do it", "--verb", "decide",
+		"--why", "waits for "+project+", and for SL999 which is nobody")
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(page, `href="#`+project+`"`) {
+		t.Errorf("a reference to a real project did not link:\n%s", page)
+	}
+	if strings.Contains(page, `href="#SL999"`) {
+		t.Errorf("a reference to a project that does not exist became a link:\n%s", page)
+	}
+	if !strings.Contains(page, "SL999") {
+		t.Errorf("the unresolvable reference lost its text:\n%s", page)
 	}
 }

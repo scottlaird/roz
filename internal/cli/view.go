@@ -28,12 +28,13 @@ type prose struct {
 }
 
 func newProse(jiraBase string, jiraPrefixes []string, repos map[string]string,
-	titles markdown.TitleFunc) *prose {
+	refs map[string]markdown.Ref, titles markdown.TitleFunc) *prose {
 
 	links := markdown.NewLinker(markdown.Config{
 		JiraBase:     jiraBase,
 		JiraPrefixes: jiraPrefixes,
 		Repos:        repos,
+		Refs:         refs,
 		Titles:       titles,
 	})
 	return &prose{
@@ -54,7 +55,8 @@ func newProse(jiraBase string, jiraPrefixes []string, repos map[string]string,
 // rather than empty. A link with no tooltip says nothing; a link with a blank
 // one says roz looked and found nothing, which is a different and less useful
 // claim to make on a hover.
-func titlesFrom(prs []*store.PR, issues []*store.TrackerIssue) markdown.TitleFunc {
+func titlesFrom(prs []*store.PR, issues []*store.TrackerIssue,
+	actions []*store.Action, projects []*store.Project) markdown.TitleFunc {
 	known := make(map[markdown.Target]string, len(prs)+len(issues))
 	for _, pr := range prs {
 		if pr.Title != "" {
@@ -68,7 +70,56 @@ func titlesFrom(prs []*store.PR, issues []*store.TrackerIssue) markdown.TitleFun
 			known[markdown.Target{Kind: markdown.KindJira, Key: issue.Key}] = issue.Summary
 		}
 	}
+	for _, a := range actions {
+		known[markdown.Target{Kind: markdown.KindAction, Key: a.ID}] = a.Title
+	}
+	for _, p := range projects {
+		known[markdown.Target{Kind: markdown.KindProject, Key: p.ID}] = p.Title
+	}
 	return func(target markdown.Target) string { return known[target] }
+}
+
+// refsFor says where every action and project lives on the page.
+//
+// The anchor is the identifier verbatim. Prefixes are configurable, so a
+// scheme like action-NA57 would need to know which prefix means which kind,
+// and the identifier is already unique across both — the two prefixes cannot
+// be the same. It is also what a person would guess, which matters: an anchor
+// is a public surface, and once a link to one exists in somebody's notes,
+// changing the scheme breaks it silently.
+func refsFor(actions []*store.Action, projects []*store.Project) map[string]markdown.Ref {
+	refs := make(map[string]markdown.Ref, len(actions)+len(projects))
+	for _, a := range actions {
+		refs[a.ID] = markdown.Ref{Kind: markdown.KindAction, Href: "#" + a.ID}
+	}
+	for _, p := range projects {
+		refs[p.ID] = markdown.Ref{Kind: markdown.KindProject, Href: "#" + p.ID}
+	}
+	return refs
+}
+
+// remaining returns the entities not already shown, so each appears on the
+// page exactly once.
+//
+// Exactly once is the constraint that matters: an id has to be unique in a
+// document, so an action cannot be anchored both in the queue and in an index
+// of everything. Splitting the set rather than repeating it means the anchor
+// is wherever the entity is, and a link never has to know which section that
+// turned out to be.
+func remaining[T any](all []T, id func(T) string, shown ...[]string) []T {
+	seen := map[string]bool{}
+	for _, list := range shown {
+		for _, s := range list {
+			seen[s] = true
+		}
+	}
+	var out []T
+	for _, item := range all {
+		if !seen[id(item)] {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // The view model the status page renders.
@@ -86,6 +137,12 @@ type pageContent struct {
 	Queue       []actionView
 	Waiting     []actionView
 	Projects    []projectView
+	// Elsewhere is every action the two lists above leave out: closed,
+	// blocked, hidden, or snoozed and not yet due. It exists so that a
+	// reference to any action has somewhere to land.
+	Elsewhere []actionView
+	// Closed is the same for projects the table above omits.
+	Closed []projectView
 	// Live adds the script that reloads when the server says something moved.
 	// A page written to a file has no server to listen to.
 	Live bool
@@ -103,12 +160,16 @@ type windowView struct {
 }
 
 type actionView struct {
-	ID        string
-	Title     template.HTML
-	Why       template.HTML
-	Verb      string
+	ID    string
+	Title template.HTML
+	Why   template.HTML
+	Verb  string
+	// State is only drawn in the index of everything, where an action may be
+	// closed, blocked or deferred. The queue and the waits are all ready by
+	// construction, so showing it there would say the same word every time.
+	State     string
 	RankClass string
-	Project   string
+	Project   template.HTML
 	Age       string
 	PRs       []prView
 	Issues    []issueView
@@ -163,12 +224,24 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	if err != nil {
 		return nil, err
 	}
+	// Everything, for two reasons: an identifier only links if it exists, and
+	// every identifier needs a row on the page to link to.
+	everyAction, err := st.ListActions(ctx, store.ActionFilter{})
+	if err != nil {
+		return nil, err
+	}
+	everyProject, err := st.ListProjects(ctx, store.ProjectFilter{})
+	if err != nil {
+		return nil, err
+	}
 
 	today := now.UTC().Format(store.DateFormat)
 	// A calendar window is a span of days and asks about the date; a snooze is
 	// compared against the instant the queries use. See expired.
 	stamp := now.UTC().Format(store.TimeFormat)
-	text := newProse(cfg.jiraBase, cfg.jiraPrefixes, shortNames, titlesFrom(allPRs, allIssues))
+	text := newProse(cfg.jiraBase, cfg.jiraPrefixes, shortNames,
+		refsFor(everyAction, everyProject),
+		titlesFrom(allPRs, allIssues, everyAction, everyProject))
 
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
 		Upcoming: true,
@@ -252,6 +325,14 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			openPerProject[a.ProjectID.String]++
 		}
 	}
+	// Every action the two lists above left out, so a reference to any of them
+	// has a row to land on.
+	for _, a := range remaining(everyAction, func(a *store.Action) string { return a.ID },
+		ids(queue), ids(waiting)) {
+		content.Elsewhere = append(content.Elsewhere,
+			actionRow(a, rank, prsByAction, issuesByProject, text, stamp))
+	}
+
 	for _, p := range projects {
 		content.Projects = append(content.Projects, projectView{
 			ID:       p.ID,
@@ -267,9 +348,36 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		})
 	}
 
+	for _, p := range remaining(everyProject, func(p *store.Project) string { return p.ID },
+		projectIDs(projects)) {
+		content.Closed = append(content.Closed, projectView{
+			ID:       p.ID,
+			Title:    text.links.Text(p.Title),
+			Status:   p.Status,
+			Priority: nullIntText(p.Priority),
+			Effort:   nullText(p.Effort),
+		})
+	}
+
 	content.Stamp = fmt.Sprintf("%d in the queue · %d waiting · %d open projects",
 		len(content.Queue), len(content.Waiting), len(content.Projects))
 	return content, nil
+}
+
+func ids(actions []*store.Action) []string {
+	out := make([]string, len(actions))
+	for i, a := range actions {
+		out[i] = a.ID
+	}
+	return out
+}
+
+func projectIDs(projects []*store.Project) []string {
+	out := make([]string, len(projects))
+	for i, p := range projects {
+		out[i] = p.ID
+	}
+	return out
 }
 
 func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.ActionPR,
@@ -282,8 +390,9 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		Title:     text.links.Text(a.Title),
 		Why:       text.markdown.Render(a.Why),
 		Verb:      a.Verb,
+		State:     a.State,
 		RankClass: rank[a.Verb],
-		Project:   nullText(a.ProjectID),
+		Project:   projectLink(a.ProjectID),
 		Age:       age(a, now),
 		Expired:   expired(a.SnoozeUntil, now),
 	}
@@ -358,6 +467,18 @@ func issueViews(issues []*store.TrackerIssue, base string) []issueView {
 		views = append(views, view)
 	}
 	return views
+}
+
+// projectLink renders the project an action advances as a link to its row.
+//
+// Every project has one, whether or not it is in the table above, which is
+// what makes this unconditional: the anchor is wherever the project is.
+func projectLink(id sql.NullString) template.HTML {
+	if !id.Valid || id.String == "" {
+		return "-"
+	}
+	return template.HTML(`<a href="#` + template.HTMLEscapeString(id.String) + `">` +
+		template.HTMLEscapeString(id.String) + `</a>`)
 }
 
 // age is the short chip on the right of a queue item: what state it is in and

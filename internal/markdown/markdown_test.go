@@ -443,3 +443,100 @@ func TestShortNameInMarkdownProse(t *testing.T) {
 		t.Errorf("Render() = %q, want the Jira key still linked", got)
 	}
 }
+
+// withRefs knows one action and one project, and nothing else.
+func withRefs() *Linker {
+	return NewLinker(Config{
+		Refs: map[string]Ref{
+			"NA57": {Kind: KindAction, Href: "#NA57"},
+			"SL7":  {Kind: KindProject, Href: "#SL7"},
+		},
+		Titles: func(t Target) string {
+			if t == (Target{Kind: KindAction, Key: "NA57"}) {
+				return "Write the priority entity"
+			}
+			return ""
+		},
+	})
+}
+
+// TestBareIdentifierLinksWhenItExists is the existence gate. The prefixes are
+// configurable and short, so a pattern for them alone would claim ordinary
+// words; asking whether the thing exists settles it.
+func TestBareIdentifierLinksWhenItExists(t *testing.T) {
+	got := string(withRefs().Text("blocked on NA57"))
+
+	if !strings.Contains(got, `href="#NA57"`) {
+		t.Errorf("Text() = %q, want a link to the action", got)
+	}
+	// And the lookup it needed anyway pays for the tooltip.
+	if !strings.Contains(got, `title="Write the priority entity"`) {
+		t.Errorf("Text() = %q, want the action's title", got)
+	}
+}
+
+// TestUnknownIdentifiersStayText: a pattern loose enough to catch NA57 also
+// catches these, and nothing but existence tells them apart.
+func TestUnknownIdentifiersStayText(t *testing.T) {
+	for _, src := range []string{"UTF8 encoding", "SHA256 digest", "NA999 never existed", "v2 of it"} {
+		t.Run(src, func(t *testing.T) {
+			if got := string(withRefs().Text(src)); strings.Contains(got, "<a ") {
+				t.Errorf("Text(%q) = %q, want no link", src, got)
+			}
+		})
+	}
+}
+
+// TestWikiReferenceLinks is the explicit form, for when the bare one is not
+// wanted or the writer would rather be unambiguous.
+func TestWikiReferenceLinks(t *testing.T) {
+	got := string(withRefs().Text("see [[SL7]] for why"))
+
+	if !strings.Contains(got, `href="#SL7"`) {
+		t.Errorf("Text() = %q, want a link", got)
+	}
+	if !strings.Contains(got, ">SL7<") || strings.Contains(got, "[[") {
+		t.Errorf("Text() = %q, want the brackets gone from the text", got)
+	}
+}
+
+// TestWikiReferenceToNothingLosesItsBrackets: the requirement is that a
+// reference to something that does not exist renders as plain text. The
+// brackets are markup asking for a link, so they go with it — showing them to
+// a reader who did not write them says nothing useful.
+func TestWikiReferenceToNothingLosesItsBrackets(t *testing.T) {
+	got := string(withRefs().Text("see [[NA999]] for why"))
+
+	if strings.Contains(got, "<a ") {
+		t.Errorf("Text() = %q, want no link to something that does not exist", got)
+	}
+	if got != "see NA999 for why" {
+		t.Errorf("Text() = %q, want the plain text", got)
+	}
+}
+
+// TestWikiReferenceClaimsItsSpan: without this the bare pass would link the
+// identifier inside the brackets and leave them stranded around the anchor.
+func TestWikiReferenceClaimsItsSpan(t *testing.T) {
+	got := string(withRefs().Text("see [[NA57]]"))
+
+	if strings.Count(got, "<a ") != 1 {
+		t.Errorf("Text() = %q, want exactly one link", got)
+	}
+	if strings.Contains(got, "[") || strings.Contains(got, "]") {
+		t.Errorf("Text() = %q, want no stray brackets", got)
+	}
+}
+
+func TestIdentifiersInProseAndCodeSpans(t *testing.T) {
+	r := NewRenderer(withRefs())
+
+	if got := string(r.Render("blocked on NA57")); !strings.Contains(got, `href="#NA57"`) {
+		t.Errorf("Render() = %q, want the identifier linked", got)
+	}
+	// A backticked identifier is a code span, and code spans are literal —
+	// the same rule that keeps `api#1234` from expanding.
+	if got := string(r.Render("the `NA57` column")); strings.Contains(got, "<a ") {
+		t.Errorf("Render() = %q, want a code span left alone", got)
+	}
+}

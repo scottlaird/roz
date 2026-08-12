@@ -563,6 +563,47 @@ It cannot contain `/` or `#`, since those are exactly what tell `acme/api#1`
 and `api#1` apart. A reference written out in full still wins over a short name
 matching its tail, so `acme/api-server#1` is one link and not two.
 
+## The page links to itself
+
+Every action and project has an anchor, which is its identifier verbatim:
+`#SL7`, `#NA57`. Prefixes are configurable, so a scheme like `project-SL7`
+would have to know which prefix means which kind — and the identifier is
+already unique across both, since the two prefixes cannot be the same. It is
+also what anyone would guess, which matters for something that ends up in
+other people's notes.
+
+An action's project is a link. A reference in prose becomes one too, when the
+thing it names exists:
+
+```markdown
+waits for SL21, and for SL999 which is nobody
+```
+
+`SL21` links; `SL999` stays text. **Existence is the whole rule.** A pattern
+loose enough to catch `NA57` also catches `UTF8` and `SHA256`, and nothing but
+asking whether the thing exists tells them apart. It also means a reference
+written before its target was created simply reads as text until it is.
+
+`[[SL21]]` is the explicit form, for when the bare one would be ambiguous. It
+links the same way, and loses its brackets either way: a reference to something
+that does not exist renders as its own text, since the brackets were markup
+asking for a link.
+
+**A backticked identifier does not link.** `` `SL21` `` is a code span, and
+code spans are literal — the same rule that keeps `` `api#1234` `` from
+expanding. If a reference should link, write it bare or in double brackets.
+
+### Everything has somewhere to land
+
+The queue is a subset, so most identifiers name something not in it. Below the
+blocks are two index tables holding every action and every project the blocks
+leave out — closed, blocked, hidden, deferred.
+
+Each entity appears **exactly once across the whole page**, which is what makes
+an anchor unique and lets a link ignore which section its target ended up in. A
+snooze still keeps something out of the queue; it does not keep it off the page,
+because a reference to a deferred item needs a destination as much as any other.
+
 ## What a link points at
 
 Every link the page draws to something roz tracks carries a tooltip taken from

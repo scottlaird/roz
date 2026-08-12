@@ -149,7 +149,7 @@ func TestPRRelationsNameTheWork(t *testing.T) {
 	}
 }
 
-func TestProjectRelationsCarryJira(t *testing.T) {
+func TestProjectRelationsCarryIssues(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
@@ -160,7 +160,7 @@ func TestProjectRelationsCarryJira(t *testing.T) {
 		t.Fatalf("Begin() returned error: %v", err)
 	}
 	for _, key := range []string{"CDSS-1744", "CDSS-1801"} {
-		if err := tx.LinkProjectJira(ctx, p.ID, key); err != nil {
+		if err := tx.LinkProjectIssue(ctx, p.ID, TrackerJira, key); err != nil {
 			t.Fatalf("LinkProjectJira() returned error: %v", err)
 		}
 	}
@@ -169,8 +169,8 @@ func TestProjectRelationsCarryJira(t *testing.T) {
 	}
 
 	object := marshalled(t, st, p)
-	if got := stringList(t, object["jira"]); !equalStrings(got, []string{"CDSS-1744", "CDSS-1801"}) {
-		t.Errorf("jira = %v", got)
+	if got := stringList(t, object["issues"]); !equalStrings(got, []string{"jira:CDSS-1744", "jira:CDSS-1801"}) {
+		t.Errorf("issues = %v", got)
 	}
 }
 

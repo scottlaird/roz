@@ -104,7 +104,7 @@ func (p *Project) relations() []Relation {
 	return []Relation{
 		{Name: "blocked_by", Load: projectBlockedByIDs},
 		{Name: "blocking", Load: projectBlockingIDs},
-		{Name: "jira", Load: jiraKeys},
+		{Name: "issues", Load: issueIDs},
 	}
 }
 
@@ -186,12 +186,12 @@ func projectBlockingIDs(ctx context.Context, tx *Tx, id string) (any, error) {
 	return ids, nil
 }
 
-func jiraKeys(ctx context.Context, tx *Tx, id string) (any, error) {
-	keys, err := tx.JiraKeysForProject(ctx, id)
-	if err != nil || len(keys) == 0 {
+func issueIDs(ctx context.Context, tx *Tx, id string) (any, error) {
+	ids, err := tx.IssueIDsForProject(ctx, id)
+	if err != nil || len(ids) == 0 {
 		return nil, err
 	}
-	return keys, nil
+	return ids, nil
 }
 
 func actionsAboutPR(ctx context.Context, tx *Tx, id string) (any, error) {

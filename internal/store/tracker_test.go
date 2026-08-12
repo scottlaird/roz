@@ -21,8 +21,8 @@ func linkJira(t *testing.T, st *Store, title string, keys ...string) *Project {
 	defer tx.Rollback()
 
 	for _, key := range keys {
-		if err := tx.LinkProjectJira(ctx, p.ID, key); err != nil {
-			t.Fatalf("LinkProjectJira() returned error: %v", err)
+		if err := tx.LinkProjectIssue(ctx, p.ID, TrackerJira, key); err != nil {
+			t.Fatalf("LinkProjectIssue() returned error: %v", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -31,17 +31,25 @@ func linkJira(t *testing.T, st *Store, title string, keys ...string) *Project {
 	return p
 }
 
-func observeJira(t *testing.T, st *Store, observations ...JiraObservation) *JiraResult {
+// observeJira fills in the tracker, since every observation in this file is a
+// Jira one and repeating it would bury what each case is actually about.
+func observeJira(t *testing.T, st *Store, observations ...TrackerObservation) *TrackerResult {
 	t.Helper()
 
-	result, err := st.ObserveJira(context.Background(), ActorJiraManual, observations)
+	for i := range observations {
+		if observations[i].Tracker == "" {
+			observations[i].Tracker = TrackerJira
+		}
+	}
+	result, err := st.ObserveTrackerIssues(context.Background(), ActorJiraManual, observations)
 	if err != nil {
-		t.Fatalf("ObserveJira() returned error: %v", err)
+		t.Fatalf("ObserveTrackerIssues() returned error: %v", err)
 	}
 	return result
 }
 
-func loadIssue(t *testing.T, st *Store, key string) *JiraIssue {
+// loadIssue takes the tracker's own key, and composes the id.
+func loadIssue(t *testing.T, st *Store, key string) *TrackerIssue {
 	t.Helper()
 	ctx := context.Background()
 
@@ -51,18 +59,18 @@ func loadIssue(t *testing.T, st *Store, key string) *JiraIssue {
 	}
 	defer tx.Rollback()
 
-	issue, err := tx.LoadJiraIssue(ctx, key)
+	issue, err := tx.LoadTrackerIssue(ctx, IssueID(TrackerJira, key))
 	if err != nil {
-		t.Fatalf("LoadJiraIssue(%s) returned error: %v", key, err)
+		t.Fatalf("LoadTrackerIssue(%s) returned error: %v", key, err)
 	}
 	return issue
 }
 
-func TestObserveJira(t *testing.T) {
+func TestObserveTrackerIssues(t *testing.T) {
 	st := newStore(t)
 	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	observeJira(t, st, JiraObservation{
+	observeJira(t, st, TrackerObservation{
 		Key:      "CDSS-1744",
 		Status:   sql.NullString{String: "In Progress", Valid: true},
 		Assignee: sql.NullString{String: "scott", Valid: true},
@@ -91,12 +99,12 @@ func TestAProjectMayTrackSeveralIssues(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	keys, err := tx.JiraKeysForProject(ctx, p.ID)
+	keys, err := tx.IssueIDsForProject(ctx, p.ID)
 	if err != nil {
-		t.Fatalf("JiraKeysForProject() returned error: %v", err)
+		t.Fatalf("IssueIDsForProject() returned error: %v", err)
 	}
-	if !equalStrings(keys, []string{"CDSS-1392", "CDSS-1393"}) {
-		t.Errorf("JiraKeysForProject() = %v, want both issues", keys)
+	if !equalStrings(keys, []string{"jira:CDSS-1392", "jira:CDSS-1393"}) {
+		t.Errorf("IssueIDsForProject() = %v, want both issues", keys)
 	}
 }
 
@@ -105,19 +113,19 @@ func TestUnreportedFieldsAreLeftAlone(t *testing.T) {
 	st := newStore(t)
 	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	observeJira(t, st, JiraObservation{
-		Key:    "CDSS-1744",
-		Sprint: sql.NullString{String: "Sprint 42", Valid: true},
+	observeJira(t, st, TrackerObservation{
+		Key:       "CDSS-1744",
+		Iteration: sql.NullString{String: "Sprint 42", Valid: true},
 	})
-	observeJira(t, st, JiraObservation{
+	observeJira(t, st, TrackerObservation{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "Done", Valid: true},
 	})
 
 	issue := loadIssue(t, st, "CDSS-1744")
-	if issue.Sprint.String != "Sprint 42" {
+	if issue.Iteration.String != "Sprint 42" {
 		t.Errorf("sprint = %q, want it left alone by an observation that did not mention it",
-			issue.Sprint.String)
+			issue.Iteration.String)
 	}
 }
 
@@ -126,11 +134,11 @@ func TestAnEmptyValueIsAFact(t *testing.T) {
 	st := newStore(t)
 	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	observeJira(t, st, JiraObservation{
+	observeJira(t, st, TrackerObservation{
 		Key:      "CDSS-1744",
 		Assignee: sql.NullString{String: "scott", Valid: true},
 	})
-	observeJira(t, st, JiraObservation{
+	observeJira(t, st, TrackerObservation{
 		Key:      "CDSS-1744",
 		Assignee: sql.NullString{String: "", Valid: true},
 	})
@@ -146,13 +154,13 @@ func TestSyncedAtMovesWithoutOtherChanges(t *testing.T) {
 	st := newStore(t)
 	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	observeJira(t, st, JiraObservation{
+	observeJira(t, st, TrackerObservation{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "To Do", Valid: true},
 	})
 	first := loadIssue(t, st, "CDSS-1744").SyncedAt.String
 
-	observeJira(t, st, JiraObservation{
+	observeJira(t, st, TrackerObservation{
 		Key:      "CDSS-1744",
 		Status:   sql.NullString{String: "To Do", Valid: true},
 		SyncedAt: "2027-01-01T00:00:00.000Z",
@@ -169,7 +177,7 @@ func TestSyncedAtMovesWithoutOtherChanges(t *testing.T) {
 func TestAnIssueNothingTracksIsStillRecorded(t *testing.T) {
 	st := newStore(t)
 
-	result := observeJira(t, st, JiraObservation{
+	result := observeJira(t, st, TrackerObservation{
 		Key:    "CDSS-9999",
 		Status: sql.NullString{String: "To Do", Valid: true},
 	})
@@ -185,14 +193,14 @@ func TestAnIssueNothingTracksIsStillRecorded(t *testing.T) {
 	}
 }
 
-// TestObserveJiraReportsEveryProjectSharingAKey: two projects watching one
+// TestObserveTrackerIssuesReportsEveryProjectSharingAKey: two projects watching one
 // epic is reasonable, and both should be named.
-func TestObserveJiraReportsEveryProjectSharingAKey(t *testing.T) {
+func TestObserveTrackerIssuesReportsEveryProjectSharingAKey(t *testing.T) {
 	st := newStore(t)
 	first := linkJira(t, st, "one half", "CDSS-1744")
 	second := linkJira(t, st, "the other half", "CDSS-1744")
 
-	result := observeJira(t, st, JiraObservation{
+	result := observeJira(t, st, TrackerObservation{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "In Progress", Valid: true},
 	})
@@ -217,8 +225,8 @@ func TestUnlinkKeepsTheIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Begin() returned error: %v", err)
 	}
-	if err := tx.UnlinkProjectJira(ctx, p.ID, "CDSS-1744"); err != nil {
-		t.Fatalf("UnlinkProjectJira() returned error: %v", err)
+	if err := tx.UnlinkProjectIssue(ctx, p.ID, TrackerJira, "CDSS-1744"); err != nil {
+		t.Fatalf("UnlinkProjectIssue() returned error: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit() returned error: %v", err)
@@ -229,31 +237,31 @@ func TestUnlinkKeepsTheIssue(t *testing.T) {
 	}
 }
 
-// TestHumansMayNotObserveJira: the whole reason for a separate actor is that
+// TestHumansMayNotObserveTrackerIssues: the whole reason for a separate actor is that
 // observed columns are not a person's to write.
-func TestHumansMayNotObserveJira(t *testing.T) {
+func TestHumansMayNotObserveTrackerIssues(t *testing.T) {
 	st := newStore(t)
 	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	_, err := st.ObserveJira(context.Background(), ActorHuman, []JiraObservation{{
+	_, err := st.ObserveTrackerIssues(context.Background(), ActorHuman, []TrackerObservation{{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "Done", Valid: true},
 	}})
 	if err == nil {
-		t.Fatal("ObserveJira() as a human was accepted")
+		t.Fatal("ObserveTrackerIssues() as a human was accepted")
 	}
 	if !strings.Contains(err.Error(), "observed") {
 		t.Errorf("error = %v, want it to say the fields are observed", err)
 	}
 }
 
-// TestJiraObservationsAreLoggedAsManual: the log must not claim Jira said
+// TestTrackerObservationsAreLoggedAsManual: the log must not claim Jira said
 // something that was typed in by hand.
-func TestJiraObservationsAreLoggedAsManual(t *testing.T) {
+func TestTrackerObservationsAreLoggedAsManual(t *testing.T) {
 	st := newStore(t)
 	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
-	observeJira(t, st, JiraObservation{
+	observeJira(t, st, TrackerObservation{
 		Key:    "CDSS-1744",
 		Status: sql.NullString{String: "Done", Valid: true},
 	})
@@ -261,7 +269,7 @@ func TestJiraObservationsAreLoggedAsManual(t *testing.T) {
 	logged := events(t, st)
 	var found bool
 	for _, e := range logged {
-		if e.SubjectID == "CDSS-1744" && e.Field == "status" {
+		if e.SubjectID == IssueID(TrackerJira, "CDSS-1744") && e.Field == "status" {
 			found = true
 			if e.Actor != string(ActorJiraManual) {
 				t.Errorf("actor = %q, want %q", e.Actor, ActorJiraManual)

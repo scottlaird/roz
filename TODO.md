@@ -49,6 +49,17 @@ bites; not worth one before.
 
 ## Settled, recorded so it is not relitigated
 
+- **An issue belongs to a tracker, and the pair is its identity.** `jira_issue`
+  became `tracker_issue` with a `tracker` discriminator, and the id is composed
+  as `tracker:key` the way a pull request's is `repo#number`. Composed rather
+  than trusting the keys not to collide: `CDSS-1744` and `owner/repo#123` do
+  not today, but that is a property of two third parties rather than something
+  the schema can enforce. The many-to-many was already right — 0008 settled
+  that when one piece of work turned out to need two issues — so this only
+  added the discriminator. `sprint` became `iteration`, being Jira's sprint and
+  GitHub's milestone under one name. `github` is in the CHECK before anything
+  can read it, so the schema is not what blocks that work.
+
 - **Prose fields are Markdown; titles are not.** `action.why`,
   `project.summary`, the two `snooze_reason`s and a calendar note carry
   `format:"markdown"`. The store keeps the source, `show -o json` returns the

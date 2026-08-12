@@ -181,7 +181,7 @@
       <table>
         <thead><tr>
           <th>id</th><th>title</th><th>status</th><th>pri</th><th>effort</th>
-          <th>open</th><th>jira</th><th>snoozed</th>
+          <th>open</th><th>issues</th><th>snoozed</th>
         </tr></thead>
         <tbody>
           {{range .Projects}}
@@ -192,7 +192,7 @@
             <td class="num">{{.Priority}}</td>
             <td>{{.Effort}}</td>
             <td class="num">{{if .Actions}}{{.Actions}}{{else}}·{{end}}</td>
-            <td>{{range $i, $j := .Jira}}{{if $i}}, {{end}}{{template "jira" $j}}{{else}}-{{end}}</td>
+            <td>{{range $i, $j := .Issues}}{{if $i}}, {{end}}{{template "issue" $j}}{{else}}-{{end}}</td>
             <td class="n">{{.Snooze}}</td>
           </tr>
           {{/* The summary is prose and does not fit a cell, so it gets a row
@@ -223,7 +223,7 @@
 {{end}}
 
 {{define "refs"}}
-{{if or .PRs .Jira .Project}}
+{{if or .PRs .Issues .Project}}
 <div class="refs">
   {{if .Project}}<span class="mono">{{.Project}}</span>{{end}}
   {{range .PRs}}
@@ -232,11 +232,11 @@
     {{if .Status}}<span class="{{if .Bad}}bad{{else}}state{{end}}">{{.Status}}</span>{{end}}
   </span>
   {{end}}
-  {{range .Jira}}<span>{{template "jira" .}}</span>{{end}}
+  {{range .Issues}}<span>{{template "issue" .}}</span>{{end}}
 </div>
 {{end}}
 {{end}}
 
-{{define "jira"}}
+{{define "issue"}}
 {{if .URL}}<a href="{{.URL}}" class="mono">{{.Key}}</a>{{else}}<span class="mono">{{.Key}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}
 {{end}}

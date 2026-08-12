@@ -33,9 +33,8 @@ func newProjectCmd() *cobra.Command {
 		newProjectBlockCmd(),
 		newProjectUnblockCmd(),
 		newProjectListCmd(),
-		newProjectJiraCmd(),
-		newProjectLinkJiraCmd(),
-		newProjectUnlinkJiraCmd(),
+		newProjectLinkIssueCmd(),
+		newProjectUnlinkIssueCmd(),
 	)
 	return cmd
 }
@@ -43,6 +42,8 @@ func newProjectCmd() *cobra.Command {
 // Flag names for the authored columns settable at creation. superseded_by is
 // not among them: use `project supersede`, which records both ends.
 const (
+	// flagJiraKeyOld is --jira-key, kept working while --issue takes over.
+	flagJiraKeyOld   = "jira-key"
 	flagTitle        = "title"
 	flagSummary      = "summary"
 	flagStatus       = "status"
@@ -51,7 +52,7 @@ const (
 	flagSnoozeUntil  = "snooze-until"
 	flagSnoozeReason = "snooze-reason"
 	flagDesignRef    = "design-ref"
-	flagJiraKey      = "jira-key"
+	flagIssueKey     = "issue"
 	flagJSON         = "json"
 )
 
@@ -92,7 +93,10 @@ func addProjectFieldFlags(cmd *cobra.Command) {
 	f.String(flagSnoozeUntil, "", "ISO-8601 date or timestamp; requires status snoozed")
 	f.String(flagSnoozeReason, "", "why it is deferred")
 	f.StringArray(flagDesignRef, nil, "path to a design note; repeatable")
-	f.StringArray(flagJiraKey, nil, "issue to track, e.g. CDSS-1744; repeatable")
+	f.StringArray(flagIssueKey, nil, "tracker issue to track, e.g. CDSS-1744; repeatable")
+	f.StringArray(flagJiraKeyOld, nil, "issue to track, e.g. CDSS-1744; repeatable")
+	_ = f.MarkDeprecated(flagJiraKeyOld, "use --issue, with --tracker if it is not Jira")
+	addTrackerFlag(cmd)
 	f.String(flagJSON, "", "authored columns as a JSON object, keyed by column name")
 }
 
@@ -150,12 +154,16 @@ func runProjectAdd(cmd *cobra.Command, _ []string) error {
 	}
 	// Linking happens here rather than in applyProjectFlags because it is a
 	// row in another table, not a column on this one.
-	keys, err := cmd.Flags().GetStringArray(flagJiraKey)
+	keys, err := issueKeysFrom(cmd)
+	if err != nil {
+		return err
+	}
+	tracker, err := cmd.Flags().GetString(flagTracker)
 	if err != nil {
 		return err
 	}
 	for _, key := range keys {
-		if err := tx.LinkProjectJira(ctx, p.ID, key); err != nil {
+		if err := tx.LinkProjectIssue(ctx, p.ID, tracker, key); err != nil {
 			return err
 		}
 	}
@@ -910,4 +918,18 @@ func loadPair(ctx context.Context, tx *store.Tx, blockedID, blockerID string) (b
 		return nil, nil, notFoundOr(err, blockerID)
 	}
 	return blocked, blocker, nil
+}
+
+// issueKeysFrom reads --issue, accepting the superseded --jira-key too.
+func issueKeysFrom(cmd *cobra.Command) ([]string, error) {
+	f := cmd.Flags()
+	keys, err := f.GetStringArray(flagIssueKey)
+	if err != nil {
+		return nil, err
+	}
+	old, err := f.GetStringArray(flagJiraKeyOld)
+	if err != nil {
+		return nil, err
+	}
+	return append(keys, old...), nil
 }

@@ -76,7 +76,7 @@ type actionView struct {
 	Project   string
 	Age       string
 	PRs       []prView
-	Jira      []jiraView
+	Issues    []issueView
 	Expired   bool
 }
 
@@ -87,7 +87,7 @@ type prView struct {
 	Bad    bool
 }
 
-type jiraView struct {
+type issueView struct {
 	Key    string
 	URL    string
 	Status string
@@ -104,7 +104,7 @@ type projectView struct {
 	Effort   string
 	Snooze   string
 	Actions  int
-	Jira     []jiraView
+	Issues   []issueView
 	Expired  bool
 }
 
@@ -149,7 +149,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	if err != nil {
 		return nil, err
 	}
-	jiraByProject, err := st.JiraByProject(ctx)
+	issuesByProject, err := st.IssuesByProject(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -185,11 +185,11 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 
 	for _, a := range queue {
 		content.Queue = append(content.Queue,
-			actionRow(a, rank, prsByAction, jiraByProject, text, today))
+			actionRow(a, rank, prsByAction, issuesByProject, text, today))
 	}
 	for _, a := range waiting {
 		content.Waiting = append(content.Waiting,
-			actionRow(a, rank, prsByAction, jiraByProject, text, today))
+			actionRow(a, rank, prsByAction, issuesByProject, text, today))
 	}
 
 	openPerProject := map[string]int{}
@@ -208,7 +208,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			Effort:   nullText(p.Effort),
 			Snooze:   nullText(p.SnoozeUntil),
 			Actions:  openPerProject[p.ID],
-			Jira:     jiraViews(jiraByProject[p.ID], text.jiraBase),
+			Issues:   issueViews(issuesByProject[p.ID], text.jiraBase),
 			Expired:  expired(p.SnoozeUntil, today),
 		})
 	}
@@ -219,7 +219,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 }
 
 func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.ActionPR,
-	jira map[string][]*store.JiraIssue, text *prose, today string) actionView {
+	issues map[string][]*store.TrackerIssue, text *prose, today string) actionView {
 
 	view := actionView{
 		ID: a.ID,
@@ -237,7 +237,7 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		view.PRs = append(view.PRs, prRow(p))
 	}
 	if a.ProjectID.Valid {
-		view.Jira = jiraViews(jira[a.ProjectID.String], text.jiraBase)
+		view.Issues = issueViews(issues[a.ProjectID.String], text.jiraBase)
 	}
 	return view
 }
@@ -285,15 +285,21 @@ func prRow(p store.ActionPR) prView {
 	return view
 }
 
-func jiraViews(issues []*store.JiraIssue, base string) []jiraView {
-	views := make([]jiraView, 0, len(issues))
+// issueViews renders an issue for the page.
+//
+// The link is built from the tracker's own key, not from the composed id: the
+// id carries a `jira:` prefix that means something here and nothing to Jira.
+// Only Jira has a configured base, so an issue from any other tracker renders
+// as text until something knows how to address it.
+func issueViews(issues []*store.TrackerIssue, base string) []issueView {
+	views := make([]issueView, 0, len(issues))
 	for _, issue := range issues {
-		view := jiraView{Key: issue.ID, Status: nullText(issue.Status)}
+		view := issueView{Key: issue.Key, Status: nullText(issue.Status)}
 		if view.Status == "-" {
 			view.Status = ""
 		}
-		if base != "" {
-			view.URL = strings.TrimSuffix(base, "/") + "/" + issue.ID
+		if base != "" && issue.Tracker == store.TrackerJira {
+			view.URL = strings.TrimSuffix(base, "/") + "/" + issue.Key
 		}
 		views = append(views, view)
 	}

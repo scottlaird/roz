@@ -143,3 +143,32 @@ func (f *File) Owners(path string) []Owner {
 	}
 	return rule.Owners
 }
+
+// Teams returns the team owners named anywhere in the file, sorted and
+// deduplicated.
+//
+// This is what a membership lookup needs as input: fetching every team in an
+// organisation to answer a question about four of them is the wrong shape, and
+// the file already says which four. Users are excluded — they have no members,
+// and a reviewer already approves as themselves.
+func (f *File) Teams() []Owner {
+	seen := OwnerSet{}
+	for _, rule := range f.Rules {
+		for _, owner := range rule.Owners {
+			if owner.IsTeam() {
+				seen.Add(owner)
+			}
+		}
+	}
+	return seen.Sorted()
+}
+
+// Org splits a team owner into its organisation and slug. It reports false for
+// a user or an email address, which have neither.
+func (o Owner) Org() (org, slug string, ok bool) {
+	org, slug, ok = strings.Cut(string(o), "/")
+	if !ok || org == "" || slug == "" {
+		return "", "", false
+	}
+	return org, slug, true
+}

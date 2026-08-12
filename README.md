@@ -823,10 +823,23 @@ This is deliberately not part of the poll. The file list is large, changes only
 when someone pushes, and is wanted when a person asks — so paying for it per
 pull request per minute would be the wrong trade.
 
-`--team` is still a stand-in. Resolving a login to its teams needs an org read
-the rest of this does not, so until that exists the mapping is supplied by
-hand; `--approved` adds to whatever the pull request already reports rather
-than replacing it.
+`--team` is still a stand-in, and the command says so when it matters:
+
+```console
+note: team membership is not resolved yet, so an approval only satisfies the
+person who gave it; pass --team to supply it
+```
+
+Resolving a login to its teams needs an org read the rest of this does not, so
+`github.Client.TeamMembers` is a stub with the contract written and the query
+sketched. The wiring around it is finished: filling in that one function makes
+`--pr` expand approvals on its own, with no flag to remember. Until then the
+rest of the answer is printed rather than withheld — which owners exist, what
+is unowned, whether one owner covers everything — because those are correct
+without it.
+
+`--team` overrides whatever is fetched, and `--approved` adds to whatever the
+pull request already reports rather than replacing it.
 
 ## When a pull request falls out of the merge queue
 

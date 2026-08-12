@@ -105,14 +105,28 @@ func TestCodeownersRejections(t *testing.T) {
 
 // stubChange stands in for GitHub.
 type stubChange struct {
-	change github.Change
-	err    error
-	asked  string
+	change  github.Change
+	err     error
+	asked   string
+	members map[string][]string
+	// membersErr defaults to ErrNotImplemented, which is what the real client
+	// returns today.
+	membersErr error
 }
 
 func (s *stubChange) Change(_ context.Context, key string) (github.Change, error) {
 	s.asked = key
 	return s.change, s.err
+}
+
+func (s *stubChange) TeamMembers(context.Context, []string) (map[string][]string, error) {
+	if s.members != nil {
+		return s.members, nil
+	}
+	if s.membersErr != nil {
+		return nil, s.membersErr
+	}
+	return nil, github.ErrNotImplemented
 }
 
 func withChangeReader(t *testing.T, stub *stubChange) {
@@ -211,5 +225,82 @@ func TestCodeownersWhenNothingIsOwned(t *testing.T) {
 	}
 	if strings.Contains(out, "nothing outstanding") {
 		t.Errorf("two answers to the same question:\n%s", out)
+	}
+}
+
+// TestCodeownersReportsUnresolvedTeams: the rest of the answer is correct
+// without membership, so it is printed, and the gap is stated rather than
+// swallowed — under-resolving membership makes a change look less approved
+// than it is.
+func TestCodeownersReportsUnresolvedTeams(t *testing.T) {
+	withChangeReader(t, &stubChange{change: github.Change{
+		BaseRef:        "main",
+		Files:          []string{"README.md", "storage/engine.go"},
+		Codeowners:     ownersFile,
+		CodeownersPath: "CODEOWNERS",
+		Approvals:      []string{"bob"},
+	}})
+
+	out, err := runCLI(t, "codeowners", "--pr", "owner/repo#1")
+	if err != nil {
+		t.Fatalf("codeowners returned error: %v", err)
+	}
+	if !strings.Contains(out, "not resolved yet") {
+		t.Errorf("the unresolved membership was not reported:\n%s", out)
+	}
+	// And the rest of the answer is still there.
+	if !strings.Contains(out, "@org/platform") {
+		t.Errorf("the ownership answer was withheld over a missing enrichment:\n%s", out)
+	}
+}
+
+// TestCodeownersUsesResolvedTeams is what happens the day TeamMembers is
+// written: the same command, with no flags, expands bob into his team.
+func TestCodeownersUsesResolvedTeams(t *testing.T) {
+	withChangeReader(t, &stubChange{
+		change: github.Change{
+			BaseRef:        "main",
+			Files:          []string{"README.md", "storage/engine.go"},
+			Codeowners:     ownersFile,
+			CodeownersPath: "CODEOWNERS",
+			Approvals:      []string{"bob"},
+		},
+		members: map[string][]string{
+			"org/platform": {"alice", "bob"},
+			"org/storage":  {"alice", "carol"},
+		},
+	})
+
+	out, err := runCLI(t, "codeowners", "--pr", "owner/repo#1")
+	if err != nil {
+		t.Fatalf("codeowners returned error: %v", err)
+	}
+	if strings.Contains(out, "not resolved yet") {
+		t.Errorf("membership was resolved but still reported as missing:\n%s", out)
+	}
+	if !strings.Contains(out, "@org/platform") || !strings.Contains(out, "outstanding  1") {
+		t.Errorf("bob's approval did not expand to his team:\n%s", out)
+	}
+}
+
+// TestCodeownersPrefersAnExplicitTeamMapping: --team is the override, so it
+// must not be silently replaced by whatever GitHub says.
+func TestCodeownersPrefersAnExplicitTeamMapping(t *testing.T) {
+	withChangeReader(t, &stubChange{
+		change: github.Change{
+			BaseRef: "main", Files: []string{"README.md"},
+			Codeowners: ownersFile, CodeownersPath: "CODEOWNERS",
+			Approvals: []string{"bob"},
+		},
+		members: map[string][]string{"org/platform": {"nobody"}},
+	})
+
+	out, err := runCLI(t, "codeowners", "--pr", "owner/repo#1",
+		"--team", "org/platform=bob")
+	if err != nil {
+		t.Fatalf("codeowners returned error: %v", err)
+	}
+	if !strings.Contains(out, "nothing outstanding") {
+		t.Errorf("the explicit mapping was overridden by the fetched one:\n%s", out)
 	}
 }

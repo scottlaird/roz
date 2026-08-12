@@ -14,8 +14,8 @@ func renderedFixture(t *testing.T) string {
 	db := initDB(t)
 
 	project := addProject(t, db, "Split the nodepool", "--priority", "1",
-		"--effort", "weeks", "--jira-key", "CDSS-1744")
-	if _, err := runCLI(t, "project", "jira", "--db", db, "CDSS-1744",
+		"--effort", "weeks", "--issue", "CDSS-1744")
+	if _, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1744",
 		"--status", "In Progress"); err != nil {
 		t.Fatalf("project jira returned error: %v", err)
 	}

@@ -745,3 +745,105 @@ func TestSchemaState(t *testing.T) {
 			moved.Highest, state.Highest)
 	}
 }
+
+// TestTrackerMigrationCarriesJiraData: 0016 moves jira_issue into
+// tracker_issue, and it runs against databases that already hold real Jira
+// rows. Everything has to arrive: the issues, the links — including an issue
+// two projects share — and the log entries that name them.
+func TestTrackerMigrationCarriesJiraData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "roz.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer db.Close()
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations() returned error: %v", err)
+	}
+	if err := ensureBookkeeping(ctx, db); err != nil {
+		t.Fatalf("ensureBookkeeping() returned error: %v", err)
+	}
+
+	// Stop just before the migration under test, so the old tables exist.
+	const target = 16
+	var before []schema.Migration
+	for _, m := range migrations {
+		if m.Version < target {
+			before = append(before, m)
+		}
+	}
+	if len(before)+1 != len(migrations) {
+		t.Skipf("expected %d to be the newest migration", target)
+	}
+	for _, m := range before {
+		if err := applyMigration(ctx, db, m); err != nil {
+			t.Fatalf("applying %s: %v", m.Name, err)
+		}
+	}
+
+	const at = "2026-08-11T12:00:00.000Z"
+	for _, insert := range []string{
+		`INSERT INTO project (id, kind, n, title, status, created_at, updated_at)
+		 VALUES ('ROZ1', 'ROZ', 1, 'Scale up', 'active', '` + at + `', '` + at + `')`,
+		`INSERT INTO project (id, kind, n, title, status, created_at, updated_at)
+		 VALUES ('ROZ2', 'ROZ', 2, 'Scale down', 'active', '` + at + `', '` + at + `')`,
+		`INSERT INTO jira_issue (id, summary, status, sprint, assignee, created_at, updated_at)
+		 VALUES ('CDSS-1744', 'Allow scaling up', 'In Progress', 'Sprint 42', 'scott', '` + at + `', '` + at + `')`,
+		`INSERT INTO jira_issue (id, summary, created_at, updated_at)
+		 VALUES ('CDSS-1801', 'Allow scaling down', '` + at + `', '` + at + `')`,
+		`INSERT INTO project_jira (project_id, issue_id, created_at) VALUES ('ROZ1', 'CDSS-1744', '` + at + `')`,
+		`INSERT INTO project_jira (project_id, issue_id, created_at) VALUES ('ROZ1', 'CDSS-1801', '` + at + `')`,
+		// The same issue on a second project: two projects watching one epic.
+		`INSERT INTO project_jira (project_id, issue_id, created_at) VALUES ('ROZ2', 'CDSS-1744', '` + at + `')`,
+		`INSERT INTO event (at, correlation, actor, kind, subject_type, subject_id, field, new_value)
+		 VALUES ('` + at + `', 'c1', 'sync:jira-manual', 'changed', 'jira_issue', 'CDSS-1744', 'status', 'In Progress')`,
+	} {
+		if _, err := db.Exec(insert); err != nil {
+			t.Fatalf("seeding: %v", err)
+		}
+	}
+
+	if _, _, err := migrate(ctx, db); err != nil {
+		t.Fatalf("migrate() returned error: %v", err)
+	}
+
+	var tracker, key, iteration string
+	err = db.QueryRow(
+		"SELECT tracker, key, iteration FROM tracker_issue WHERE id = 'jira:CDSS-1744'").
+		Scan(&tracker, &key, &iteration)
+	if err != nil {
+		t.Fatalf("reading the migrated issue: %v", err)
+	}
+	if tracker != TrackerJira || key != "CDSS-1744" {
+		t.Errorf("issue identity = %q / %q, want jira / CDSS-1744", tracker, key)
+	}
+	// sprint became iteration: the same field under a name that fits both
+	// trackers, and the value has to come with it.
+	if iteration != "Sprint 42" {
+		t.Errorf("iteration = %q, want Sprint 42", iteration)
+	}
+
+	for _, tc := range []struct {
+		what  string
+		query string
+		want  int
+	}{
+		{"issues", "SELECT count(*) FROM tracker_issue", 2},
+		{"links", "SELECT count(*) FROM project_tracker_issue", 3},
+		{"links for the shared issue", "SELECT count(*) FROM project_tracker_issue WHERE issue_id = 'jira:CDSS-1744'", 2},
+		{"retargeted events", "SELECT count(*) FROM event WHERE subject_type = 'tracker_issue' AND subject_id = 'jira:CDSS-1744'", 1},
+		{"events left behind", "SELECT count(*) FROM event WHERE subject_type = 'jira_issue'", 0},
+		{"old tables", "SELECT count(*) FROM sqlite_master WHERE name IN ('jira_issue','project_jira')", 0},
+	} {
+		var got int
+		if err := db.QueryRow(tc.query).Scan(&got); err != nil {
+			t.Fatalf("counting %s: %v", tc.what, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s = %d, want %d", tc.what, got, tc.want)
+		}
+	}
+}

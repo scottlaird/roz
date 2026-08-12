@@ -26,9 +26,9 @@ func runCLIWithInput(t *testing.T, input string, args ...string) (string, error)
 func issueJSON(t *testing.T, db, key string) map[string]any {
 	t.Helper()
 
-	out, err := runCLI(t, "jira", "show", "--db", db, key, "-o", "json")
+	out, err := runCLI(t, "issue", "show", "--db", db, key, "-o", "json")
 	if err != nil {
-		t.Fatalf("jira show returned error: %v", err)
+		t.Fatalf("issue show returned error: %v", err)
 	}
 	var object map[string]any
 	if err := json.Unmarshal([]byte(out), &object); err != nil {
@@ -55,17 +55,17 @@ func projectJSON(t *testing.T, db, id string) map[string]any {
 // jiraProject adds a project carrying a Jira key.
 func jiraProject(t *testing.T, db, title, key string) string {
 	t.Helper()
-	return addProject(t, db, title, "--jira-key", key)
+	return addProject(t, db, title, "--issue", key)
 }
 
 func TestProjectJira(t *testing.T) {
 	db := initDB(t)
 	id := jiraProject(t, db, "Split the nodepool", "CDSS-1744")
 
-	out, err := runCLI(t, "project", "jira", "--db", db, "CDSS-1744",
+	out, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1744",
 		"--status", "In Progress", "--assignee", "scott")
 	if err != nil {
-		t.Fatalf("project jira returned error: %v", err)
+		t.Fatalf("issue observe returned error: %v", err)
 	}
 	// Reported against the issue now, not the project: an issue is the record
 	// and a project merely references it.
@@ -90,16 +90,18 @@ func TestProjectJiraFeed(t *testing.T) {
 	  {"key": "CDSS-1750", "status": "Done"},
 	  {"key": "CDSS-9999", "status": "To Do"}
 	]`
-	out, err := runCLIWithInput(t, feed, "project", "jira", "--db", db, "--feed", "-")
+	out, err := runCLIWithInput(t, feed, "issue", "observe", "--db", db, "--feed", "-")
 	if err != nil {
-		t.Fatalf("project jira --feed returned error: %v", err)
+		t.Fatalf("issue observe --feed returned error: %v", err)
 	}
 	if !strings.Contains(out, "CDSS-9999 is tracked by no project") {
 		t.Errorf("an issue nothing tracks was not reported:\n%s", out)
 	}
 
-	if got := issueJSON(t, db, "CDSS-1744")["sprint"]; got != "Sprint 42" {
-		t.Errorf("sprint = %#v, want Sprint 42", got)
+	// The feed above says "sprint", which is the superseded name for
+	// iteration; it still loads, and lands in the column that replaced it.
+	if got := issueJSON(t, db, "CDSS-1744")["iteration"]; got != "Sprint 42" {
+		t.Errorf("iteration = %#v, want Sprint 42", got)
 	}
 	if got := issueJSON(t, db, "CDSS-1750")["status"]; got != "Done" {
 		t.Errorf("status = %#v, want Done", got)
@@ -113,9 +115,9 @@ func TestJiraFeedAcceptsOneObject(t *testing.T) {
 	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
 
 	_, err := runCLIWithInput(t, `{"key": "CDSS-1744", "status": "Done"}`,
-		"project", "jira", "--db", db, "--feed", "-")
+		"issue", "observe", "--db", db, "--feed", "-")
 	if err != nil {
-		t.Fatalf("project jira --feed returned error: %v", err)
+		t.Fatalf("issue observe --feed returned error: %v", err)
 	}
 	if got := issueJSON(t, db, "CDSS-1744")["status"]; got != "Done" {
 		t.Errorf("status = %#v, want Done", got)
@@ -128,24 +130,24 @@ func TestJiraOmittedFieldIsNotACleared(t *testing.T) {
 	db := initDB(t)
 	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
 
-	if _, err := runCLI(t, "project", "jira", "--db", db, "CDSS-1744",
-		"--assignee", "scott", "--sprint", "Sprint 42"); err != nil {
-		t.Fatalf("project jira returned error: %v", err)
+	if _, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1744",
+		"--assignee", "scott", "--iteration", "Sprint 42"); err != nil {
+		t.Fatalf("issue observe returned error: %v", err)
 	}
 	if _, err := runCLIWithInput(t, `{"key": "CDSS-1744", "status": "Done"}`,
-		"project", "jira", "--db", db, "--feed", "-"); err != nil {
-		t.Fatalf("project jira --feed returned error: %v", err)
+		"issue", "observe", "--db", db, "--feed", "-"); err != nil {
+		t.Fatalf("issue observe --feed returned error: %v", err)
 	}
 
 	object := issueJSON(t, db, "CDSS-1744")
-	if object["assignee"] != "scott" || object["sprint"] != "Sprint 42" {
+	if object["assignee"] != "scott" || object["iteration"] != "Sprint 42" {
 		t.Errorf("issue = %#v, want the omitted fields left alone", object)
 	}
 
 	// An explicit empty one is a fact, and does clear.
 	if _, err := runCLIWithInput(t, `{"key": "CDSS-1744", "assignee": ""}`,
-		"project", "jira", "--db", db, "--feed", "-"); err != nil {
-		t.Fatalf("project jira --feed returned error: %v", err)
+		"issue", "observe", "--db", db, "--feed", "-"); err != nil {
+		t.Fatalf("issue observe --feed returned error: %v", err)
 	}
 	if got := issueJSON(t, db, "CDSS-1744")["assignee"]; got != nil && got != "" {
 		t.Errorf("assignee = %#v, want it cleared", got)
@@ -158,10 +160,10 @@ func TestJiraHasNoActorFlag(t *testing.T) {
 	db := initDB(t)
 	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
 
-	_, err := runCLI(t, "project", "jira", "--db", db, "CDSS-1744",
+	_, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1744",
 		"--status", "Done", "--actor", "sync:jira")
 	if err == nil {
-		t.Fatal("project jira accepted --actor, want no such flag")
+		t.Fatal("issue observe accepted --actor, want no such flag")
 	}
 	if !strings.Contains(err.Error(), "unknown flag") {
 		t.Errorf("error = %v, want an unknown flag", err)
@@ -177,47 +179,47 @@ func TestJiraRejections(t *testing.T) {
 	}{
 		{
 			name:    "no key and no feed",
-			args:    []string{"project", "jira"},
+			args:    []string{"issue", "observe"},
 			wantErr: "name an issue key",
 		},
 		{
 			name:    "nothing observed",
-			args:    []string{"project", "jira", "CDSS-1744"},
+			args:    []string{"issue", "observe", "CDSS-1744"},
 			wantErr: "nothing observed",
 		},
 		{
 			name:    "a key as well as a feed",
 			input:   `[{"key": "CDSS-1744", "status": "Done"}]`,
-			args:    []string{"project", "jira", "CDSS-1744", "--feed", "-"},
+			args:    []string{"issue", "observe", "CDSS-1744", "--feed", "-"},
 			wantErr: "reads the issue keys itself",
 		},
 		{
 			name:    "a feed that is not JSON",
 			input:   "CDSS-1744: Done",
-			args:    []string{"project", "jira", "--feed", "-"},
+			args:    []string{"issue", "observe", "--feed", "-"},
 			wantErr: "not valid JSON",
 		},
 		{
 			name:    "an entry with no key",
 			input:   `[{"status": "Done"}]`,
-			args:    []string{"project", "jira", "--feed", "-"},
+			args:    []string{"issue", "observe", "--feed", "-"},
 			wantErr: "has no key",
 		},
 		{
 			name:    "an empty feed",
 			input:   `[]`,
-			args:    []string{"project", "jira", "--feed", "-"},
+			args:    []string{"issue", "observe", "--feed", "-"},
 			wantErr: "no observations",
 		},
 		{
 			name:    "a vague timestamp",
-			args:    []string{"project", "jira", "CDSS-1744", "--status", "Done", "--at", "yesterday"},
+			args:    []string{"issue", "observe", "CDSS-1744", "--status", "Done", "--at", "yesterday"},
 			wantErr: "not a date or timestamp",
 		},
 		{
 			name:    "a vague timestamp in the feed",
 			input:   `[{"key": "CDSS-1744", "status": "Done", "synced_at": "yesterday"}]`,
-			args:    []string{"project", "jira", "--feed", "-"},
+			args:    []string{"issue", "observe", "--feed", "-"},
 			wantErr: "not a date or timestamp",
 		},
 	}
@@ -244,17 +246,17 @@ func TestJiraSummaryCanBeSet(t *testing.T) {
 	db := initDB(t)
 	jiraProject(t, db, "Split the nodepool", "CDSS-1744")
 
-	if _, err := runCLI(t, "project", "jira", "--db", db, "CDSS-1744",
+	if _, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1744",
 		"--summary", "Move Walker nodepool definitions"); err != nil {
-		t.Fatalf("project jira --summary returned error: %v", err)
+		t.Fatalf("issue observe --summary returned error: %v", err)
 	}
 	if got := issueJSON(t, db, "CDSS-1744")["summary"]; got != "Move Walker nodepool definitions" {
 		t.Errorf("summary = %#v, want it set by the flag", got)
 	}
 
 	if _, err := runCLIWithInput(t, `{"key": "CDSS-1750", "summary": "from the feed"}`,
-		"project", "jira", "--db", db, "--feed", "-"); err != nil {
-		t.Fatalf("project jira --feed returned error: %v", err)
+		"issue", "observe", "--db", db, "--feed", "-"); err != nil {
+		t.Fatalf("issue observe --feed returned error: %v", err)
 	}
 	if got := issueJSON(t, db, "CDSS-1750")["summary"]; got != "from the feed" {
 		t.Errorf("summary = %#v, want it set by the feed", got)

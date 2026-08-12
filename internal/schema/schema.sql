@@ -349,21 +349,26 @@ CREATE TABLE pr (
   CHECK (id = repo || '#' || number)
 ) STRICT;
 
--- ── jira ─────────────────────────────────────────────────────────────
+-- ── trackers ─────────────────────────────────────────────────────────
 -- Its own entity rather than columns on project, because one piece of work
 -- legitimately maps to more than one issue and a column can hold one key.
-CREATE TABLE jira_issue (
-  id         TEXT PRIMARY KEY,          -- 'CDSS-1744'; Jira's identifier, not ours
+CREATE TABLE tracker_issue (
+  id         TEXT PRIMARY KEY,          -- 'jira:CDSS-1744' | 'github:owner/repo#123'
+  tracker    TEXT NOT NULL CHECK (tracker IN ('jira','github')),
+  key        TEXT NOT NULL,             -- the tracker's own identifier, as it writes it
   summary    TEXT NOT NULL DEFAULT '',  -- observed from here down
-  -- Jira's vocabulary, NOT ours: 'To Do' | 'In Progress' | 'Done' | 'Blocked' | ...
-  -- deliberately unconstrained, because Jira may add a value whenever it likes
-  -- and a CHECK here would turn someone else's release into a failing ingest
+  -- The tracker's vocabulary, NOT ours: 'To Do' | 'In Progress' | 'open' | ...
+  -- deliberately unconstrained, because a tracker may add a value whenever it
+  -- likes and a CHECK here would turn someone else's release into a failing
+  -- ingest.
   status     TEXT,
-  sprint     TEXT,
+  iteration  TEXT,                      -- Jira's sprint, GitHub's milestone
   assignee   TEXT,                      -- display name; empty string means unassigned
-  synced_at  TEXT,                      -- when Jira was last read for this issue
+  synced_at  TEXT,                      -- when the tracker was last read for this issue
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  UNIQUE (tracker, key),
+  CHECK (id = tracker || ':' || key)
 ) STRICT;
 
 -- ── edges ────────────────────────────────────────────────────────────
@@ -408,9 +413,9 @@ CREATE TABLE action_pr (
 
 -- Many-to-many in both directions: a project may track several issues, and an
 -- issue may be tracked by several projects -- two projects watching one epic.
-CREATE TABLE project_jira (
+CREATE TABLE project_tracker_issue (
   project_id TEXT NOT NULL REFERENCES project(id),
-  issue_id   TEXT NOT NULL REFERENCES jira_issue(id),
+  issue_id   TEXT NOT NULL REFERENCES tracker_issue(id),
   created_at TEXT NOT NULL,
   PRIMARY KEY (project_id, issue_id)
 ) STRICT;
@@ -508,4 +513,4 @@ CREATE INDEX action_expired  ON action(snooze_until)
 CREATE INDEX project_expired ON project(snooze_until)
                              WHERE status = 'snoozed' AND snooze_until IS NOT NULL;
 CREATE INDEX action_project  ON action(project_id);
-CREATE INDEX project_jira_issue ON project_jira(issue_id);
+CREATE INDEX project_tracker_issue_issue ON project_tracker_issue(issue_id);

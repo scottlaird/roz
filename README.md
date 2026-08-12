@@ -40,10 +40,10 @@ directory.
 | `roz project supersede` | Record that one project is the same work as another. |
 | `roz project close` | Close it, dropping whatever was still open on it and freeing whatever waited on it. |
 | `roz project block` / `unblock` | Record that one project must finish before another can start, or that it need not. |
-| `roz project jira` | Record by hand what Jira says about an issue — summary, status, sprint, assignee. Stands in for Jira sync. |
-| `roz project link-jira` / `unlink-jira` | Say which issues a project tracks. More than one is allowed. |
-| **jira** | |
-| `roz jira show` / `list` | Issues as last observed, and which projects track them. |
+| `roz project link-issue` / `unlink-issue` | Say which tracker issues a project tracks. More than one is allowed, from more than one tracker. |
+| **tracker issues** | |
+| `roz issue show` / `list` | Issues as last observed, and which projects track them. |
+| `roz issue observe` | Record by hand what a tracker says about an issue — summary, status, iteration, assignee. Stands in for tracker sync. |
 | **actions** | |
 | `roz action add` | Allocate an action and print its id. |
 | `roz action show` | Print one action, with what blocks it, what it blocks, and its pull requests. `-o json` carries the same. |
@@ -122,7 +122,7 @@ the database. See [Settings](#settings).
 ### Two projects, and a relationship between them
 
 ```console
-$ roz project add --title "Split the nodepool" --priority 1 --effort weeks --jira-key CDSS-1744
+$ roz project add --title "Split the nodepool" --priority 1 --effort weeks --issue CDSS-1744
 ROZ1
 $ roz project add --title "Retire the old pool" --priority 3 --effort days
 ROZ2
@@ -256,21 +256,41 @@ pass `roz sync` runs. It means a command that reads as "write down what I did
 in Slack" also closes actions and instantiates what follows them, which is why
 it prints what it closed.
 
-Jira is the same arrangement, keyed on the issue rather than the project,
-because an integration would have `CDSS-1744` and not `ROZ1` — and because an
-issue is a record in its own right, so one nothing tracks is still stored:
+Tracker issues are the same arrangement, keyed on the issue rather than the
+project, because an integration would have `CDSS-1744` and not `ROZ1` — and
+because an issue is a record in its own right, so one nothing tracks is still
+stored:
 
 ```console
-$ roz project jira CDSS-1744 --status "In Progress" --sprint "Sprint 42" --assignee scott
-CDSS-1744 status: "" → "In Progress"
-CDSS-1744 sprint: "" → "Sprint 42"
-CDSS-1744 assignee: "" → "scott"
-CDSS-1744 synced_at: "" → "2026-08-10T14:47:22.053Z"
+$ roz issue observe CDSS-1744 --status "In Progress" --iteration "Sprint 42" --assignee scott
+jira:CDSS-1744 status: "" → "In Progress"
+jira:CDSS-1744 iteration: "" → "Sprint 42"
+jira:CDSS-1744 assignee: "" → "scott"
+jira:CDSS-1744 synced_at: "" → "2026-08-12T00:56:43.074Z"
 ```
 
 `--feed` takes a JSON array of the same thing, so faking a whole sync run is
 one command. Both are logged as `sync:slack-manual` and `sync:jira-manual`, so
 the log never claims an integration reported something typed in by hand.
+
+An issue is identified by its tracker and that tracker's own key, written
+together: `jira:CDSS-1744`, `github:owner/repo#123`. `--tracker` defaults to
+`jira`, which is the only tracker anything can read; a second one is a place
+in the schema and nothing more until something fills it:
+
+```console
+$ roz project link-issue --project ROZ1 --tracker github --issue scottlaird/roz#101
+ROZ1 tracks github:scottlaird/roz#101
+
+$ roz issue list
+ID                         STATUS       ITERATION  ASSIGNEE  SUMMARY
+github:scottlaird/roz#101  -            -          -         -
+jira:CDSS-1744             In Progress  Sprint 42  scott     Allow scaling up
+```
+
+The id is composed rather than trusting two third parties' key formats never
+to collide. `iteration` is Jira's sprint and GitHub's milestone: the same
+field under two names, so it carries neither.
 
 Now the announcement is a fact, `send_for_review` is satisfied, and the next
 sync notices:
@@ -508,11 +528,11 @@ line names. Forty-six of them:
 | | |
 |---|---|
 | settings | `config_show` `config_set` |
-| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_jira` `project_link-jira` `project_unlink-jira` |
+| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_link-issue` `project_unlink-issue` |
 | actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
 | GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_set` `pr_show` `pr_list` `pr_announce` `sync` |
 | the log | `note` `exception` `watch` (bounded to one read) |
-| jira | `jira_show` `jira_list` |
+| tracker issues | `issue_show` `issue_list` `issue_observe` |
 | other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
 
 **Left out**, because they are not an agent's to call: `init`, which decides

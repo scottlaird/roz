@@ -33,6 +33,27 @@ const (
 	// claim Jira said it.
 	ActorJiraManual Actor = "sync:jira-manual"
 
+	// ActorGitHubIssueManual is the same again for GitHub issues. Distinct
+	// from ActorSyncGitHub, which reads pull requests for real.
+	ActorGitHubIssueManual Actor = "sync:github-issue-manual"
+)
+
+// ManualActorFor is the actor to record when a person hand-enters what a
+// tracker's sync would have observed. One per tracker, so the log never says
+// "jira" about something read from GitHub.
+func ManualActorFor(tracker string) (Actor, error) {
+	switch tracker {
+	case TrackerJira:
+		return ActorJiraManual, nil
+	case TrackerGitHub:
+		return ActorGitHubIssueManual, nil
+	default:
+		return "", ValidateTracker(tracker)
+	}
+}
+
+const (
+
 	// ActorVerify records that someone checked an item against reality.
 	//
 	// A sync actor, because last_verified_at is observed: verifying is asking

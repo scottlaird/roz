@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -76,6 +77,11 @@ func runCodeowners(cmd *cobra.Command, _ []string) error {
 	teams, err := teamsFrom(cmd)
 	if err != nil {
 		return err
+	}
+	// A pull request can say who is in which team; a local file cannot, so
+	// --team stays the answer there.
+	if f.Changed(flagForPR) && !f.Changed(flagTeam) {
+		teams = resolveTeams(cmd, owners, teams)
 	}
 	// --approved adds to whatever the pull request already reports, rather
 	// than replacing it: naming somebody by hand should not quietly discard
@@ -152,10 +158,48 @@ func changeUnderReview(cmd *cobra.Command) (text, source string, paths, approved
 // newFetcher is replaced for sync.
 var newChangeReader = func() changeReader { return github.New() }
 
-// changeReader is the one call this needs, named so a test can stand in for
-// it without a network.
+// changeReader is what this needs from GitHub, named so a test can stand in
+// for it without a network.
 type changeReader interface {
 	Change(ctx context.Context, key string) (github.Change, error)
+	TeamMembers(ctx context.Context, teams []string) (map[string][]string, error)
+}
+
+// resolveTeams fills in team membership from GitHub, so a review by a person
+// satisfies the teams they are in.
+//
+// Only reachable with --pr, since without a pull request there is no client
+// call to make and --team is the whole answer. Only asked about the teams the
+// file names, which is why File.Teams exists.
+//
+// Not implemented yet, and that is handled rather than propagated: the rest of
+// the answer — which owners exist, what is unowned, whether one owner covers
+// everything — is correct without it, and refusing to print any of that
+// because one enrichment is missing would be the wrong trade. The gap is
+// reported instead, since silently under-resolving membership would make a
+// change look less approved than it is.
+func resolveTeams(cmd *cobra.Command, owners *codeowners.File, byHand codeowners.Teams) codeowners.Teams {
+	named := owners.Teams()
+	if len(named) == 0 {
+		return byHand
+	}
+	refs := make([]string, len(named))
+	for i, team := range named {
+		refs[i] = string(team)
+	}
+
+	members, err := newChangeReader().TeamMembers(cmd.Context(), refs)
+	if err != nil {
+		if errors.Is(err, github.ErrNotImplemented) {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"note: team membership is not resolved yet, so an approval only "+
+					"satisfies the person who gave it; pass --%s to supply it\n", flagTeam)
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: could not read team membership: %v\n", err)
+		}
+		return byHand
+	}
+	return codeowners.NewStaticTeams(members)
 }
 
 // readPaths takes the file list off stdin, one per line.

@@ -59,6 +59,15 @@ bites; not worth one before.
   added the discriminator. `sprint` became `iteration`, being Jira's sprint and
   GitHub's milestone under one name. `github` is in the CHECK before anything
   can read it, so the schema is not what blocks that work.
+- **`--tracker` defaults to `jira`, and that is a statement about today.**
+  Every issue recorded so far is a Jira one and jira is the only tracker
+  anything can read, so the default is right far more often than a required
+  flag would be useful — and it is what lets `link-jira` survive as a plain
+  alias of `link-issue`. It is still the tool assuming a fact, which is the
+  argument that went the other way for `pr --because`. The difference is that
+  the honest answer here is knowable and singular, where a tracking reason is
+  neither. When a second tracker works this wants to become a `roz config`
+  setting rather than a constant.
 
 - **Prose fields are Markdown; titles are not.** `action.why`,
   `project.summary`, the two `snooze_reason`s and a calendar note carry

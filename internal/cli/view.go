@@ -27,8 +27,15 @@ type prose struct {
 	jiraBase string
 }
 
-func newProse(jiraBase string, jiraPrefixes []string, titles markdown.TitleFunc) *prose {
-	links := markdown.NewLinker(jiraBase, jiraPrefixes, titles)
+func newProse(jiraBase string, jiraPrefixes []string, repos map[string]string,
+	titles markdown.TitleFunc) *prose {
+
+	links := markdown.NewLinker(markdown.Config{
+		JiraBase:     jiraBase,
+		JiraPrefixes: jiraPrefixes,
+		Repos:        repos,
+		Titles:       titles,
+	})
 	return &prose{
 		links:    links,
 		markdown: markdown.NewRenderer(links),
@@ -152,12 +159,16 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	if err != nil {
 		return nil, err
 	}
+	shortNames, err := st.ShortNames(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	today := now.UTC().Format(store.DateFormat)
 	// A calendar window is a span of days and asks about the date; a snooze is
 	// compared against the instant the queries use. See expired.
 	stamp := now.UTC().Format(store.TimeFormat)
-	text := newProse(cfg.jiraBase, cfg.jiraPrefixes, titlesFrom(allPRs, allIssues))
+	text := newProse(cfg.jiraBase, cfg.jiraPrefixes, shortNames, titlesFrom(allPRs, allIssues))
 
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
 		Upcoming: true,

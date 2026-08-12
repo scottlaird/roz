@@ -29,7 +29,11 @@ type GitHubRepo struct {
 	Name  string `db:"name" kind:"identity"`
 
 	AnnounceChannel sql.NullString `db:"announce_channel"`
-	Disposition     string         `db:"disposition"`
+	// ShortName is what a person calls this repository in prose, so `api#1234`
+	// can become a link. Unique across tracked repositories, and usually
+	// unset: the value is that it names exactly one.
+	ShortName   sql.NullString `db:"short_name"`
+	Disposition string         `db:"disposition"`
 
 	DefaultBranch  sql.NullString `db:"default_branch" kind:"observed"`
 	UsesMergeQueue sql.NullBool   `db:"uses_merge_queue" kind:"observed"`
@@ -138,4 +142,64 @@ func (s *Store) ListGitHubRepos(ctx context.Context) ([]*GitHubRepo, error) {
 		return nil, fmt.Errorf("listing repositories: %w", err)
 	}
 	return repos, nil
+}
+
+// ValidateShortName refuses a short name the schema would refuse, saying why
+// rather than surfacing a CHECK constraint.
+//
+// A slash or a '#' is what tells the two reference forms apart — acme/api#1 is
+// a repository and a number, api#1 is a short name and a number — so a short
+// name containing either would make prose ambiguous.
+func ValidateShortName(short string) error {
+	switch {
+	case short == "":
+		return fmt.Errorf("a short name cannot be empty; pass \"\" to clear it instead")
+	case strings.ContainsAny(short, "/#"):
+		return fmt.Errorf("short name %q cannot contain / or #: those are what tell "+
+			"acme/api#1 and api#1 apart", short)
+	case strings.ContainsAny(short, " \t"):
+		return fmt.Errorf("short name %q cannot contain spaces", short)
+	}
+	return nil
+}
+
+// ShortNameHolder returns the repository already using a short name, if any.
+//
+// Checked before writing so a collision is reported as the repository it
+// clashes with rather than as a unique-index violation. The index is still
+// what enforces it: this is the error message, not the guarantee.
+func (t *Tx) ShortNameHolder(ctx context.Context, short string) (string, bool, error) {
+	var id string
+	err := t.tx.QueryRowContext(ctx,
+		"SELECT id FROM github_repo WHERE short_name = ?", short).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("checking the short name %q: %w", short, err)
+	}
+	return id, true, nil
+}
+
+// ShortNames maps each registered short name to the repository it stands for.
+//
+// One query, read once per render: prose linking consults it per reference,
+// and a lookup per mention would turn a page into a pile of round trips.
+func (s *Store) ShortNames(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT short_name, id FROM github_repo WHERE short_name IS NOT NULL")
+	if err != nil {
+		return nil, fmt.Errorf("reading repository short names: %w", err)
+	}
+	defer rows.Close()
+
+	names := map[string]string{}
+	for rows.Next() {
+		var short, id string
+		if err := rows.Scan(&short, &id); err != nil {
+			return nil, fmt.Errorf("reading repository short names: %w", err)
+		}
+		names[short] = id
+	}
+	return names, rows.Err()
 }

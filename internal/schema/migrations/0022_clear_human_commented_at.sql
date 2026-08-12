@@ -1,0 +1,33 @@
+-- Clear human_commented_at so sync can work it out again.
+--
+-- The column was set from the newest comment on a pull request, whoever wrote
+-- it, so it holds three different things: somebody having read the pull
+-- request, the author replying to their own, and a bot talking to itself. Only
+-- the first is what the name claims and what anything should act on.
+--
+-- It matters because `frozen` is generated from this column, and frozen is
+-- what decides amend against new commit. A pull request nobody else had looked
+-- at was frozen against its own author's amendments, on the strength of a
+-- comment that author wrote — the rule inverted. The column never clears once
+-- set, so one bot comment did that permanently.
+--
+-- Data rather than DDL, which is unusual here and deliberate. There is no way
+-- to tell a good value from a bad one after the fact: the log records that the
+-- column changed, never who wrote the comment behind it. Clearing is what
+-- makes the next sync the authority, since it recomputes from GitHub and
+-- writes only when it finds a qualifying comment.
+--
+-- Nothing else has to happen. A pull request still being polled has its value
+-- back within a poll, correct this time; one that has since merged keeps an
+-- empty column, which is honest about what is known rather than confidently
+-- wrong.
+--
+-- The one loss: a qualifying comment older than the twenty the query now reads
+-- will not be found again, so a long, noisy pull request may come back empty
+-- where it should not. That is a smaller error than the one being fixed, and
+-- it fails towards not freezing rather than towards freezing wrongly.
+--
+-- No event is written for this. Migrations do not log, and the alternative --
+-- one event per row under some invented actor -- would put a change nobody
+-- made into the history of every pull request.
+UPDATE pr SET human_commented_at = NULL WHERE human_commented_at IS NOT NULL;

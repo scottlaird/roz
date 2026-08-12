@@ -470,6 +470,21 @@ bites; not worth one before.
   monorepo returns its most recent tags across every component — which is why
   polling targets are the one thing that may yet belong on the repository,
   tracked as [#128](https://github.com/scottlaird/roz/issues/128).
+- **Refs are read newest first, paged to a bound, and a filter too broad to
+  read through is reported.** Tags come back newest-commit-first, so a
+  forward-looking wait is answered by the first page; paging exists for the
+  repositories where one page is not the whole history. The bound exists
+  because some are unreasonable — `aws/aws-sdk-go-v2` has 82,000 tags and
+  GitHub answers page four of that connection about two times in three — and
+  no page count makes a top-level release findable among 82,000 component
+  ones. So the shortfall is reported and raises an action, since the remedy is
+  a narrower prefix and the alternative is a wait whose ref is never fetched,
+  sitting in the queue with nothing to explain it.
+- **A ref page that fails stops that batch rather than the sync.** A connection
+  large enough to need paging is large enough for GitHub to time out serving
+  it, and one unreadable repository must not take the pull request poll down
+  with it. Rate limiting still propagates, because that means wait rather than
+  something being wrong with the question.
 - **A repository's first poll is a backfill, not news.** It sees the whole tag
   history at once — a hundred releases that existed long before anybody waited
   for one — so those are counted rather than listed. Only what appears after

@@ -61,6 +61,11 @@ type Result struct {
 	NewRefs []*store.GitRef
 	// Backfilled counts what a first poll recorded, keyed "repo kind".
 	Backfilled map[string]int
+	// Truncated lists the ref filters too broad to read to the end. An
+	// exception is logged for each, and an action raised: a filter that cannot
+	// be read through is a wait that may never close, which is worse than one
+	// that closes late.
+	Truncated []github.RefTruncation
 	// RefsPolled is how many repository-and-kind pairs were asked about,
 	// which is zero whenever nothing is waiting for a ref.
 	RefsPolled int
@@ -233,7 +238,61 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 			return err
 		}
 	}
+
+	result.Truncated = fetched.Truncated
+	for _, t := range fetched.Truncated {
+		if err := reportTruncated(ctx, st, t); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// eventRefsTruncated is raised when a ref filter matches more than one read
+// can get through.
+const eventRefsTruncated = "ref_poll_truncated"
+
+// reportTruncated says that a filter was too broad to read to the end.
+//
+// This one raises an action as well as logging, because of what it means: the
+// refs being matched against are only the newest few hundred of many
+// thousands, so a wait on that filter may never see the ref it names and would
+// sit in the queue forever without anything saying why. That is the failure
+// this codebase refuses everywhere else — better a decision to make than a
+// wait that silently cannot close.
+//
+// The remedy is narrowing the filter rather than reading more: a repository
+// with eighty thousand tags has them one per component release, and no number
+// of pages makes a top-level release findable among those.
+func reportTruncated(ctx context.Context, st *store.Store, t github.RefTruncation) error {
+	filter := t.Query.Contains
+	if filter == "" {
+		filter = "the whole namespace"
+	}
+	why := fmt.Sprintf(
+		"%s: %s matches %d refs and only the newest %d were read, so a wait on it may never see its ref. Narrow the path prefix.",
+		t.Query.Repo, filter, t.Matched, t.Read)
+
+	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	subject, err := tx.LoadGitHubRepo(ctx, t.Query.Repo)
+	if err != nil {
+		return nil
+	}
+	if err := tx.Exception(ctx, subject, eventRefsTruncated, why); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	_, err = st.RaiseAction(ctx, eventRefsTruncated, subject,
+		fmt.Sprintf("narrow the ref filter for %s", t.Query.Repo), why)
+	return err
 }
 
 // firstPollOf reports which of the repositories about to be read have never

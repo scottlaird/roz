@@ -1131,13 +1131,30 @@ and there is no watch list to keep in step with the waits themselves.
 
 ```console
 $ roz sync github
-cli/cli tag: 100 recorded on the first poll
+cli/cli tag: 200 recorded on the first poll
 polled 0, 0 changed, 1 ref queries
 ```
 
 A repository's first poll sees its whole tag history at once. None of that
 *appeared* in any sense a person means, so it is counted rather than listed;
 after that, a tag turning up is one line and is news.
+
+Tags are read newest first and paged only so far, because some repositories are
+unreasonable: `aws/aws-sdk-go-v2` carries 82,000 tags, one per service release,
+and GitHub times out serving deep pages of a connection that size. A filter
+matching more than can be read says so, and puts an item in the queue:
+
+```console
+$ roz sync github
+aws/aws-sdk-go-v2 tag: 500 recorded on the first poll
+aws/aws-sdk-go-v2: matched 82234 refs, read 500 — narrow the filter
+polled 0, 0 changed, 2 ref queries
+```
+
+The remedy is a narrower path prefix, not more pages: among 82,000 component
+tags a top-level release is not findable at any page count. Saying so is the
+point — a wait whose ref is never fetched would otherwise sit there forever
+with nothing to explain it.
 
 ```console
 $ roz sync github

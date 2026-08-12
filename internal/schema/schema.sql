@@ -291,6 +291,19 @@ CREATE TABLE github_repo (
   -- Last because ADD COLUMN put it there. It replaced a review_policy enum,
   -- which said whether review happened but not what to do about it.
   pipeline          TEXT REFERENCES action_pipeline(name),
+
+  -- The name a person uses for this repository when writing about it, so prose
+  -- can say api#1234 rather than spelling out a URL. Authored: which
+  -- repository a word means is a decision. UNIQUE and nullable -- the value is
+  -- that it resolves to exactly one repository, and most repositories have
+  -- none. No slash and no '#', which are what tell acme/api#1 and api#1 apart.
+  -- Last because ADD COLUMN put it there. See 0017.
+  short_name        TEXT
+    CHECK (short_name IS NULL OR (
+      short_name <> '' AND
+      instr(short_name, '/') = 0 AND
+      instr(short_name, '#') = 0
+    )),
   UNIQUE (owner, name),
   CHECK (id = owner || '/' || name)
 ) STRICT;
@@ -515,3 +528,5 @@ CREATE INDEX project_expired ON project(snooze_until)
                              WHERE status = 'snoozed' AND snooze_until IS NOT NULL;
 CREATE INDEX action_project  ON action(project_id);
 CREATE INDEX project_tracker_issue_issue ON project_tracker_issue(issue_id);
+CREATE UNIQUE INDEX github_repo_short_name ON github_repo(short_name)
+  WHERE short_name IS NOT NULL;

@@ -529,6 +529,40 @@ override — one named verb instead of a hole in the rule — and it is logged a
 `sync:verify`, so the log says a person went and looked rather than that
 something reported it.
 
+## Short names for repositories
+
+Prose fills up with pull request references, and the natural way to write one
+is a prefix and a number. Give a repository a short name and that becomes a
+link:
+
+```console
+$ roz repo track acme/api-server --short-name api
+acme/api-server
+
+$ roz repo list
+ID               SHORT  PIPELINE  DEFAULT BRANCH  ANNOUNCE  DISPOSITION
+acme/api-server  api    review    -               -         -
+```
+
+Prose then writes `api#1234`, and the page renders it as a link to
+`acme/api-server/pull/1234` with the text exactly as typed. Nothing rewrites
+what is stored — this is a rendering rule, so a short name changed later
+changes every mention at once, and a repository with none loses nothing.
+
+**Only registered names expand.** `foo#12` stays literal, which is what keeps
+the rule from surprising text that was never about a pull request. A short name
+is unique across tracked repositories, and a collision is refused when it is
+written:
+
+```console
+$ roz repo track acme/web --short-name api
+Error: the short name "api" is already acme/api-server
+```
+
+It cannot contain `/` or `#`, since those are exactly what tell `acme/api#1`
+and `api#1` apart. A reference written out in full still wins over a short name
+matching its tail, so `acme/api-server#1` is one link and not two.
+
 ## What a link points at
 
 Every link the page draws to something roz tracks carries a tooltip taken from

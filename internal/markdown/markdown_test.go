@@ -7,7 +7,7 @@ import (
 
 const base = "https://example.atlassian.net/browse"
 
-func testLinker() *Linker { return NewLinker(base, []string{"CDSS"}, nil) }
+func testLinker() *Linker { return NewLinker(Config{JiraBase: base, JiraPrefixes: []string{"CDSS"}}) }
 
 // TestText covers the plain path: most of a title's references are written
 // into the sentence rather than attached as a link, so the page has to find
@@ -51,7 +51,7 @@ func TestTextLinksNothingItCannotPlace(t *testing.T) {
 
 	// Without a base URL there is nowhere for a key to point, and guessing at
 	// a host would produce links that look right and go nowhere.
-	for _, l := range []*Linker{NewLinker("", []string{"CDSS"}, nil), NewLinker(base, nil, nil)} {
+	for _, l := range []*Linker{NewLinker(Config{JiraPrefixes: []string{"CDSS"}}), NewLinker(Config{JiraBase: base})} {
 		if got := string(l.Text("Close CDSS-1557")); strings.Contains(got, "<a") {
 			t.Errorf("Text linked with an unconfigured linker: %q", got)
 		}
@@ -62,7 +62,7 @@ func TestTextLinksNothingItCannotPlace(t *testing.T) {
 // Jira project sits inside the pull request's own match, and linking it would
 // put an anchor in the middle of a repository name.
 func TestOverlappingIdentifiersResolveToTheLongerOne(t *testing.T) {
-	links := NewLinker(base, []string{"ACME"}, nil)
+	links := NewLinker(Config{JiraBase: base, JiraPrefixes: []string{"ACME"}})
 
 	got := string(links.Text("see ACME-1/tools#4 for the rest"))
 	want := `<a href="https://github.com/ACME-1/tools/pull/4">ACME-1/tools#4</a>`
@@ -210,7 +210,7 @@ func titles() TitleFunc {
 }
 
 func withTitles() *Linker {
-	return NewLinker("https://example.atlassian.net/browse", []string{"CDSS"}, titles())
+	return NewLinker(Config{JiraBase: "https://example.atlassian.net/browse", JiraPrefixes: []string{"CDSS"}, Titles: titles()})
 }
 
 // renderWithTitles is the Markdown path with the same lookup behind it.
@@ -337,5 +337,109 @@ func TestTooltipTruncation(t *testing.T) {
 	// Newlines in a stored title would break out of the attribute's line.
 	if got := Tooltip("two\nlines"); got != "two lines" {
 		t.Errorf("Tooltip() = %q, want the whitespace collapsed", got)
+	}
+}
+
+// withRepos is a linker that knows one repository by a short name.
+func withRepos() *Linker {
+	return NewLinker(Config{
+		JiraBase:     "https://example.atlassian.net/browse",
+		JiraPrefixes: []string{"CDSS"},
+		Repos:        map[string]string{"api": "acme/api-server"},
+		Titles:       titles(),
+	})
+}
+
+func TestShortNameExpands(t *testing.T) {
+	got := string(withRepos().Text("fixed by api#1234"))
+
+	if !strings.Contains(got, `href="https://github.com/acme/api-server/pull/1234"`) {
+		t.Errorf("Text() = %q, want the short name expanded", got)
+	}
+	// The visible text stays exactly as written.
+	if !strings.Contains(got, ">api#1234<") {
+		t.Errorf("Text() = %q, want the text left as the author wrote it", got)
+	}
+}
+
+// TestOnlyRegisteredShortNamesExpand is what keeps this from surprising text
+// that was never about a pull request.
+func TestOnlyRegisteredShortNamesExpand(t *testing.T) {
+	for _, src := range []string{
+		"issue foo#12",
+		"ticket #45",
+		"channel #general",
+		"C#9 is a language joke",
+	} {
+		t.Run(src, func(t *testing.T) {
+			if got := string(withRepos().Text(src)); strings.Contains(got, "<a ") {
+				t.Errorf("Text(%q) = %q, want no link", src, got)
+			}
+		})
+	}
+}
+
+// TestFullReferenceBeatsItsOwnTail: acme/api-server#1 contains api-server#1,
+// and linking the tail of a reference already linked would nest anchors.
+func TestFullReferenceBeatsItsOwnTail(t *testing.T) {
+	l := NewLinker(Config{Repos: map[string]string{"api-server": "somewhere/else"}})
+
+	got := string(l.Text("see acme/api-server#1234"))
+	if strings.Count(got, "<a ") != 1 {
+		t.Fatalf("Text() = %q, want exactly one link", got)
+	}
+	if !strings.Contains(got, `href="https://github.com/acme/api-server/pull/1234"`) {
+		t.Errorf("Text() = %q, want the full reference to win", got)
+	}
+	if strings.Contains(got, "somewhere/else") {
+		t.Errorf("Text() = %q, want the short name not to claim the tail", got)
+	}
+}
+
+// TestShortNameNotExpandedInACodeSpan is the caveat that is invisible until
+// somebody writes about the syntax — which is exactly what the issue for this
+// feature does.
+func TestShortNameNotExpandedInACodeSpan(t *testing.T) {
+	r := NewRenderer(withRepos())
+
+	for _, src := range []string{
+		"write `api#1234` literally",
+		"```\napi#1234\n```",
+	} {
+		t.Run(src, func(t *testing.T) {
+			if got := string(r.Render(src)); strings.Contains(got, "<a ") {
+				t.Errorf("Render(%q) = %q, want it left as text", src, got)
+			}
+		})
+	}
+}
+
+// TestShortNameLinksAreOrdinaryLinks: expansion emits a repository URL, so
+// everything keyed off link targets keeps working — the tooltip included.
+func TestShortNameLinksAreOrdinaryLinks(t *testing.T) {
+	l := NewLinker(Config{
+		Repos: map[string]string{"api": "acme/api"},
+		Titles: func(target Target) string {
+			if target == (Target{Kind: KindPR, Key: "acme/api#1234"}) {
+				return "Retry the upstream call on 503"
+			}
+			return ""
+		},
+	})
+
+	got := string(l.Text("api#1234"))
+	if !strings.Contains(got, `title="Retry the upstream call on 503"`) {
+		t.Errorf("Text() = %q, want an expanded link to be captioned like any other", got)
+	}
+}
+
+func TestShortNameInMarkdownProse(t *testing.T) {
+	got := string(NewRenderer(withRepos()).Render("blocked on api#1234 and CDSS-1744"))
+
+	if !strings.Contains(got, "acme/api-server/pull/1234") {
+		t.Errorf("Render() = %q, want the short name expanded", got)
+	}
+	if !strings.Contains(got, "browse/CDSS-1744") {
+		t.Errorf("Render() = %q, want the Jira key still linked", got)
 	}
 }

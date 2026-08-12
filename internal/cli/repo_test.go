@@ -188,3 +188,71 @@ func TestRepoTrackTwice(t *testing.T) {
 		t.Errorf("error = %v, want it to say the repository is already tracked", err)
 	}
 }
+
+// TestRepoShortNameIsUnique: the whole value is that a prefix resolves to
+// exactly one repository, so a collision is refused when it is written rather
+// than settled later by a precedence rule.
+func TestRepoShortNameIsUnique(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "acme/api-server", "--short-name", "api")
+
+	_, err := runCLI(t, "repo", "track", "--db", db, "acme/web", "--short-name", "api")
+	if err == nil {
+		t.Fatal("a duplicate short name was accepted")
+	}
+	// Named as the repository it clashes with, not as a constraint violation.
+	if !strings.Contains(err.Error(), "acme/api-server") {
+		t.Errorf("error = %v, want it to name the repository holding it", err)
+	}
+}
+
+func TestRepoShortNameRejections(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "acme/api-server")
+
+	for _, bad := range []string{"acme/api", "api#1", "two words"} {
+		t.Run(bad, func(t *testing.T) {
+			if _, err := runCLI(t, "repo", "set", "acme/api-server", "--db", db,
+				"--short-name", bad); err == nil {
+				t.Errorf("short name %q was accepted", bad)
+			}
+		})
+	}
+}
+
+// TestRepoShortNameClears: an empty value clears it, the way the other
+// authored columns work.
+func TestRepoShortNameClears(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "acme/api-server", "--short-name", "api")
+
+	if _, err := runCLI(t, "repo", "set", "acme/api-server", "--db", db,
+		"--short-name", ""); err != nil {
+		t.Fatalf("clearing the short name returned error: %v", err)
+	}
+	// And it is free again.
+	trackRepo(t, db, "acme/web", "--short-name", "api")
+}
+
+// TestProseExpandsAShortName end to end: the page turns api#1234 into a link
+// without the stored text changing.
+func TestProseExpandsAShortName(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "acme/api-server", "--short-name", "api")
+	id := addAction(t, db, "--title", "wait for api#1234", "--verb", "decide")
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(page, "https://github.com/acme/api-server/pull/1234") {
+		t.Errorf("the short name did not expand:\n%s", page)
+	}
+	if !strings.Contains(page, ">api#1234<") {
+		t.Errorf("the visible text changed:\n%s", page)
+	}
+	// The stored value is untouched: this is a rendering rule.
+	if got := showActionJSON(t, db, id)["title"]; got != "wait for api#1234" {
+		t.Errorf("stored title = %#v, want it unchanged", got)
+	}
+}

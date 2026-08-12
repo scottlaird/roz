@@ -31,6 +31,11 @@ import (
 var (
 	jiraKeyPattern = regexp.MustCompile(`\b[A-Z][A-Z0-9]+-\d+\b`)
 	prPattern      = regexp.MustCompile(`\b([\w.-]+/[\w.-]+)#(\d+)\b`)
+	// shortPattern is the same shape without the owner. It matches far more
+	// than it should on its own — every `foo#12` in every sentence — which is
+	// why a match only becomes a link when the prefix is a registered short
+	// name.
+	shortPattern = regexp.MustCompile(`\b([\w.-]+)#(\d+)\b`)
 )
 
 // Kinds of thing a link can point at.
@@ -67,7 +72,24 @@ type TitleFunc func(Target) string
 type Linker struct {
 	jiraBase string
 	jira     map[string]bool
+	repos    map[string]string
 	titles   TitleFunc
+}
+
+// Config is what linking needs to know. A struct rather than a parameter list
+// because the list keeps growing, and each addition is another call site to
+// edit for a value it does not care about.
+type Config struct {
+	// JiraBase is the browse URL issues hang off. Empty disables Jira links.
+	JiraBase string
+	// JiraPrefixes are the project keys worth linking. See NewLinker.
+	JiraPrefixes []string
+	// Repos maps a repository's short name to its owner/name, so prose can
+	// write api#1234. Only registered names expand: that is what keeps the
+	// rule from surprising text that was never about a pull request.
+	Repos map[string]string
+	// Titles supplies tooltips. Nil means none.
+	Titles TitleFunc
 }
 
 // prURLPattern matches the destination this package emits for a pull request,
@@ -134,13 +156,17 @@ func Tooltip(title string) string {
 // prefixes. The shape of a key is not distinctive enough to match on: the
 // obvious pattern also matches UTF-8, SHA-256, ISO-8601 and CVE-2024, each of
 // which would become a confident link to nothing.
-func NewLinker(jiraBase string, jiraPrefixes []string, titles TitleFunc) *Linker {
-	l := &Linker{jiraBase: strings.TrimSuffix(jiraBase, "/"), titles: titles}
+func NewLinker(cfg Config) *Linker {
+	l := &Linker{
+		jiraBase: strings.TrimSuffix(cfg.JiraBase, "/"),
+		repos:    cfg.Repos,
+		titles:   cfg.Titles,
+	}
 	if l.jiraBase == "" {
 		return l
 	}
-	l.jira = make(map[string]bool, len(jiraPrefixes))
-	for _, p := range jiraPrefixes {
+	l.jira = make(map[string]bool, len(cfg.JiraPrefixes))
+	for _, p := range cfg.JiraPrefixes {
 		if p = strings.ToUpper(strings.TrimSpace(p)); p != "" {
 			l.jira[p] = true
 		}
@@ -169,6 +195,26 @@ func (l *Linker) find(s string) []ref {
 			end:   m[1],
 			dest:  "https://github.com/" + s[m[2]:m[3]] + "/pull/" + s[m[4]:m[5]],
 		})
+	}
+	// Short names after full references, so the `api#1234` inside
+	// `acme/api#1234` is already covered and skipped by the overlap check
+	// below rather than linked a second time.
+	if len(l.repos) > 0 {
+		for _, m := range shortPattern.FindAllStringSubmatchIndex(s, -1) {
+			repo, ok := l.repos[s[m[2]:m[3]]]
+			if !ok || overlaps(refs, m[0], m[1]) {
+				continue
+			}
+			refs = append(refs, ref{
+				start: m[0],
+				end:   m[1],
+				// /pull/ rather than /issues/: a bare number does not say
+				// which, GitHub redirects between them, and detecting it would
+				// mean a request per reference.
+				dest: "https://github.com/" + repo + "/pull/" + s[m[4]:m[5]],
+			})
+		}
+		sort.Slice(refs, func(i, j int) bool { return refs[i].start < refs[j].start })
 	}
 	if len(l.jira) > 0 {
 		for _, m := range jiraKeyPattern.FindAllStringIndex(s, -1) {

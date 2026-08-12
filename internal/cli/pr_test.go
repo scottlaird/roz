@@ -7,9 +7,10 @@ import (
 )
 
 // trackRepo records a repository, which pr track requires first.
-func trackRepo(t *testing.T, db, id string) {
+func trackRepo(t *testing.T, db, id string, extra ...string) {
 	t.Helper()
-	if _, err := runCLI(t, "repo", "track", "--db", db, id); err != nil {
+	args := append([]string{"repo", "track", "--db", db, id}, extra...)
+	if _, err := runCLI(t, args...); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
 }

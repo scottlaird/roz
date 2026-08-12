@@ -16,6 +16,7 @@ import (
 const (
 	flagPipeline        = "pipeline"
 	flagAnnounceChannel = "announce-channel"
+	flagShortName       = "short-name"
 	flagDisposition     = "disposition"
 )
 
@@ -55,6 +56,8 @@ func addRepoPolicyFlags(cmd *cobra.Command) {
 	f.String(flagPipeline, "", "how its pull requests reach merge; see `roz pipeline list`")
 	f.String(flagAnnounceChannel, "", "Slack channel its pull requests are announced in")
 	f.String(flagDisposition, "", "e.g. another team's area unless they ask directly")
+	f.String(flagShortName, "",
+		"what to call it in prose, so api#1234 becomes a link; unique, and \"\" clears it")
 }
 
 func runRepoTrack(cmd *cobra.Command, args []string) error {
@@ -89,6 +92,10 @@ func runRepoTrack(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer tx.Rollback()
+
+	if err := checkShortNameFree(ctx, tx, r); err != nil {
+		return err
+	}
 
 	switch _, err := tx.LoadGitHubRepo(ctx, r.ID); {
 	case err == nil:
@@ -129,17 +136,40 @@ func newRepoSetCmd() *cobra.Command {
 
 func runRepoSet(cmd *cobra.Command, args []string) error {
 	f := cmd.Flags()
-	if !f.Changed(flagPipeline) && !f.Changed(flagAnnounceChannel) && !f.Changed(flagDisposition) {
-		return fmt.Errorf("nothing to set: pass --%s, --%s or --%s",
-			flagPipeline, flagAnnounceChannel, flagDisposition)
+	if !f.Changed(flagPipeline) && !f.Changed(flagAnnounceChannel) &&
+		!f.Changed(flagDisposition) && !f.Changed(flagShortName) {
+		return fmt.Errorf("nothing to set: pass --%s, --%s, --%s or --%s",
+			flagPipeline, flagAnnounceChannel, flagDisposition, flagShortName)
 	}
 
 	return updateRepo(cmd, args[0], func(ctx context.Context, tx *store.Tx, r *store.GitHubRepo) error {
 		if err := applyRepoFlags(cmd, r); err != nil {
 			return err
 		}
+		if err := checkShortNameFree(ctx, tx, r); err != nil {
+			return err
+		}
 		return checkPipelineUsable(ctx, tx, r.Pipeline)
 	})
+}
+
+// checkShortNameFree reports a collision as the repository it clashes with.
+//
+// The unique index is what actually enforces this; the point of asking first
+// is the message. "api is already scottlaird/roz" is something a person can
+// act on, and a UNIQUE constraint violation is not.
+func checkShortNameFree(ctx context.Context, tx *store.Tx, r *store.GitHubRepo) error {
+	if !r.ShortName.Valid {
+		return nil
+	}
+	holder, taken, err := tx.ShortNameHolder(ctx, r.ShortName.String)
+	if err != nil {
+		return err
+	}
+	if taken && holder != r.ID {
+		return fmt.Errorf("the short name %q is already %s", r.ShortName.String, holder)
+	}
+	return nil
 }
 
 func applyRepoFlags(cmd *cobra.Command, r *store.GitHubRepo) error {
@@ -158,6 +188,18 @@ func applyRepoFlags(cmd *cobra.Command, r *store.GitHubRepo) error {
 			return err
 		}
 		r.AnnounceChannel = nullString(v)
+	}
+	if f.Changed(flagShortName) {
+		v, err := f.GetString(flagShortName)
+		if err != nil {
+			return err
+		}
+		if v != "" {
+			if err := store.ValidateShortName(v); err != nil {
+				return err
+			}
+		}
+		r.ShortName = nullString(v)
 	}
 	if f.Changed(flagDisposition) {
 		v, err := f.GetString(flagDisposition)
@@ -353,10 +395,12 @@ func writeRepoTable(out io.Writer, repos []*store.GitHubRepo) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tPIPELINE\tDEFAULT BRANCH\tANNOUNCE\tDISPOSITION")
+	// SHORT is here for the reason WAIT is on `verb list`: it is a setting,
+	// and one that cannot be read is one nobody can manage.
+	fmt.Fprintln(w, "ID\tSHORT\tPIPELINE\tDEFAULT BRANCH\tANNOUNCE\tDISPOSITION")
 	for _, r := range repos {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			r.ID, nullText(r.Pipeline), nullText(r.DefaultBranch),
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.ID, nullText(r.ShortName), nullText(r.Pipeline), nullText(r.DefaultBranch),
 			nullText(r.AnnounceChannel), orDash(r.Disposition))
 	}
 	return w.Flush()

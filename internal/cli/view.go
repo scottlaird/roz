@@ -114,6 +114,9 @@ type projectView struct {
 // size and wrong at any other, and the shape is the thing that gets copied.
 func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings) (*pageContent, error) {
 	today := now.UTC().Format(store.DateFormat)
+	// A calendar window is a span of days and asks about the date; a snooze is
+	// compared against the instant the queries use. See expired.
+	stamp := now.UTC().Format(store.TimeFormat)
 	text := newProse(cfg.jiraBase, cfg.jiraPrefixes)
 
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
@@ -185,11 +188,11 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 
 	for _, a := range queue {
 		content.Queue = append(content.Queue,
-			actionRow(a, rank, prsByAction, issuesByProject, text, today))
+			actionRow(a, rank, prsByAction, issuesByProject, text, stamp))
 	}
 	for _, a := range waiting {
 		content.Waiting = append(content.Waiting,
-			actionRow(a, rank, prsByAction, issuesByProject, text, today))
+			actionRow(a, rank, prsByAction, issuesByProject, text, stamp))
 	}
 
 	openPerProject := map[string]int{}
@@ -209,7 +212,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			Snooze:   nullText(p.SnoozeUntil),
 			Actions:  openPerProject[p.ID],
 			Issues:   issueViews(issuesByProject[p.ID], text.jiraBase),
-			Expired:  expired(p.SnoozeUntil, today),
+			Expired:  expired(p.SnoozeUntil, stamp),
 		})
 	}
 
@@ -219,7 +222,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 }
 
 func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.ActionPR,
-	issues map[string][]*store.TrackerIssue, text *prose, today string) actionView {
+	issues map[string][]*store.TrackerIssue, text *prose, now string) actionView {
 
 	view := actionView{
 		ID: a.ID,
@@ -230,8 +233,8 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		Verb:      a.Verb,
 		RankClass: rank[a.Verb],
 		Project:   nullText(a.ProjectID),
-		Age:       age(a, today),
-		Expired:   expired(a.SnoozeUntil, today),
+		Age:       age(a, now),
+		Expired:   expired(a.SnoozeUntil, now),
 	}
 	for _, p := range prs[a.ID] {
 		view.PRs = append(view.PRs, prRow(p))
@@ -309,9 +312,9 @@ func issueViews(issues []*store.TrackerIssue, base string) []issueView {
 // age is the short chip on the right of a queue item: what state it is in and
 // since when, which is the difference between being patient and nobody having
 // looked.
-func age(a *store.Action, today string) string {
+func age(a *store.Action, now string) string {
 	if a.SnoozeUntil.Valid {
-		if a.SnoozeUntil.String < today {
+		if expired(a.SnoozeUntil, now) {
 			return "due " + a.SnoozeUntil.String
 		}
 		return "until " + a.SnoozeUntil.String
@@ -332,8 +335,14 @@ func windowRange(w *store.CalendarWindow) string {
 	return w.StartsOn + " → " + w.EndsOn
 }
 
-func expired(until sql.NullString, today string) bool {
-	return until.Valid && until.String != "" && until.String < today
+// expired reports that a snooze date has arrived or passed.
+//
+// Against a timestamp, not a date, so this agrees with the queue query: a
+// snooze until a bare date is past as soon as that date begins. Comparing
+// against the date alone made an item snoozed until today unexpired here and
+// expired there — visible in the queue with nothing marking it.
+func expired(until sql.NullString, now string) bool {
+	return until.Valid && until.String != "" && until.String < now
 }
 
 func jsonList(raw string) []string {

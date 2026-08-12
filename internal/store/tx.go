@@ -17,6 +17,13 @@ import (
 // text and stays readable in a sqlite3 shell.
 const timeFormat = "2006-01-02T15:04:05.000Z"
 
+// TimeFormat is timeFormat, for callers that have to compare against the same
+// instant the queries do. A snooze until a bare date is past the moment that
+// date starts, which only comes out right if both sides compare against a
+// timestamp: "2026-08-12" sorts before "2026-08-12T00:00:00.000Z", and after
+// "2026-08-12" alone it does not.
+const TimeFormat = timeFormat
+
 // Store is a handle on an initialised database.
 //
 // It reads the identifier prefixes once, at construction, so commands never

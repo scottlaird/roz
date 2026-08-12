@@ -464,6 +464,32 @@ planning signal it now is — but a one-click action on a barely-wanted project
 outranking real work on the most wanted one reads as the queue ignoring what
 it was told.
 
+## When a snooze runs out
+
+A snooze says "hide this until a date". On that date it stops hiding: the item
+is back in the queue, marked, with the date it came due.
+
+```console
+$ roz action list --unblocked
+ID   STATE    VERB    PROJECT  SNOOZED UNTIL   TITLE
+NA1  snoozed  decide  -        due 2026-08-05  past its date
+NA3  ready    decide  -        -               ordinary
+```
+
+It stays `snoozed`. Waking it would rewrite an authored column from a clock —
+a different kind of write from any this makes elsewhere — and would throw away
+the reason it was deferred, which is often still worth reading even once the
+date has gone. The row is unchanged; the queue simply stops pretending the
+date has not arrived.
+
+The comparison is against an instant, not a date, so a snooze until the 12th
+comes back on the 12th rather than the 13th. `--expired` asks for these
+specifically and uses the same definition, so the two cannot disagree about
+what is in the queue.
+
+Expect a burst the first time on a queue that has been running a while. That
+is the backlog arriving, not a malfunction.
+
 ## Staleness
 
 `updated_at` says when something last *changed*. It cannot say when someone

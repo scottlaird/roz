@@ -481,3 +481,48 @@ func TestPageCarriesItsFavicon(t *testing.T) {
 		t.Error("html/template blanked a URL: Favicon needs to be a template.URL, not a string")
 	}
 }
+
+// TestPageShowsAnExpiredSnooze: the template has styled `.expired` and the
+// chip has said "due" since before this was reachable — the queue query simply
+// never let such a row through. This is the end-to-end check that it does now.
+func TestPageShowsAnExpiredSnooze(t *testing.T) {
+	db := initDB(t)
+	id := addAction(t, db, "--title", "past its date", "--verb", "decide")
+	if _, err := runCLI(t, "action", "snooze", id, "--db", db,
+		"--snooze-until", "2000-01-01", "--snooze-reason", "Sprint 148"); err != nil {
+		t.Fatalf("action snooze returned error: %v", err)
+	}
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(page, "past its date") {
+		t.Fatalf("the expired snooze is not on the page:\n%s", page)
+	}
+	if !strings.Contains(page, "expired") {
+		t.Error("the row is on the page but nothing marks it as expired")
+	}
+	if !strings.Contains(page, "due 2000-01-01") {
+		t.Error("the page does not say the date it came due")
+	}
+}
+
+// TestPageLeavesALiveSnoozeHidden is the other half: deferring work still
+// defers it, or this would have turned the snooze into a no-op.
+func TestPageLeavesALiveSnoozeHidden(t *testing.T) {
+	db := initDB(t)
+	id := addAction(t, db, "--title", "still deferred", "--verb", "decide")
+	if _, err := runCLI(t, "action", "snooze", id, "--db", db,
+		"--snooze-until", "2099-01-01"); err != nil {
+		t.Fatalf("action snooze returned error: %v", err)
+	}
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if strings.Contains(page, "still deferred") {
+		t.Errorf("a snooze that has not expired reached the page:\n%s", page)
+	}
+}

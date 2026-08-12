@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -711,11 +712,12 @@ func writeProjectTable(out io.Writer, projects []*store.Project) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	now := time.Now().UTC().Format(store.TimeFormat)
 	fmt.Fprintln(w, "ID\tSTATUS\tPRI\tEFFORT\tSNOOZED UNTIL\tTITLE")
 	for _, p := range projects {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			p.ID, p.Status, nullIntText(p.Priority), nullText(p.Effort),
-			nullText(p.SnoozeUntil), p.Title)
+			snoozeCell(p.SnoozeUntil, now), p.Title)
 	}
 	return w.Flush()
 }

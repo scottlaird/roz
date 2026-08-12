@@ -237,11 +237,38 @@ type ActionFilter struct {
 	Stale bool
 }
 
+// expiredSnooze matches a snoozed action whose date has arrived or passed.
+//
+// The comparison is against a full timestamp, so a date-only snooze until
+// today is already past it: "hide this until the 12th" stops hiding on the
+// 12th rather than the 13th.
+//
+// One definition, shared by the Expired filter and by inPlay below. `--expired`
+// is how you ask for these specifically and the queue now contains them, so two
+// spellings of the same idea could put an item in one and not the other.
+const expiredSnooze = "(a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_until < ?)"
+
 // inPlay are the conditions an action meets to be worth listing at all: open,
-// ready, and not folded out of the queue behind something else. Unblocked and
-// Waiting are this plus opposite sides of the wait rank class.
-func inPlay() []string {
-	return []string{"a.closed_at IS NULL", "a.state = ?", "a.hidden_behind IS NULL"}
+// not folded out of the queue behind something else, and either ready or past
+// the date it was snoozed until. Unblocked and Waiting are this plus opposite
+// sides of the wait rank class.
+//
+// An expired snooze is in play because the alternative is losing it. A snooze
+// says "hide this until a date"; after that date it went on hiding, and the
+// only way back was to notice — which makes the mechanism for deferring work
+// also a way to drop it.
+//
+// It stays snoozed rather than being woken. Waking would rewrite an authored
+// column from a clock, which is a different kind of write from any this makes
+// elsewhere, and it would throw away the reason it was deferred. The row is
+// unchanged; the queue simply stops pretending the date has not arrived.
+func inPlay(now string) ([]string, []any) {
+	return []string{
+			"a.closed_at IS NULL",
+			"a.hidden_behind IS NULL",
+			"(a.state = ? OR " + expiredSnooze + ")",
+		},
+		[]any{ActionReady, ActionSnoozed, now}
 }
 
 // waitVerbs is the set of verbs whose own description is that there is
@@ -345,17 +372,21 @@ func (f ActionFilter) clauses(now string) ([]string, []any) {
 		where = append(where, "a.closed_at IS NULL")
 	}
 	if f.Unblocked {
-		where = append(where, inPlay()...)
+		clauses, inPlayArgs := inPlay(now)
+		where = append(where, clauses...)
 		where = append(where, "a.verb NOT IN "+waitVerbs)
-		args = append(args, ActionReady, RankWait)
+		args = append(args, inPlayArgs...)
+		args = append(args, RankWait)
 	}
 	if f.Waiting {
-		where = append(where, inPlay()...)
+		clauses, inPlayArgs := inPlay(now)
+		where = append(where, clauses...)
 		where = append(where, "a.verb IN "+waitVerbs)
-		args = append(args, ActionReady, RankWait)
+		args = append(args, inPlayArgs...)
+		args = append(args, RankWait)
 	}
 	if f.Expired {
-		where = append(where, "a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_until < ?")
+		where = append(where, expiredSnooze)
 		args = append(args, ActionSnoozed, now)
 	}
 	if f.Stale {

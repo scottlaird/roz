@@ -818,8 +818,9 @@ $ python3 assets/unmatte.py assets/roz-mark.svg 32 assets/roz-32.png
 
 ## Where to read more
 
-- [`TODO.md`](TODO.md) — what is left, what is settled, and what is
-  deliberately out of scope.
+- [Issues](https://github.com/scottlaird/roz/issues) — what is left.
+- [`TODO.md`](TODO.md) — what is settled and why, and what is deliberately out
+  of scope. Design decisions, not a work list.
 - [`internal/schema/README.md`](internal/schema/README.md) — the schema, the
   migration rules, and what SQLite will not let you do.
 - [`internal/store/README.md`](internal/store/README.md) — entities, field

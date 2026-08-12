@@ -42,6 +42,7 @@ func newActionCmd() *cobra.Command {
 		newActionAddBlockerCmd(),
 		newActionHideBehindCmd(),
 		newActionLinkPRCmd(),
+		newActionWaitRefCmd(),
 		newActionCloseCmd(),
 	)
 	return cmd
@@ -81,6 +82,9 @@ func newActionAddCmd() *cobra.Command {
 	// be nameable in the same command that chooses the verb. Without this the
 	// check below would refuse a legitimate add and offer a two-step fix.
 	cmd.Flags().String(flagPR, "", "the pull request this action is about, e.g. owner/repo#812")
+	// And for the same reason, a verb that closes on a ref needs to be able to
+	// say which one in the command that chose it. See `action wait-ref`.
+	addRefWaitFlags(cmd)
 	_ = cmd.MarkFlagRequired(flagTitle)
 	_ = cmd.MarkFlagRequired(flagVerb)
 	addActorFlag(cmd)
@@ -128,7 +132,11 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkActionReferences(ctx, st, actor, a, prID); err != nil {
+	wait, err := refWaitFrom(cmd, "")
+	if err != nil {
+		return err
+	}
+	if err := checkActionReferences(ctx, st, actor, a, prID, wait); err != nil {
 		return err
 	}
 
@@ -154,12 +162,18 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	if wait != nil {
+		wait.ActionID = a.ID
+		if err := tx.SetRefWait(ctx, *wait); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), a.ID)
-	if prID == "" {
+	if prID == "" && wait == nil {
 		return nil
 	}
 	// An action created against a pull request that already satisfies its
@@ -170,7 +184,7 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 
 // checkActionReferences confirms the verb and project exist, in a
 // transaction that is finished with before anything else runs.
-func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action, prID string) error {
+func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action, prID string, wait *store.RefWait) error {
 	tx, err := st.Begin(ctx, actor)
 	if err != nil {
 		return err
@@ -183,6 +197,14 @@ func checkActionReferences(ctx context.Context, st *store.Store, actor store.Act
 	}
 	if err := checkPredicateHasSubject(v, prID != "", "pass --"+flagPR); err != nil {
 		return err
+	}
+	if err := checkPredicateHasRefWait(v, wait != nil, "pass --"+flagRefRepo+" and --"+flagRefPattern); err != nil {
+		return err
+	}
+	if wait != nil {
+		if _, err := tx.LoadGitHubRepo(ctx, wait.RepoID); err != nil {
+			return notFoundOr(err, wait.RepoID)
+		}
 	}
 	if prID != "" {
 		if _, err := tx.LoadPR(ctx, prID); err != nil {
@@ -236,6 +258,21 @@ func checkPredicateHasSubject(v *store.ActionVerb, hasPR bool, remedy string) er
 		"%q closes when %s says so, so it needs a pull request to ask: %s, "+
 			"or use a verb that closes on a person and let closing it open the chain",
 		v.Verb, v.PredicateKey.String, remedy)
+}
+
+// checkPredicateHasRefWait is the same refusal for a verb that closes on a
+// ref rather than on a pull request.
+//
+// Separate from checkPredicateHasSubject because the remedy differs, which is
+// the whole reason requires_ref is its own column: an error telling somebody
+// to link a pull request to a wait_ref action would send them the wrong way.
+func checkPredicateHasRefWait(v *store.ActionVerb, hasWait bool, remedy string) error {
+	if hasWait || v.Closes != store.ClosesPredicate || !v.RequiresRef {
+		return nil
+	}
+	return fmt.Errorf(
+		"%q closes when a matching ref appears, so it needs to know which: %s",
+		v.Verb, remedy)
 }
 
 func checkProjectExists(ctx context.Context, tx *store.Tx, project sql.NullString) error {

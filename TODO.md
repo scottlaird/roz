@@ -436,6 +436,52 @@ bites; not worth one before.
   verb costs no number. Allocation still writes on its own connection, which
   means no read transaction may be open across it — SQLite answers the upgrade
   with `SQLITE_BUSY_SNAPSHOT` rather than waiting.
+- **A predicate reads a `Facts` struct, not a `*PR`.** `ref_exists` asks about
+  a repository and a pattern and has no subject pull request at all, so the
+  signature had to widen. The six that only want the pull request go through an
+  `onPR` adapter, which is also where "no subject means false" lives — one
+  place rather than the top of each.
+- **Which refs to poll is derived from the outstanding waits**, not configured
+  per repository, which is what the issue proposed. The poll set is then right
+  by construction: nothing is asked about that nothing waits for, and a wait
+  cannot be written against a repository somebody forgot to add to a list. The
+  cost is that roz cannot answer "when was v1.4.0 cut" for a release nobody
+  gated on — a question it was never asked.
+- **Versions are the digits pulled out of the name, compared numerically.** So
+  `v1.10.0` is above `v1.5.0`, and `v1.5.0`, `1.5.0` and `release-1.5.0` all
+  order alike. The issue suggested a naming rule configured per repository;
+  that is a setting to get wrong, and a built-in covering every common scheme
+  is less to maintain. Pre-releases are *not* ordered — `v1.5.0-rc1` reads as
+  `[1 5 0 1]` and sorts above the release — which is wrong, and unreachable,
+  because a pattern like `v*.*.0` does not match one.
+- **`golang.org/x/mod/semver` orders semantic versions; the digits handle the
+  rest.** The seventh direct dependency, and the case for it is one thing the
+  digits cannot do at all: put `v1.2.0-rc1` *below* `v1.2.0`. Extracted digits
+  say `[1 2 0 1]` against `[1 2 0]`, which is greater, and no ordering of them
+  fixes that. It is a leaf package — pure Go, one package in the build, no cgo,
+  nothing transitive — and `x/mod` was already in the module graph beneath
+  `modernc.org/libc`, so the version is pinned to the one already selected
+  rather than bumped. Both sides of a comparison must parse or neither is used,
+  so a `release-1.5.0` is never compared against a `v1.6.0` under rules only
+  one of them follows.
+- **A pre-release is excluded unless the wait asks for one**, which is a
+  separate fix from ordering and the one that actually matters. `v*.*.*` is the
+  natural way to write "any release" and its glob matches `v1.2.0-rc1`; correct
+  ordering does not help, since that candidate still beats a bound of `v1.1.0`.
+  The wait asks by naming one — a hyphen in the pattern, or a bound that is
+  itself a pre-release. The pattern is tested for the hyphen rather than
+  parsed, because `v1.2.0-rc*` is exactly what somebody would write and exactly
+  what semver rejects.
+- **A version is the digits in a ref's last path segment**, not in the whole
+  name. A monorepo tags `service/s3/v1.107.0`, and reading the whole string
+  gives `[3 1 107 0]` — the `3` belongs to the component. It passed anyway at
+  first, because both sides of a bound carried the same prefix; it was a
+  coincidence, and there were no tests for the shape. Reading the last segment
+  also means the bound may be written with the prefix or without it.
+- **A repository's first poll is a backfill, not news.** It sees the whole tag
+  history at once — a hundred releases that existed long before anybody waited
+  for one — so those are counted rather than listed. Found by running it for
+  real against `cli/cli`, where the first sync printed a hundred lines.
 
 ## Deliberately out of scope
 

@@ -218,9 +218,15 @@ func (p *closePlan) readPipeline(ctx context.Context, tx *Tx) error {
 
 // satisfied reports whether a step is already true of the pull request, and
 // so has nothing to do.
+//
+// Only the pull request is supplied, because a step being instantiated has no
+// ref wait yet — nothing has had the chance to say what it would wait for. A
+// predicate reading anything else therefore answers false and the step is
+// created, which is the right way round: skipping is for steps demonstrably
+// already true.
 func satisfied(verb *ActionVerb, pr *PR) bool {
 	predicate, ok := verb.Predicate()
-	return ok && predicate(pr)
+	return ok && predicate(Facts{PR: pr})
 }
 
 // applyClose writes everything the plan decided, in one unit of work.

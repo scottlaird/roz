@@ -1106,6 +1106,112 @@ A wait is reported once. The log is the record of that, so nothing else has to
 remember; and if the deadline moves out because a fresh review was requested,
 it is reported again, because it is a different wait.
 
+## Waiting for a release
+
+Waiting for a release used to be a snooze to a guessed date. That is wrong in
+both directions: if the release slips the action wakes early and gets
+re-snoozed, and if it ships early it sleeps through the thing it was waiting
+for. A date was standing in for a condition, and closing on conditions is the
+one thing roz already knows how to do.
+
+```console
+$ roz action add --title "Ship the migration once cli 2.98 is out" --verb wait_ref \
+    --ref-repo cli/cli --ref-pattern 'v*.*.0' --ref-after v2.97.0
+NA1
+```
+
+The pattern is a glob, not a name, because when you write the block nobody
+knows whether the next release is `v1.5.0` or `v1.5.1`. `--ref-after` is what
+makes it the *next* one: without it the release that already shipped matches
+and the action closes immediately.
+
+Sync polls only the refs something is waiting for. A repository with no
+outstanding wait is never asked, so this costs nothing until it is relevant —
+and there is no watch list to keep in step with the waits themselves.
+
+```console
+$ roz sync github
+cli/cli tag: 100 recorded on the first poll
+polled 0, 0 changed, 1 ref queries
+```
+
+A repository's first poll sees its whole tag history at once. None of that
+*appeared* in any sense a person means, so it is counted rather than listed;
+after that, a tag turning up is one line and is news.
+
+```console
+$ roz sync github
+cli/cli tag v2.98.0 appeared
+NA1 closed: wait_ref
+polled 0, 0 changed, 1 closed, 1 ref queries
+```
+
+Versions are compared with [`x/mod/semver`](https://pkg.go.dev/golang.org/x/mod/semver)
+where the name is a semantic version, with or without the leading `v`, and by
+the numbers pulled out of the name otherwise — so `release-1.5.0` still works
+and `v1.10.0` is above `v1.5.0` rather than below it as text. The alternative,
+a naming rule configured per repository, is a setting to get wrong.
+
+**A pre-release does not satisfy a wait for the release.** `v1.2.0-rc1` is
+below `v1.2.0`, which no comparison of extracted digits can produce — they say
+`[1 2 0 1]` against `[1 2 0]`, which is greater. It is also excluded outright
+unless the wait asks for one, because ordering alone is not enough: under
+correct semver `v1.2.0-rc1` still beats a bound of `v1.1.0`, so `v*.*.*` would
+otherwise be satisfied by a candidate for a release that has not happened.
+
+Naming one lifts the exclusion, by pattern or by bound:
+
+```console
+$ roz action add --title "Test against the next RC" --verb wait_ref \
+    --ref-repo acme/api --ref-pattern 'v1.2.0-rc*'
+```
+
+### Several release series in one repository
+
+A monorepo tags `v1.2.3` and, disjointly, `api/v3.4.5`. Both are ordinary
+patterns:
+
+```console
+$ roz action add --title "Wait for the next s3 release" --verb wait_ref \
+    --ref-repo aws/aws-sdk-go-v2 --ref-pattern 'service/s3/v*.*.0' \
+    --ref-after service/s3/v1.106.0
+```
+
+`*` spans `/`, so `api/v*.*.0` means what you would expect; the literal part
+of the pattern is what keeps the series apart, so a wait for `v*.*.0` is never
+satisfied by `api/v3.6.0` and the reverse.
+
+The version is read from the **last path segment only**. `service/s3/v1.107.0`
+is version `1.107.0` and not `3.1.107.0` — the `3` belongs to the component's
+name. It also means the bound can be written either way: `--ref-after
+v1.106.0` and `--ref-after service/s3/v1.106.0` are the same request.
+
+The directory prefix is also what GitHub is asked to filter on, so a
+repository with thousands of tags across a dozen components returns only the
+component in question.
+
+### Why this is worth more than it looks
+
+Where a project tags a release only once the previous one has finished rolling
+out, *"wait for the next `v1.N.0`"* means *"the previous release is fully
+deployed"* without observing any deployment at all. The approximation can only
+fire **late**, never early, which is the harmless direction for a gate.
+
+Gate on the `.0` rather than on "the next tag": a patch release is often cut
+precisely because something is wrong mid-rollout, so it carries the opposite
+implication.
+
+`wait_ref` has no `wait_days`. A release date is not yours to influence and
+there is nobody to chase, so an overdue report would be noise — and since an
+overdue wait now puts an item in the queue, it would be durable noise.
+
+`ref_contains` — "is this pull request in that release" — is
+[#124](https://github.com/scottlaird/roz/issues/124) and deliberately not here.
+The obvious implementation is an ancestry check, and it is wrong: a change
+cherry-picked onto a release branch has a different SHA there, so ancestry
+answers "not present" for anything that reached a release the way patch
+releases are usually built.
+
 ## Upgrading while something is running
 
 `serve`, `syncer`, `watch` and `mcp` read the schema once, at startup. If you

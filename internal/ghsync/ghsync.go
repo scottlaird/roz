@@ -26,6 +26,7 @@ import (
 // stand in for it.
 type Fetcher interface {
 	Fetch(ctx context.Context, keys []string) (github.Result, error)
+	Refs(ctx context.Context, queries []github.RefQuery) (github.RefResult, error)
 }
 
 // Result reports what one sync did.
@@ -50,6 +51,19 @@ type Result struct {
 	// merging. An exception is logged for each, and an action created unless
 	// something open already covered merging it.
 	Ejected []store.Ejected
+
+	// NewRefs lists the branches and tags that appeared since the last poll.
+	// A release being cut is news whether or not it satisfied anything.
+	//
+	// Refs recorded by a repository's *first* poll are not here: see
+	// Backfilled. Everything roz knows about a repository arrives at once
+	// that time, and none of it appeared in any sense a person means.
+	NewRefs []*store.GitRef
+	// Backfilled counts what a first poll recorded, keyed "repo kind".
+	Backfilled map[string]int
+	// RefsPolled is how many repository-and-kind pairs were asked about,
+	// which is zero whenever nothing is waiting for a ref.
+	RefsPolled int
 
 	// RateLimit is what GitHub last said about the budget, so a caller
 	// polling on a loop can pace itself.
@@ -78,6 +92,13 @@ func (r Result) ChangedCount() int { return len(r.Changed) }
 func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) {
 	result := Result{Changed: map[string][]store.Change{}, Missing: map[string]string{}}
 
+	// Refs first, and unconditionally: an action can wait for a release in a
+	// database with no pull requests tracked at all, and the observation has
+	// to be in place before Settle asks whether it arrived.
+	if err := syncRefs(ctx, st, client, &result); err != nil {
+		return Result{}, err
+	}
+
 	tracked, err := st.ListPRs(ctx, store.PRFilter{})
 	if err != nil {
 		return Result{}, err
@@ -85,7 +106,12 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 	if len(tracked) == 0 {
 		// Nothing to poll, but a deadline is not a fact about GitHub: an
 		// action can sit past its allowance in a database with no pull
-		// requests tracked at all.
+		// requests tracked at all. Settle still runs, since a ref may have
+		// arrived above.
+		result.Settled, err = st.Settle(ctx, store.ActorPredicate)
+		if err != nil {
+			return Result{}, err
+		}
 		return result, checkOverdue(ctx, st, &result)
 	}
 
@@ -143,6 +169,169 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 		return Result{}, err
 	}
 	return result, nil
+}
+
+// syncRefs polls the refs something is waiting for, and records them.
+//
+// The poll set comes from the outstanding waits rather than from
+// per-repository configuration. That makes it exactly right by construction:
+// nothing is asked about that nothing is waiting for, so a busy repository
+// costs nothing until it is relevant, and a wait cannot be written against a
+// repository somebody forgot to add to a watch list.
+//
+// The cost is that refs are only observed while something waits for one. roz
+// therefore cannot answer "when was v1.4.0 cut" for a release nobody gated on,
+// which is a question it was never asked.
+func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Result) error {
+	waits, err := st.OpenRefWaits(ctx)
+	if err != nil {
+		return err
+	}
+	queries := refQueries(waits)
+	if len(queries) == 0 {
+		return nil
+	}
+	result.RefsPolled = len(queries)
+
+	fetched, err := client.Refs(ctx, queries)
+	if err != nil {
+		return err
+	}
+	if fetched.RateLimit.Known() {
+		result.RateLimit = fetched.RateLimit
+	}
+
+	// Asked before anything is written, since writing is what makes it false.
+	backfilling, err := firstPollOf(ctx, st, queries)
+	if err != nil {
+		return err
+	}
+
+	for _, observed := range fetched.Refs {
+		ref, isNew, err := applyRef(ctx, st, observed)
+		if err != nil {
+			return err
+		}
+		if !isNew {
+			continue
+		}
+		if key := ref.RepoID + " " + ref.Kind; backfilling[key] {
+			if result.Backfilled == nil {
+				result.Backfilled = map[string]int{}
+			}
+			result.Backfilled[key]++
+			continue
+		}
+		result.NewRefs = append(result.NewRefs, ref)
+	}
+
+	// A repository that will not resolve is reported the way an unreadable
+	// pull request is: an exception against the repository, which is a fact
+	// worth keeping whether or not anybody reads it today.
+	for repo, why := range fetched.Missing {
+		if err := reportUnreadableRepo(ctx, st, repo, why); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// firstPollOf reports which of the repositories about to be read have never
+// been read before, keyed the way the caller counts them.
+func firstPollOf(ctx context.Context, st *store.Store, queries []github.RefQuery) (map[string]bool, error) {
+	first := map[string]bool{}
+	for _, q := range queries {
+		kind := store.RefBranch
+		if q.Prefix == store.RefPath(store.RefTag, "") {
+			kind = store.RefTag
+		}
+		key := q.Repo + " " + kind
+		if _, asked := first[key]; asked {
+			continue
+		}
+		known, err := st.HasRefs(ctx, q.Repo, kind)
+		if err != nil {
+			return nil, err
+		}
+		first[key] = !known
+	}
+	return first, nil
+}
+
+// refQueries turns the outstanding waits into the smallest set of questions
+// that answers all of them.
+//
+// Waits collapse by repository, namespace and literal prefix: three actions
+// waiting for v1.5.0, v1.6.0 and v2.0.0 all ask GitHub the same thing, and
+// asking once is the difference between a query per item and a query per
+// repository.
+func refQueries(waits []store.RefWait) []github.RefQuery {
+	seen := map[github.RefQuery]bool{}
+	var queries []github.RefQuery
+	for _, w := range waits {
+		q := github.RefQuery{
+			Repo:     w.RepoID,
+			Prefix:   store.RefPath(w.Kind, ""),
+			Contains: w.LiteralPrefix(),
+		}
+		if seen[q] {
+			continue
+		}
+		seen[q] = true
+		queries = append(queries, q)
+	}
+	return queries
+}
+
+// applyRef records one observed ref, reporting whether it had not been seen
+// before.
+func applyRef(ctx context.Context, st *store.Store, observed github.Ref) (*store.GitRef, bool, error) {
+	kind := store.RefBranch
+	if observed.Prefix == store.RefPath(store.RefTag, "") {
+		kind = store.RefTag
+	}
+
+	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+
+	ref := store.NewGitRef(observed.Repo, kind, observed.Name, observed.CommitSHA)
+	isNew, err := tx.ObserveRef(ctx, ref)
+	if err != nil {
+		return nil, false, fmt.Errorf("recording %s: %w", ref.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return ref, isNew, nil
+}
+
+// eventUnreadableRepo is raised when a repository something waits on will not
+// resolve.
+const eventUnreadableRepo = "repo_unresolvable"
+
+// reportUnreadableRepo logs an exception against a repository GitHub would not
+// resolve. It changes nothing: a repository renamed or made private is a
+// judgement, not something to act on automatically.
+func reportUnreadableRepo(ctx context.Context, st *store.Store, repo, why string) error {
+	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	subject, err := tx.LoadGitHubRepo(ctx, repo)
+	if err != nil {
+		// Nothing useful to attach it to. A wait can name a repository that
+		// was never tracked, and that is the command's business, not sync's.
+		return nil
+	}
+	if err := tx.Exception(ctx, subject, eventUnreadableRepo, why); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // checkOverdue records the waits that have gone on too long.

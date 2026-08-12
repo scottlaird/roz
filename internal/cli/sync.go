@@ -77,6 +77,12 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	for _, key := range sortedKeys(result.Missing) {
 		fmt.Fprintf(out, "%s could not be read: %s\n", key, result.Missing[key])
 	}
+	for _, key := range sortedKeys(result.Backfilled) {
+		fmt.Fprintf(out, "%s: %d recorded on the first poll\n", key, result.Backfilled[key])
+	}
+	for _, ref := range result.NewRefs {
+		fmt.Fprintf(out, "%s %s %s appeared\n", ref.RepoID, ref.Kind, ref.Name)
+	}
 	reportSettled(out, result.Settled)
 	reportEjected(out, result.Ejected)
 	reportOverdue(out, result.Overdue)
@@ -94,6 +100,9 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		}
 		if result.OverdueCount() > 0 {
 			fmt.Fprintf(out, ", %d overdue", result.OverdueCount())
+		}
+		if result.RefsPolled > 0 {
+			fmt.Fprintf(out, ", %d ref queries", result.RefsPolled)
 		}
 		fmt.Fprintln(out)
 	}
@@ -125,8 +134,14 @@ func reportEjected(out io.Writer, all []store.Ejected) {
 // report rather than two that could describe the same event differently.
 func reportSettled(out io.Writer, all []store.Settled) {
 	for _, settled := range all {
-		fmt.Fprintf(out, "%s closed: %s is %s\n",
-			settled.Action.ID, settled.PR, settled.Action.Verb)
+		// A ref wait has no pull request to name, so the verb carries the
+		// line on its own rather than printing an empty subject.
+		if settled.PR == "" {
+			fmt.Fprintf(out, "%s closed: %s\n", settled.Action.ID, settled.Action.Verb)
+		} else {
+			fmt.Fprintf(out, "%s closed: %s is %s\n",
+				settled.Action.ID, settled.PR, settled.Action.Verb)
+		}
 		for _, freed := range settled.Result.Unblocked {
 			fmt.Fprintf(out, "  %s is now %s\n", freed.ID, freed.State)
 		}

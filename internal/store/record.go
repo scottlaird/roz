@@ -13,6 +13,23 @@ type Record interface {
 	subjectID() string
 }
 
+// keyed is implemented by a record whose primary key column is not called id.
+//
+// An optional interface rather than a method on Record: one table out of ten
+// is keyed on something else, and making every record declare "id" to say so
+// would be nine restatements of the default.
+type keyed interface {
+	keyColumn() string
+}
+
+// keyColumnOf names the column an update matches on.
+func keyColumnOf(r Record) string {
+	if k, ok := r.(keyed); ok {
+		return k.keyColumn()
+	}
+	return "id"
+}
+
 // Change is one column whose value differs between two versions of a record.
 type Change struct {
 	Column string

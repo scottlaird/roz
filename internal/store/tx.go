@@ -197,7 +197,8 @@ func (t *Tx) Update(ctx context.Context, before, after Record) ([]Change, error)
 
 	assignments, args := t.assignments(after, fields, changes)
 	args = append(args, after.subjectID())
-	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", after.table(), strings.Join(assignments, ", "))
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?",
+		after.table(), strings.Join(assignments, ", "), keyColumnOf(after))
 	if _, err := t.tx.ExecContext(ctx, query, args...); err != nil {
 		return nil, fmt.Errorf("updating %s %s: %w", after.table(), after.subjectID(), err)
 	}

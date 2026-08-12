@@ -78,3 +78,114 @@ func TestVerbListHidesRetired(t *testing.T) {
 		t.Errorf("active and --all differ with nothing retired:\n%s\n---\n%s", active, all)
 	}
 }
+
+// TestVerbSetChangesTheAllowance: tuning a number that is meant to be tuned
+// should not mean a migration and a rebuild.
+func TestVerbSetChangesTheAllowance(t *testing.T) {
+	db := initDB(t)
+
+	out, err := runCLI(t, "verb", "set", "wait_review", "--db", db, "--wait-days", "1")
+	if err != nil {
+		t.Fatalf("verb set returned error: %v", err)
+	}
+	if !strings.Contains(out, `wait_days: "3" → "1"`) {
+		t.Errorf("verb set said %q, want the diff from the seeded allowance", out)
+	}
+	if got := verbJSON(t, db, "wait_review")["wait_days"]; got != float64(1) {
+		t.Errorf("wait_days = %#v, want 1", got)
+	}
+}
+
+// TestVerbSetClearsTheAllowance: empty means the verb never times out, which
+// is right for anything describing your own work.
+func TestVerbSetClearsTheAllowance(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "verb", "set", "wait_review", "--db", db, "--wait-days", ""); err != nil {
+		t.Fatalf("verb set returned error: %v", err)
+	}
+	if got := verbJSON(t, db, "wait_review")["wait_days"]; got != nil {
+		t.Errorf("wait_days = %#v, want null", got)
+	}
+}
+
+// TestVerbSetIsLogged: verb rows are authored, so a change to how long waiting
+// is reasonable belongs in the log like any other judgement.
+func TestVerbSetIsLogged(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "verb", "set", "wait_review", "--db", db,
+		"--wait-days", "1", "--actor", "agent:claude"); err != nil {
+		t.Fatalf("verb set returned error: %v", err)
+	}
+
+	log, err := runCLI(t, "watch", "--once", "--db", db, "-n", "1")
+	if err != nil {
+		t.Fatalf("watch returned error: %v", err)
+	}
+	for _, want := range []string{"agent:claude", "wait_review", "wait_days"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log entry is missing %q:\n%s", want, log)
+		}
+	}
+}
+
+func TestVerbSetRejections(t *testing.T) {
+	db := initDB(t)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"not a number", []string{"wait_review", "--wait-days", "soon"}, "whole number of days"},
+		{"negative", []string{"wait_review", "--wait-days", "-2"}, "whole number of days"},
+		{"unknown rank class", []string{"wait_review", "--rank-class", "urgent"}, "not recognised"},
+		{"unknown verb", []string{"nonsuch", "--wait-days", "1"}, "nonsuch"},
+		{"nothing to set", []string{"wait_review"}, "nothing to set"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runCLI(t, append([]string{"verb", "set", "--db", db}, tc.args...)...)
+			if err == nil {
+				t.Fatalf("verb set %v returned nil, want an error", tc.args)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerbSetLeavesTheDefinitionAlone. closes and the predicate are checked
+// against the build when the database opens; editing them from here would turn
+// that startup check into a failure at closing time.
+func TestVerbSetLeavesTheDefinitionAlone(t *testing.T) {
+	db := initDB(t)
+
+	for _, flag := range []string{"--closes", "--predicate", "--predicate-key"} {
+		if _, err := runCLI(t, "verb", "set", "wait_review", "--db", db, flag, "whatever"); err == nil {
+			t.Errorf("verb set accepted %s, want no such flag", flag)
+		}
+	}
+}
+
+// verbJSON reads one verb out of `verb list -o json`.
+func verbJSON(t *testing.T, db, verb string) map[string]any {
+	t.Helper()
+
+	out, err := runCLI(t, "verb", "list", "--db", db, "-o", "json")
+	if err != nil {
+		t.Fatalf("verb list returned error: %v", err)
+	}
+	var verbs []map[string]any
+	if err := json.Unmarshal([]byte(out), &verbs); err != nil {
+		t.Fatalf("verb list is not JSON: %v", err)
+	}
+	for _, v := range verbs {
+		if v["verb"] == verb {
+			return v
+		}
+	}
+	t.Fatalf("%s is not in the vocabulary", verb)
+	return nil
+}

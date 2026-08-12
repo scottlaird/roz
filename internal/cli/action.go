@@ -158,7 +158,13 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), a.ID)
-	return nil
+	if prID == "" {
+		return nil
+	}
+	// An action created against a pull request that already satisfies its
+	// predicate is the same staleness `link-pr` had: born ready, and closing
+	// only at the next poll.
+	return settleActionNow(ctx, cmd, st, a.ID)
 }
 
 // checkActionReferences confirms the verb and project exist, in a
@@ -533,7 +539,24 @@ func updateAction(cmd *cobra.Command, id string, change func(context.Context, *s
 	for _, change := range changes {
 		fmt.Fprintf(out, "%s %s\n", id, change)
 	}
+
+	// Changing the verb changes which question the action closes on, and the
+	// answer may already be yes. #111 stopped `add` and `set` creating a
+	// predicate action with no subject, so this is now the way an action
+	// arrives at a satisfied predicate without a poll in between.
+	if verbChanged(changes) {
+		return settleActionNow(ctx, cmd, st, id)
+	}
 	return nil
+}
+
+func verbChanged(changes []store.Change) bool {
+	for _, c := range changes {
+		if c.Column == flagVerb {
+			return true
+		}
+	}
+	return false
 }
 
 func newActionShowCmd() *cobra.Command {
@@ -852,7 +875,7 @@ func runActionLinkPR(cmd *cobra.Command, _ []string) error {
 			flagRole, role, store.RoleSubject, store.RoleContext)
 	}
 
-	return withActionTx(cmd, func(ctx context.Context, tx *store.Tx) error {
+	return withActionTxThen(cmd, func(ctx context.Context, tx *store.Tx) error {
 		a, err := loadAction(ctx, tx, id)
 		if err != nil {
 			return err
@@ -865,12 +888,44 @@ func runActionLinkPR(cmd *cobra.Command, _ []string) error {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", a.ID, role, prID)
 		return nil
+	}, func(ctx context.Context, st *store.Store) error {
+		// Supplying the subject is the moment the predicate becomes
+		// answerable, so ask now rather than leaving the queue stale until
+		// the next poll. A context link is never asked, so nothing to settle.
+		if role != store.RoleSubject {
+			return nil
+		}
+		return settleActionNow(ctx, cmd, st, id)
 	})
+}
+
+// settleActionNow closes one action if the fact just recorded satisfied it,
+// and reports it the way sync does.
+func settleActionNow(ctx context.Context, cmd *cobra.Command, st *store.Store, id string) error {
+	settled, err := st.SettleAction(ctx, store.ActorPredicate, id)
+	if err != nil {
+		return err
+	}
+	reportSettled(cmd.OutOrStdout(), settled)
+	return nil
 }
 
 // withActionTx runs body in one unit of work and commits it, which is the
 // shape every command that writes something other than a single record needs.
 func withActionTx(cmd *cobra.Command, body func(context.Context, *store.Tx) error) error {
+	return withActionTxThen(cmd, body, nil)
+}
+
+// withActionTxThen adds a step that runs after the commit, for work that needs
+// transactions of its own.
+//
+// Settling is the case: it closes under the predicate actor rather than the
+// caller's, and a cascade that fails should not undo the fact that was
+// recorded. Sync and `pr announce` settle after their write for the same
+// reason.
+func withActionTxThen(cmd *cobra.Command,
+	body func(context.Context, *store.Tx) error,
+	after func(context.Context, *store.Store) error) error {
 	ctx := cmd.Context()
 
 	actor, err := actorFrom(cmd)
@@ -892,7 +947,13 @@ func withActionTx(cmd *cobra.Command, body func(context.Context, *store.Tx) erro
 	if err := body(ctx, tx); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if after == nil {
+		return nil
+	}
+	return after(ctx, st)
 }
 
 // loadAction reads one action, reporting a missing one by name.

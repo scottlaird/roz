@@ -753,6 +753,39 @@ by an edge, because a snooze is a decision about time. There is no project
 equivalent of `hide-behind`, since folding something out of a queue is a
 judgement about a queue and the project table is not one.
 
+## When a pull request falls out of the merge queue
+
+An ejected pull request is the quietest way for finished work to stall. It
+looks exactly like one that was never queued — approved, `CLEAN`, every check
+green — and nothing is waiting on anyone.
+
+```console
+$ roz sync github
+owner/repo#1 in_merge_queue: "1" → "0"
+owner/repo#1 left the merge queue without merging
+  NA9 added to the queue
+polled 1, 1 changed, 1 ejected
+```
+
+The signal is `in_merge_queue` going true → false **while the pull request is
+still open**. The common version of that transition is a merge, so the state
+has to be checked: keying on the transition alone would raise an exception on
+every pull request that lands.
+
+The action is a `merge`, which means it closes itself when the pull request
+eventually does. Re-queuing is not always the answer — a base branch moving, a
+required check re-running, or another pull request failing a batch can all
+eject this one — but merging is what the item is waiting for either way, and an
+item that cannot close on its own is one somebody has to tidy up.
+
+Nothing is added when an open action already covers merging that pull request.
+A queue that reshuffles can eject and re-add within a minute, and a tracked
+pull request usually has a `merge` step already; the ejection is news, but the
+thing to do about it is on the list.
+
+The exception is logged as `sync:github` and the action written as `predicate`
+— two claims, and only the first of them is an observation.
+
 ## When a wait goes on too long
 
 The queue leaves out what you are only waiting on — four of ten items were

@@ -156,5 +156,10 @@ func reportOverdue(out io.Writer, overdue []store.Overdue) {
 	for _, o := range overdue {
 		fmt.Fprintf(out, "%s has been waiting %d days: %s\n",
 			o.Action.ID, o.Waiting, o.Action.Title)
+		// Worth saying: the point of raising one is that nobody has to
+		// remember the line above.
+		if o.Raised != nil {
+			fmt.Fprintf(out, "  %s added to the queue\n", o.Raised.ID)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/scottlaird/roz/internal/github"
@@ -751,5 +752,46 @@ func TestNeverQueuedIsNotAnEjection(t *testing.T) {
 	// And again, in case the first pass was doing the work.
 	if result := syncWith(t, st, notQueued); result.EjectedCount() != 0 {
 		t.Errorf("a second quiet poll reported an ejection: %v", result.Ejected)
+	}
+}
+
+// TestAnUnreadablePullRequestReachesTheQueue: a tracked pull request that has
+// gone invisible needs a judgement — whether to stop tracking it — and until
+// now that judgement lived only in a log line nobody reads.
+func TestAnUnreadablePullRequestReachesTheQueue(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{
+		Missing: map[string]string{key: "is not a pull request GitHub will show us"},
+	}}
+
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	actions, err := st.ListActions(ctx, store.ActionFilter{Open: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("%d actions after an unreadable pull request, want 1", len(actions))
+	}
+	if !strings.Contains(actions[0].Title, key) {
+		t.Errorf("title = %q, want it to name the pull request", actions[0].Title)
+	}
+
+	// This exception fires on every poll while the condition lasts, so the
+	// queue must not grow an item each time.
+	for range 3 {
+		if _, err := Sync(ctx, st, client); err != nil {
+			t.Fatalf("Sync() returned error: %v", err)
+		}
+	}
+	actions, err = st.ListActions(ctx, store.ActionFilter{Open: true})
+	if err != nil {
+		t.Fatalf("ListActions() returned error: %v", err)
+	}
+	if len(actions) != 1 {
+		t.Errorf("%d actions after four polls, want the same one", len(actions))
 	}
 }

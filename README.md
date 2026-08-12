@@ -1037,6 +1037,29 @@ $ roz watch --once -n 1
 It is an `exception`, which is what a monitor already filters on, rather than
 a second alerting path.
 
+An overdue wait also puts something in the queue:
+
+```console
+$ roz sync github
+NA1 has been waiting 11 days: wait for review owner/repo#1
+  NA3 added to the queue
+polled 1, 0 changed, 1 overdue
+```
+
+That is the half that reaches a person. An exception is durable and queryable,
+and neither of those is something anybody does on a Monday morning; an action
+is simply there. The verb is `decide`, and human-closed on purpose: "I looked
+at this and it is fine" is a legitimate outcome, so closing must not wait for
+the condition to go away.
+
+One action per condition — the pair of an exception kind and what it is about —
+counted whether the action is open or closed. Closed has to count: a pull
+request that has gone invisible is reported on every poll, so raising again
+once the last was closed would make the item impossible to clear. A queue entry
+with no off switch is worse than none, because it teaches you to ignore the
+queue. The cost is that a condition recurring long after it was dealt with
+produces nothing new, and the log still has every firing.
+
 **Reported, never changed.** Nothing is closed, snoozed or reprioritised —
 what to do about a stuck wait is a judgement, and this only says one is
 wanted. **It is not a snooze:** a snooze hides something until a date, this

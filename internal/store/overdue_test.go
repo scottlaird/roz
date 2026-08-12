@@ -10,11 +10,21 @@ import (
 
 // waitingAction is a ready action on a verb that has an allowance, created at
 // a chosen time so the clock can be wound forward without sleeping.
+// waitingAction builds an action that has genuinely been waiting since the
+// given moment: created then, and observed waiting then.
+//
+// The clock is wound back for the creation rather than only for the
+// observation. An action created now and waiting since last week is not a
+// state to test against — it is the bug in #131, where a merge step inherited
+// its pull request's review clock and was overdue before it existed.
 func waitingAction(t *testing.T, st *Store, verb, since string) *Action {
 	t.Helper()
 	ctx := context.Background()
 
+	restore := st.now
+	st.now = func() time.Time { return at(t, since) }
 	a := addAction(t, st, "wait for somebody", verb)
+	st.now = restore
 	tx, err := st.Begin(ctx, ActorSyncGitHub)
 	if err != nil {
 		t.Fatalf("Begin() returned error: %v", err)
@@ -429,5 +439,149 @@ func TestDifferentConditionsRaiseSeparately(t *testing.T) {
 	}
 	if other == nil {
 		t.Error("a different exception about the same subject raised nothing")
+	}
+}
+
+// TestAHiddenStepIsNotOverdue is the first half of #131. A step folded out of
+// the queue has, by construction, nothing to do about it other than clearing
+// the one in front, so it cannot be late in a sense anyone can act on.
+func TestAHiddenStepIsNotOverdue(t *testing.T) {
+	st := newStore(t)
+	front := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+	behind := waitingAction(t, st, "merge", "2026-08-01T00:00:00.000Z")
+	hideBehind(t, st, behind.ID, front.ID)
+
+	// merge allows one day, so without the exclusion this fires immediately.
+	for _, o := range overdueNow(t, st, "2026-08-05T00:00:00.000Z") {
+		if o.Action.ID == behind.ID {
+			t.Fatalf("%s was reported overdue while hidden behind %s", behind.ID, front.ID)
+		}
+	}
+}
+
+// TestUnHidingStartsTheClock is the caveat on the fix. Excluding hidden steps
+// is not enough on its own: if the clock still ran while it was hidden, the
+// same wrong report would simply arrive the moment the step in front closed.
+func TestUnHidingStartsTheClock(t *testing.T) {
+	st := newStore(t)
+	front := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+	behind := waitingAction(t, st, "merge", "2026-08-01T00:00:00.000Z")
+	hideBehind(t, st, behind.ID, front.ID)
+
+	// Four days later the one in front closes, which un-hides this.
+	st.now = func() time.Time { return at(t, "2026-08-05T00:00:00.000Z") }
+	if _, err := st.CloseAction(context.Background(), ActorHuman,
+		CloseRequest{ID: front.ID, Reason: ClosedCompleted}); err != nil {
+		t.Fatalf("CloseAction() returned error: %v", err)
+	}
+
+	// Its one-day allowance starts now, not when it was created.
+	for _, o := range overdueNow(t, st, "2026-08-05T12:00:00.000Z") {
+		if o.Action.ID == behind.ID {
+			t.Fatalf("%s was overdue half a day after surfacing", behind.ID)
+		}
+	}
+	found := overdueNow(t, st, "2026-08-06T12:00:00.000Z")
+	if len(found) != 1 || found[0].Action.ID != behind.ID {
+		t.Fatalf("overdue = %v, want [%s] a day after it surfaced", found, behind.ID)
+	}
+}
+
+// TestAnInheritedWaitDoesNotOutliveItsAction is the second half of #131, and
+// the one the hidden_behind exclusion cannot reach: sync writes waiting_since
+// on every action sharing a subject, so an action created against a pull
+// request already in review inherits a clock older than itself.
+func TestAnInheritedWaitDoesNotOutliveItsAction(t *testing.T) {
+	st := newStore(t)
+
+	// Created today, against a pull request waiting since the 1st.
+	st.now = func() time.Time { return at(t, "2026-08-10T00:00:00.000Z") }
+	a := addAction(t, st, "merge it", "merge")
+	observeWaitingSince(t, st, a, "2026-08-01T00:00:00.000Z")
+
+	if found := overdueNow(t, st, "2026-08-10T01:00:00.000Z"); len(found) != 0 {
+		t.Fatalf("overdue = %v an hour after being created, want none", found)
+	}
+	// And it does become overdue on its own clock.
+	found := overdueNow(t, st, "2026-08-11T12:00:00.000Z")
+	if len(found) != 1 || found[0].Action.ID != a.ID {
+		t.Fatalf("overdue = %v, want [%s] a day after it was created", found, a.ID)
+	}
+}
+
+// TestWaitReviewStillUsesThePullRequestClock is the regression guard the issue
+// asks for. The pull request's clock is right for wait_review and is the
+// common case: a review wait must not restart from when the chain happened to
+// be built.
+func TestWaitReviewStillUsesThePullRequestClock(t *testing.T) {
+	st := newStore(t)
+
+	// Built on the 1st, review requested on the 4th.
+	st.now = func() time.Time { return at(t, "2026-08-01T00:00:00.000Z") }
+	a := addAction(t, st, "wait for review", "wait_review")
+	observeWaitingSince(t, st, a, "2026-08-04T00:00:00.000Z")
+
+	// Three days' allowance, measured from the request and not from creation:
+	// creation plus three would have fired on the 4th.
+	if found := overdueNow(t, st, "2026-08-06T00:00:00.000Z"); len(found) != 0 {
+		t.Fatalf("overdue = %v, want none: the review clock starts on the 4th", found)
+	}
+	found := overdueNow(t, st, "2026-08-08T00:00:00.000Z")
+	if len(found) != 1 || found[0].Action.ID != a.ID {
+		t.Fatalf("overdue = %v, want [%s] three days after the request", found, a.ID)
+	}
+	if found[0].Waiting != 4 {
+		t.Errorf("waiting = %d days, want 4 — measured from the request", found[0].Waiting)
+	}
+}
+
+// hideBehind folds one action out of the queue behind another.
+func hideBehind(t *testing.T, st *Store, id, behind string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	current, err := tx.LoadAction(ctx, id)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	after := current.Clone()
+	after.HiddenBehind = sql.NullString{String: behind, Valid: true}
+	if _, err := tx.Update(ctx, current, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+// observeWaitingSince writes the column sync writes, as sync writes it: on an
+// action that already exists, from an event on its subject pull request.
+func observeWaitingSince(t *testing.T, st *Store, a *Action, since string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	current, err := tx.LoadAction(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	after := current.Clone()
+	after.WaitingSince = sql.NullString{String: since, Valid: true}
+	if _, err := tx.Update(ctx, current, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
 	}
 }

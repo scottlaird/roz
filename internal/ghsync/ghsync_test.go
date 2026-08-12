@@ -585,18 +585,20 @@ func TestOverdueIsCheckedWithNothingTracked(t *testing.T) {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 
-	// waiting_since is observed, so a sync actor writes it — which is what
-	// really does, from the pull request's first review request.
-	observing, err := st.Begin(ctx, store.ActorSyncGitHub)
+	// Past its deadline by the authored route rather than by backdating a
+	// clock. An action created now cannot have been waiting since 2020 — that
+	// is the state #131 was about — and this test is only about whether Sync
+	// runs the check at all when it has no pull requests to poll.
+	overdue, err := st.Begin(ctx, store.ActorHuman)
 	if err != nil {
 		t.Fatalf("Begin() returned error: %v", err)
 	}
 	long := a.Clone()
-	long.WaitingSince = sql.NullString{String: "2020-01-01T00:00:00.000Z", Valid: true}
-	if _, err := observing.Update(ctx, a, long); err != nil {
+	long.OkayToWaitUntil = sql.NullString{String: "2020-01-01T00:00:00.000Z", Valid: true}
+	if _, err := overdue.Update(ctx, a, long); err != nil {
 		t.Fatalf("Update() returned error: %v", err)
 	}
-	if err := observing.Commit(); err != nil {
+	if err := overdue.Commit(); err != nil {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 

@@ -382,6 +382,11 @@ func (t *Tx) unhide(ctx context.Context, id string) ([]*Action, error) {
 	for _, h := range hidden {
 		after := h.Clone()
 		after.HiddenBehind = sql.NullString{}
+		// The allowance starts now. It was not actionable while it was hidden,
+		// and a step that surfaces already past its deadline is the thing the
+		// hidden_behind exclusion exists to prevent — it would simply move the
+		// same wrong report to the moment the one in front closed.
+		after.ReadySince = sql.NullString{String: t.at, Valid: true}
 		if _, err := t.Update(ctx, h, after); err != nil {
 			return nil, err
 		}

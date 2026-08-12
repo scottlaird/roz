@@ -27,13 +27,41 @@ type prose struct {
 	jiraBase string
 }
 
-func newProse(jiraBase string, jiraPrefixes []string) *prose {
-	links := markdown.NewLinker(jiraBase, jiraPrefixes)
+func newProse(jiraBase string, jiraPrefixes []string, titles markdown.TitleFunc) *prose {
+	links := markdown.NewLinker(jiraBase, jiraPrefixes, titles)
 	return &prose{
 		links:    links,
 		markdown: markdown.NewRenderer(links),
 		jiraBase: strings.TrimSuffix(jiraBase, "/"),
 	}
+}
+
+// titlesFrom builds the tooltip lookup: what roz knows about each thing a link
+// can point at.
+//
+// Read at render, so a renamed pull request shows its new title with nothing
+// re-synced. That is the argument for looking them up here rather than baking
+// them in when the link is written.
+//
+// Anything not tracked, and anything tracked but never observed, is absent
+// rather than empty. A link with no tooltip says nothing; a link with a blank
+// one says roz looked and found nothing, which is a different and less useful
+// claim to make on a hover.
+func titlesFrom(prs []*store.PR, issues []*store.TrackerIssue) markdown.TitleFunc {
+	known := make(map[markdown.Target]string, len(prs)+len(issues))
+	for _, pr := range prs {
+		if pr.Title != "" {
+			known[markdown.Target{Kind: markdown.KindPR, Key: pr.ID}] = pr.Title
+		}
+	}
+	for _, issue := range issues {
+		// Only Jira answers for a Jira URL. A GitHub issue tracked under the
+		// same key would be a different thing at a different address.
+		if issue.Tracker == store.TrackerJira && issue.Summary != "" {
+			known[markdown.Target{Kind: markdown.KindJira, Key: issue.Key}] = issue.Summary
+		}
+	}
+	return func(target markdown.Target) string { return known[target] }
 }
 
 // The view model the status page renders.
@@ -113,11 +141,23 @@ type projectView struct {
 // Every lookup here is batched. A per-row query would be invisible at this
 // size and wrong at any other, and the shape is the thing that gets copied.
 func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings) (*pageContent, error) {
+	// Loaded before the prose renderer, which needs them to caption links.
+	// Everything tracked, not only what this page happens to draw: prose can
+	// reference a pull request no action on the page is about.
+	allPRs, err := st.ListPRs(ctx, store.PRFilter{})
+	if err != nil {
+		return nil, err
+	}
+	allIssues, err := st.ListTrackerIssues(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	today := now.UTC().Format(store.DateFormat)
 	// A calendar window is a span of days and asks about the date; a snooze is
 	// compared against the instant the queries use. See expired.
 	stamp := now.UTC().Format(store.TimeFormat)
-	text := newProse(cfg.jiraBase, cfg.jiraPrefixes)
+	text := newProse(cfg.jiraBase, cfg.jiraPrefixes, titlesFrom(allPRs, allIssues))
 
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
 		Upcoming: true,

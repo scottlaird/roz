@@ -556,7 +556,7 @@ different database.
 // ← ROZ1
 ```
 
-## Checks
+## Continuous integration
 
 CI runs on every pull request and on `main`: `gofmt`, `go vet`, and the tests
 under the race detector. Only under the race detector — it runs the same tests,
@@ -607,7 +607,7 @@ Changing it affects the chain the next close instantiates. Actions already
 created are left alone — they exist, and something may already be waiting on
 them.
 
-## Checks
+## Pull request checks
 
 GitHub reports a conclusion per check context. Those are rows in `pr_check`,
 one per check, rather than a single JSON column — and the difference is what

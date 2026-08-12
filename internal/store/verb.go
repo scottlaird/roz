@@ -23,6 +23,21 @@ const (
 	RankWait    = "wait"
 )
 
+// ValidateRankClass refuses a class the schema would refuse, naming the
+// alternatives rather than quoting a CHECK constraint.
+//
+// The set is closed for the reason the sketch gives: a class drives both the
+// sort and the render, so one that was never styled is not expressible.
+func ValidateRankClass(class string) error {
+	for _, known := range RankClasses {
+		if class == known {
+			return nil
+		}
+	}
+	return fmt.Errorf("rank class %q is not recognised: use %s",
+		class, strings.Join(RankClasses, ", "))
+}
+
 // ActionVerb is one entry in the vocabulary.
 //
 // The table is data so the vocabulary can grow without a deploy. The limit is
@@ -45,12 +60,26 @@ type ActionVerb struct {
 	// WaitDays is how long waiting is reasonable before it is worth somebody
 	// noticing. NULL means never: a verb describing your own work cannot be
 	// overdue, only undone.
+	//
+	// Calendar days, not working days. At 1, a wait that starts on Friday is
+	// overdue on Saturday — which is tolerable only because an overdue wait
+	// becomes something that sits in the queue until Monday rather than
+	// something that demands attention when it fires.
 	WaitDays sql.NullInt64 `db:"wait_days"`
 }
 
 func (v *ActionVerb) table() string       { return "actionverb" }
 func (v *ActionVerb) subjectType() string { return "actionverb" }
 func (v *ActionVerb) subjectID() string   { return v.Verb }
+
+// keyColumn: the vocabulary is keyed on the verb itself, not on a surrogate.
+// Every other record uses id, which is why this is an optional interface.
+func (v *ActionVerb) keyColumn() string { return "verb" }
+
+func (v *ActionVerb) Clone() *ActionVerb {
+	clone := *v
+	return &clone
+}
 
 // Predicate returns the function this verb closes on, if it has one.
 func (v *ActionVerb) Predicate() (Predicate, bool) {

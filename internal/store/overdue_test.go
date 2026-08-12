@@ -256,3 +256,86 @@ func TestWaitingSinceFallsBackToCreation(t *testing.T) {
 		t.Errorf("overdue = %v, want the action counted from its creation", found)
 	}
 }
+
+// TestLoweredWaitDaysTakesEffect is the point of making the allowance
+// editable: the number is read when the deadline is checked, so changing it
+// changes what is overdue on the next pass rather than at the next release.
+func TestLoweredWaitDaysTakesEffect(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	// Three days is the seeded allowance, so two days in is not yet overdue.
+	if found := overdueNow(t, st, "2026-08-03T00:00:00.000Z"); len(found) != 0 {
+		t.Fatalf("overdue after two days on the seeded allowance: %v", found)
+	}
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	before, err := tx.LoadVerb(ctx, "wait_review")
+	if err != nil {
+		t.Fatalf("LoadVerb() returned error: %v", err)
+	}
+	after := before.Clone()
+	after.WaitDays = sql.NullInt64{Int64: 1, Valid: true}
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	found := overdueNow(t, st, "2026-08-03T00:00:00.000Z")
+	if len(found) != 1 || found[0].Action.ID != a.ID {
+		t.Errorf("overdue = %v, want [%s] once the allowance is one day", found, a.ID)
+	}
+}
+
+// TestUpdateKeysOnTheVerb: every other record is keyed on id, and actionverb
+// is not. An update that assumed id would fail against a column that is not
+// there — or, worse on a table that had one, match the wrong row.
+func TestUpdateKeysOnTheVerb(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	before, err := tx.LoadVerb(ctx, "merge")
+	if err != nil {
+		t.Fatalf("LoadVerb() returned error: %v", err)
+	}
+	after := before.Clone()
+	after.WaitDays = sql.NullInt64{Int64: 7, Valid: true}
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	read, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer read.Rollback()
+
+	got, err := read.LoadVerb(ctx, "merge")
+	if err != nil {
+		t.Fatalf("LoadVerb() returned error: %v", err)
+	}
+	if !got.WaitDays.Valid || got.WaitDays.Int64 != 7 {
+		t.Errorf("merge wait_days = %v, want 7", got.WaitDays)
+	}
+	// And only that row.
+	other, err := read.LoadVerb(ctx, "wait_review")
+	if err != nil {
+		t.Fatalf("LoadVerb() returned error: %v", err)
+	}
+	if other.WaitDays.Int64 == 7 {
+		t.Error("updating merge also changed wait_review")
+	}
+}

@@ -96,10 +96,11 @@ CREATE TABLE actionverb (
   -- whether closing an action with this verb opens the repository's pipeline.
   -- Last of the columns because ADD COLUMN put it there.
   starts_pipeline INTEGER NOT NULL DEFAULT 0 CHECK (starts_pipeline IN (0,1)),
-  -- how many days of waiting is reasonable for this verb before it is worth
-  -- somebody's attention. NULL means it never times out, which is right for
-  -- the verbs describing your own work: nothing is waiting, so nothing can be
-  -- overdue. Last because ADD COLUMN put it there. See 0013.
+  -- how many CALENDAR days of waiting is reasonable for this verb before it is
+  -- worth somebody's attention -- not working days, so at 1 a wait starting on
+  -- a Friday is overdue on Saturday. NULL means it never times out, which is
+  -- right for the verbs describing your own work: nothing is waiting, so
+  -- nothing can be overdue. Tunable with `roz verb set`. See 0013.
   wait_days     INTEGER,
   -- a predicate_key exists exactly when the verb closes on one
   CHECK ((closes = 'predicate') = (predicate_key IS NOT NULL))

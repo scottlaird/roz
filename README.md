@@ -67,6 +67,7 @@ directory.
 | `roz mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
 | `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
 | **vocabulary** | |
+| `roz verb set` | Change a verb's `wait_days` or `rank_class`. Settings, not definitions. |
 | `roz verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
 | `roz pipeline list` | The pipelines and their steps. |
 | **the log** | |
@@ -760,6 +761,26 @@ roz action set NA1 --okay-to-wait-until 2026-09-01
 
 That is the exception for the one that is different, in either direction. An
 empty value clears it and the verb's allowance applies again.
+
+The allowance itself is tunable, because it is a judgement about one person's
+queue rather than a change to what the verb means:
+
+```console
+$ roz verb set wait_review --wait-days 1
+wait_review wait_days: "3" → "1"
+```
+
+It is read when the deadline is checked, so the next pass uses the new number.
+Verb rows are authored, so the change is in the log like any other. **Calendar
+days, not working days** — at 1, a wait that starts on Friday is overdue on
+Saturday, which is tolerable only because an overdue wait becomes something
+sitting in the queue on Monday rather than something demanding attention when
+it fires.
+
+`rank_class` is tunable the same way. What a verb *means* is not: `closes` and
+the predicate it names are checked against the build when the database opens,
+so a verb naming a predicate this binary lacks is refused at startup. Editing
+those from the CLI would turn that check into a failure at closing time.
 
 The clock is `waiting_since` — when reviewers could first have seen it, which
 sync fills from the pull request's first review request — falling back to when

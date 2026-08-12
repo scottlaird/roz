@@ -272,7 +272,7 @@ func refQueries(waits []store.RefWait) []github.RefQuery {
 		q := github.RefQuery{
 			Repo:     w.RepoID,
 			Prefix:   store.RefPath(w.Kind, ""),
-			Contains: w.LiteralPrefix(),
+			Contains: w.PollPrefix(),
 		}
 		if seen[q] {
 			continue

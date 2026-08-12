@@ -858,9 +858,9 @@ func TestSyncAsksOnlyAboutRefsSomethingWaitsFor(t *testing.T) {
 // once is the difference between a query per item and a query per repository.
 func TestSyncCollapsesWaitsIntoOneQuery(t *testing.T) {
 	st, key := newStore(t)
-	for _, after := range []string{"v1.4.7", "v1.5.0", "v1.6.0"} {
+	for _, matcher := range []string{">=1.5", ">=1.6", ">=2.0"} {
 		addRefWait(t, st, store.RefWait{
-			RepoID: "owner/repo", Kind: store.RefTag, Pattern: "v*.*.0", After: after,
+			RepoID: "owner/repo", Kind: store.RefTag, Matcher: matcher,
 		})
 	}
 	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{observed(key)}}}
@@ -870,10 +870,10 @@ func TestSyncCollapsesWaitsIntoOneQuery(t *testing.T) {
 		t.Fatalf("Sync() returned error: %v", err)
 	}
 	if len(client.askedRefs) != 1 {
-		t.Fatalf("Sync() asked %d ref queries for three waits on one repository, want 1: %v",
+		t.Fatalf("Sync() asked %d ref queries for three waits on one series, want 1: %v",
 			len(client.askedRefs), client.askedRefs)
 	}
-	want := github.RefQuery{Repo: "owner/repo", Prefix: "refs/tags/", Contains: "v"}
+	want := github.RefQuery{Repo: "owner/repo", Prefix: "refs/tags/", Contains: ""}
 	if client.askedRefs[0] != want {
 		t.Errorf("asked %+v, want %+v", client.askedRefs[0], want)
 	}
@@ -888,7 +888,7 @@ func TestSyncClosesTheWaitWhenTheReleaseAppears(t *testing.T) {
 	ctx := context.Background()
 	st, key := newStore(t)
 	a := addRefWait(t, st, store.RefWait{
-		RepoID: "owner/repo", Kind: store.RefTag, Pattern: "v*.*.0", After: "v1.4.7",
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.5",
 	})
 
 	client := &fakeFetcher{
@@ -952,7 +952,7 @@ func TestSyncPollsRefsWithNoPullRequestsTracked(t *testing.T) {
 	st := newBareStore(t)
 
 	a := addRefWait(t, st, store.RefWait{
-		RepoID: "owner/repo", Kind: store.RefBranch, Pattern: "release-1.5",
+		RepoID: "owner/repo", Kind: store.RefBranch, Matcher: "release-1.5",
 	})
 	client := &fakeFetcher{refs: github.RefResult{Refs: []github.Ref{
 		{Repo: "owner/repo", Prefix: "refs/heads/", Name: "release-1.5", CommitSHA: "sha"},

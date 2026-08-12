@@ -4,10 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
 	"strings"
 
-	"golang.org/x/mod/semver"
+	"github.com/Masterminds/semver/v3"
 )
 
 // Kinds of ref roz observes.
@@ -96,18 +95,75 @@ func NewGitRef(repo, kind, name, sha string) *GitRef {
 
 // RefWait is what an action is waiting for, when it is waiting for a ref.
 //
-// Pattern is a glob over the short name and After is an exclusive lower bound
-// on the version in it. Both matter: the pattern alone matches the release
-// that already shipped, and a bound alone would be satisfied by a patch tag —
-// which does not carry the "the previous release finished rolling out"
-// implication that makes any of this a useful proxy.
+// Written as one expression and stored as its two halves. `api/>=3.6` is the
+// api series at 3.6 or later; `>=1.2` is the top-level one.
 type RefWait struct {
 	ActionID string
 	RepoID   string
 	Kind     string
-	Pattern  string
-	// After is empty when any name matching the pattern will do.
-	After string
+	// PathPrefix is everything before the final slash — "api", "service/s3",
+	// or "" for a top-level ref. Compared for equality, never across.
+	PathPrefix string
+	// Matcher is everything after it: a semver constraint, or a literal name
+	// or glob where no version scheme applies.
+	Matcher string
+}
+
+// ParseRefSpec splits `[prefix/]matcher` and checks that the result means
+// something.
+//
+// The final slash divides them, which is unambiguous because no semver
+// constraint contains one: `api/>=3.6` is the api series, `service/s3/>=1.107`
+// a nested one, `>=1.2` the top level. A colon was the alternative and is more
+// explicit, at the cost of not looking like the tag it selects.
+func ParseRefSpec(spec string) (prefix, matcher string, err error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "", "", fmt.Errorf("a ref wait needs something to wait for, e.g. '>=1.2' or 'api/>=3.6'")
+	}
+	if slash := strings.LastIndex(spec, "/"); slash >= 0 {
+		prefix, matcher = spec[:slash], spec[slash+1:]
+	} else {
+		matcher = spec
+	}
+	if matcher == "" {
+		return "", "", fmt.Errorf("%q has a path but nothing to match: add a constraint, e.g. %q",
+			spec, prefix+"/>=1.0")
+	}
+	return prefix, matcher, nil
+}
+
+// Spec renders the wait back to the expression it was written as.
+func (w RefWait) Spec() string {
+	if w.PathPrefix == "" {
+		return w.Matcher
+	}
+	return w.PathPrefix + "/" + w.Matcher
+}
+
+// Constraint returns the semver constraint the matcher expresses, and whether
+// it is one at all.
+//
+// A matcher that does not parse is a literal name or glob. The two forms
+// cannot be confused: `release-1.5` is not a constraint, while `>=1.2`, `^1.2`,
+// `1.2.x` and `*` all are.
+func (w RefWait) Constraint() (*semver.Constraints, bool) {
+	c, err := semver.NewConstraint(w.Matcher)
+	if err != nil {
+		return nil, false
+	}
+	return c, true
+}
+
+// Validate refuses a wait that could never match anything.
+func (w RefWait) Validate() error {
+	if err := ValidateRefKind(w.Kind); err != nil {
+		return err
+	}
+	if w.Matcher == "" {
+		return fmt.Errorf("a ref wait needs something to wait for, e.g. '>=1.2'")
+	}
+	return nil
 }
 
 // Matches reports whether a ref is the one this wait was waiting for.
@@ -118,63 +174,67 @@ func (w RefWait) Matches(ref *GitRef) bool {
 	if ref.RepoID != w.RepoID || ref.Kind != w.Kind {
 		return false
 	}
-	if !globMatch(w.Pattern, ref.Name) {
-		return false
-	}
-	// A pre-release is not the release, and a wait that did not ask for one
-	// does not want it. The glob cannot express this: `v*.*.0` happens to
-	// exclude v1.2.0-rc1 because of where the literal falls, but `v*.*.*` —
-	// the natural way to write "any release" — matches it.
-	//
-	// Ordering alone would not be enough either. Under correct semver
-	// v1.2.0-rc1 still sorts above a bound of v1.1.0, so the wait would be
-	// satisfied by a release candidate for a release that has not happened.
-	if isPrerelease(ref.Name) && !w.wantsPrerelease() {
-		return false
-	}
-	if w.After == "" {
-		return true
-	}
-	return compareRefVersions(ref.Name, w.After) > 0
-}
 
-// wantsPrerelease reports whether this wait was written with one in mind.
-//
-// Asking for v1.2.0-rc* or bounding at v1.2.0-rc1 is an unambiguous statement
-// that release candidates are the point, so the exclusion lifts. Anything else
-// wants the release.
-//
-// The pattern is tested for a hyphen rather than parsed, because a pattern is
-// not a version: `v1.2.0-rc*` is exactly the thing somebody would write here
-// and exactly the thing semver rejects, so asking whether it parses answers
-// no for the case this exists to allow.
-//
-// A hyphen in a scheme semver cannot read — `release-1.5.0` — is a false
-// positive that costs nothing: a ref under such a scheme is never a
-// pre-release, so this is not reached for it.
-func (w RefWait) wantsPrerelease() bool {
-	return strings.Contains(lastSegment(w.Pattern), "-") || isPrerelease(w.After)
+	// The path prefix must match exactly. A repository's `v1.2.3` and its
+	// `api/v3.4.5` are separate series that happen to share a repository, and
+	// their versions mean nothing to each other — so a wait for the top-level
+	// series is never satisfied by an api release, whatever the numbers say.
+	prefix, name := splitRefPath(ref.Name)
+	if prefix != w.PathPrefix {
+		return false
+	}
+
+	constraint, isConstraint := w.Constraint()
+	if !isConstraint {
+		// A literal name or glob, for a ref no version scheme describes: the
+		// release-1.5 branch being cut.
+		return globMatch(w.Matcher, name)
+	}
+
+	version, err := semver.NewVersion(name)
+	if err != nil {
+		// Not a version, so a version constraint has nothing to say about it.
+		return false
+	}
+	// Check applies the published rule for pre-releases: >=1.2 does not match
+	// 1.3.0-rc1, and >=1.2.0-0 does. That is a specification rather than a
+	// local invention, which is most of the argument for using constraints
+	// at all.
+	return constraint.Check(version)
 }
 
 // Describe renders the wait the way a listing should show it.
 func (w RefWait) Describe() string {
-	if w.After == "" {
-		return fmt.Sprintf("%s %s %s", w.RepoID, w.Kind, w.Pattern)
-	}
-	return fmt.Sprintf("%s %s %s after %s", w.RepoID, w.Kind, w.Pattern, w.After)
+	return fmt.Sprintf("%s %s %s", w.RepoID, w.Kind, w.Spec())
 }
 
-// LiteralPrefix returns the leading part of the pattern that contains no
-// wildcard, which is what GitHub can filter on.
+// PollPrefix is what GitHub is asked to filter on.
 //
-// Asking for refs/tags/v narrows a repository with thousands of tags to the
-// ones that could possibly match. It is an optimisation and never a filter:
-// the pattern is applied again to whatever comes back.
-func (w RefWait) LiteralPrefix() string {
-	if i := strings.IndexAny(w.Pattern, "*?"); i >= 0 {
-		return w.Pattern[:i]
+// The path prefix, which narrows a monorepo's thousands of tags to the one
+// component in question. An optimisation and never a filter: whatever comes
+// back is matched again here.
+//
+// A top-level wait yields "", so a busy monorepo returns its most recent tags
+// across every component and the top-level ones may not be among them. That is
+// a real limit, and the reason polling targets belong on the repository —
+// scottlaird/roz#128 — rather than being squeezed out of a wait.
+func (w RefWait) PollPrefix() string {
+	if w.PathPrefix == "" {
+		return ""
 	}
-	return w.Pattern
+	return w.PathPrefix + "/"
+}
+
+// splitRefPath divides a ref name into its directory and its last segment.
+//
+// A monorepo tags service/s3/v1.107.0: the directory names a component and the
+// last segment is the version. Reading the whole string as a version would
+// make the `3` in `s3` one.
+func splitRefPath(name string) (prefix, last string) {
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		return name[:slash], name[slash+1:]
+	}
+	return "", name
 }
 
 // globMatch reports whether name matches a pattern of literals, `*` and `?`.
@@ -208,131 +268,6 @@ func globMatch(pattern, name string) bool {
 		p++
 	}
 	return p == len(pattern)
-}
-
-// lastSegment is the part of a ref after the final slash, which is where the
-// version lives.
-//
-// A monorepo tags service/s3/v1.107.0, and the directory names a component
-// rather than a version — the `3` in `s3` is not a version number, and reading
-// the whole string would make it one.
-func lastSegment(ref string) string {
-	if slash := strings.LastIndex(ref, "/"); slash >= 0 {
-		return ref[slash+1:]
-	}
-	return ref
-}
-
-// semverOf renders a ref's version in the form x/mod/semver accepts, or ""
-// where it is not a semantic version at all.
-//
-// The package requires a leading v and rejects a bare 1.2.0, which is a
-// common enough way to tag that normalising it is worth the two lines. A
-// release-1.5.0 has no reading as semver and falls back to the digits.
-func semverOf(ref string) string {
-	name := lastSegment(ref)
-	if name == "" {
-		return ""
-	}
-	if name[0] != 'v' {
-		name = "v" + name
-	}
-	if !semver.IsValid(name) {
-		return ""
-	}
-	return name
-}
-
-// isPrerelease reports whether a ref names a release candidate rather than a
-// release: the -rc1 in v1.2.0-rc1.
-//
-// Only meaningful for semantic versions. A scheme this cannot read has no
-// notion of a pre-release, so nothing is excluded — the safe direction, since
-// the alternative is silently ignoring the ref somebody is waiting for.
-func isPrerelease(ref string) bool {
-	version := semverOf(ref)
-	return version != "" && semver.Prerelease(version) != ""
-}
-
-// compareRefVersions orders two ref names by version.
-//
-// Semantic versions go through x/mod/semver, which is the only way to get
-// v1.2.0-rc1 below v1.2.0: a pre-release sorts *under* its release, and no
-// amount of comparing the digits in order produces that — the digits say
-// [1 2 0 1] against [1 2 0], which is greater.
-//
-// Both sides must parse, or neither is used. Mixing two orderings within one
-// comparison would make the result depend on which side happened to be
-// well-formed, and a wait on release-1.5.0 would compare against v1.6.0 under
-// rules only one of them follows.
-func compareRefVersions(a, b string) int {
-	if x, y := semverOf(a), semverOf(b); x != "" && y != "" {
-		return semver.Compare(x, y)
-	}
-	return compareVersions(versionOf(a), versionOf(b))
-}
-
-// versionOf extracts the numbers from a ref name, in order.
-//
-// v1.5.0, 1.5.0 and release-1.5.0 all yield [1 5 0], which is the point: tag
-// naming differs per repository and a rule configured per repository is a
-// setting to get wrong. Numbers rather than string comparison because v1.10.0
-// sorts below v1.5.0 as text and above it as a version.
-//
-// Only the last path segment is read, which is what makes directory-prefixed
-// tags work. A monorepo tags `service/s3/v1.107.0`, and the `3` in `s3` is
-// part of a component's name rather than of a version — taking the whole
-// string would read that as [3 1 107 0] and compare it against a bound with a
-// different prefix, or none, as though the two were versions of each other. It
-// also means the bound may be written either way: `--ref-after v1.106.0` and
-// `--ref-after service/s3/v1.106.0` are the same request.
-//
-// Non-numeric parts are dropped rather than ordered. A pre-release such as
-// v1.5.0-rc1 therefore reads as [1 5 0 1] and sorts *above* v1.5.0, which is
-// backwards — but a pattern like v*.*.0 does not match it in the first place,
-// so the bound never sees one. Ordering pre-releases properly is semver, and
-// semver is a per-repository convention this deliberately does not assume.
-func versionOf(ref string) []int {
-	name := lastSegment(ref)
-
-	var parts []int
-	for i := 0; i < len(name); {
-		if name[i] < '0' || name[i] > '9' {
-			i++
-			continue
-		}
-		j := i
-		for j < len(name) && name[j] >= '0' && name[j] <= '9' {
-			j++
-		}
-		// Overflow is not a version; a 20-digit run is something else.
-		if v, err := strconv.Atoi(name[i:j]); err == nil {
-			parts = append(parts, v)
-		}
-		i = j
-	}
-	return parts
-}
-
-// compareVersions orders two extracted versions, padding the shorter with
-// zeros so that v1.5 and v1.5.0 compare equal.
-func compareVersions(a, b []int) int {
-	for i := 0; i < len(a) || i < len(b); i++ {
-		var x, y int
-		if i < len(a) {
-			x = a[i]
-		}
-		if i < len(b) {
-			y = b[i]
-		}
-		if x != y {
-			if x < y {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
 }
 
 // ObserveRef records a ref GitHub reported, and reports whether it is new.
@@ -467,21 +402,17 @@ func collectRefs(rows *sql.Rows, fields []field) ([]*GitRef, error) {
 // action waits for one thing, and correcting a mistyped pattern should not
 // need the old row deleted first.
 func (t *Tx) SetRefWait(ctx context.Context, w RefWait) error {
-	if err := ValidateRefKind(w.Kind); err != nil {
+	if err := w.Validate(); err != nil {
 		return err
 	}
-	if w.Pattern == "" {
-		return fmt.Errorf("a ref wait needs a pattern, e.g. 'v*.*.0'")
-	}
-	after := sql.NullString{String: w.After, Valid: w.After != ""}
 
 	_, err := t.tx.ExecContext(ctx, `
-		INSERT INTO action_ref_wait (action_id, repo_id, kind, pattern, after, created_at)
+		INSERT INTO action_ref_wait (action_id, repo_id, kind, path_prefix, matcher, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(action_id) DO UPDATE SET
 		  repo_id = excluded.repo_id, kind = excluded.kind,
-		  pattern = excluded.pattern, after = excluded.after`,
-		w.ActionID, w.RepoID, w.Kind, w.Pattern, after, t.at)
+		  path_prefix = excluded.path_prefix, matcher = excluded.matcher`,
+		w.ActionID, w.RepoID, w.Kind, w.PathPrefix, w.Matcher, t.at)
 	if err != nil {
 		return fmt.Errorf("recording what %s is waiting for: %w", w.ActionID, err)
 	}
@@ -491,18 +422,16 @@ func (t *Tx) SetRefWait(ctx context.Context, w RefWait) error {
 // RefWaitFor returns what an action is waiting for, if anything.
 func (t *Tx) RefWaitFor(ctx context.Context, actionID string) (*RefWait, error) {
 	var w RefWait
-	var after sql.NullString
 	err := t.tx.QueryRowContext(ctx, `
-		SELECT action_id, repo_id, kind, pattern, after
+		SELECT action_id, repo_id, kind, path_prefix, matcher
 		FROM action_ref_wait WHERE action_id = ?`, actionID).
-		Scan(&w.ActionID, &w.RepoID, &w.Kind, &w.Pattern, &after)
+		Scan(&w.ActionID, &w.RepoID, &w.Kind, &w.PathPrefix, &w.Matcher)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading what %s is waiting for: %w", actionID, err)
 	}
-	w.After = after.String
 	return &w, nil
 }
 
@@ -514,11 +443,11 @@ func (t *Tx) RefWaitFor(ctx context.Context, actionID string) (*RefWait, error) 
 // cannot be written against a repository sync forgot to watch.
 func (s *Store) OpenRefWaits(ctx context.Context) ([]RefWait, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT w.action_id, w.repo_id, w.kind, w.pattern, w.after
+		SELECT w.action_id, w.repo_id, w.kind, w.path_prefix, w.matcher
 		FROM action_ref_wait w
 		JOIN action a ON a.id = w.action_id
 		WHERE a.closed_at IS NULL
-		ORDER BY w.repo_id, w.kind, w.pattern`)
+		ORDER BY w.repo_id, w.kind, w.path_prefix, w.matcher`)
 	if err != nil {
 		return nil, fmt.Errorf("reading outstanding ref waits: %w", err)
 	}
@@ -527,11 +456,9 @@ func (s *Store) OpenRefWaits(ctx context.Context) ([]RefWait, error) {
 	var waits []RefWait
 	for rows.Next() {
 		var w RefWait
-		var after sql.NullString
-		if err := rows.Scan(&w.ActionID, &w.RepoID, &w.Kind, &w.Pattern, &after); err != nil {
+		if err := rows.Scan(&w.ActionID, &w.RepoID, &w.Kind, &w.PathPrefix, &w.Matcher); err != nil {
 			return nil, fmt.Errorf("reading an outstanding ref wait: %w", err)
 		}
-		w.After = after.String
 		waits = append(waits, w)
 	}
 	return waits, rows.Err()

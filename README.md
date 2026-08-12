@@ -1116,17 +1116,17 @@ one thing roz already knows how to do.
 
 ```console
 $ roz action add --title "Ship the migration once cli 2.98 is out" --verb wait_ref \
-    --ref-repo cli/cli --ref-pattern 'v*.*.0' --ref-after v2.97.0
+    --ref-repo cli/cli --ref '>=2.98'
 NA1
 ```
 
-The pattern is a glob, not a name, because when you write the block nobody
-knows whether the next release is `v1.5.0` or `v1.5.1`. `--ref-after` is what
-makes it the *next* one: without it the release that already shipped matches
-and the action closes immediately.
+`--ref` is a [semver constraint](https://github.com/Masterminds/semver#checking-version-constraints),
+not a name, because when you write the block nobody knows whether the next
+release is `v2.98.0` or `v2.98.1`. The usual operators all work — `>=1.5`,
+`^1.2`, `~1.2.3`, `1.2.x`, `>=1.2, <2.0`.
 
 Sync polls only the refs something is waiting for. A repository with no
-outstanding wait is never asked, so this costs nothing until it is relevant —
+outstanding wait is never asked, so this costs nothing until it is relevant,
 and there is no watch list to keep in step with the waits themselves.
 
 ```console
@@ -1146,60 +1146,52 @@ NA1 closed: wait_ref
 polled 0, 0 changed, 1 closed, 1 ref queries
 ```
 
-Versions are compared with [`x/mod/semver`](https://pkg.go.dev/golang.org/x/mod/semver)
-where the name is a semantic version, with or without the leading `v`, and by
-the numbers pulled out of the name otherwise — so `release-1.5.0` still works
-and `v1.10.0` is above `v1.5.0` rather than below it as text. The alternative,
-a naming rule configured per repository, is a setting to get wrong.
-
-**A pre-release does not satisfy a wait for the release.** `v1.2.0-rc1` is
-below `v1.2.0`, which no comparison of extracted digits can produce — they say
-`[1 2 0 1]` against `[1 2 0]`, which is greater. It is also excluded outright
-unless the wait asks for one, because ordering alone is not enough: under
-correct semver `v1.2.0-rc1` still beats a bound of `v1.1.0`, so `v*.*.*` would
-otherwise be satisfied by a candidate for a release that has not happened.
-
-Naming one lifts the exclusion, by pattern or by bound:
+**A pre-release does not satisfy a wait for the release.** `>=2.98` is not
+answered by `v2.98.0-rc1`, by the constraint's own rule rather than by anything
+roz invents. Ask for one explicitly when that is the point:
 
 ```console
 $ roz action add --title "Test against the next RC" --verb wait_ref \
-    --ref-repo acme/api --ref-pattern 'v1.2.0-rc*'
+    --ref-repo cli/cli --ref '>=2.98.0-0'
 ```
 
 ### Several release series in one repository
 
-A monorepo tags `v1.2.3` and, disjointly, `api/v3.4.5`. Both are ordinary
-patterns:
+A monorepo tags `v1.2.3` and, disjointly, `api/v3.4.5`. A path prefix picks the
+series:
 
 ```console
 $ roz action add --title "Wait for the next s3 release" --verb wait_ref \
-    --ref-repo aws/aws-sdk-go-v2 --ref-pattern 'service/s3/v*.*.0' \
-    --ref-after service/s3/v1.106.0
+    --ref-repo aws/aws-sdk-go-v2 --ref 'service/s3/>=1.107'
 ```
 
-`*` spans `/`, so `api/v*.*.0` means what you would expect; the literal part
-of the pattern is what keeps the series apart, so a wait for `v*.*.0` is never
-satisfied by `api/v3.6.0` and the reverse.
+**Series never compare across.** `service/s3/>=1.107` is answered only by a tag
+under `service/s3/`, and a wait with no prefix means a *top-level* tag — never
+`api/v2.3.4`, however the numbers fall. Two series that share a repository are
+unrelated, and their version numbers mean nothing to each other.
 
-The version is read from the **last path segment only**. `service/s3/v1.107.0`
-is version `1.107.0` and not `3.1.107.0` — the `3` belongs to the component's
-name. It also means the bound can be written either way: `--ref-after
-v1.106.0` and `--ref-after service/s3/v1.106.0` are the same request.
+The prefix is also what GitHub is asked to filter on, so a repository with
+thousands of tags across a dozen components returns only the one in question.
 
-The directory prefix is also what GitHub is asked to filter on, so a
-repository with thousands of tags across a dozen components returns only the
-component in question.
+### Waiting for something that is not a version
+
+An expression that is not a constraint is a literal name or a glob, which is
+how to wait for a branch being cut:
+
+```console
+$ roz action add --title "Port the fix once 1.5 is branched" --verb wait_ref \
+    --ref-repo acme/api --ref-kind branch --ref 'release-1.5'
+```
+
+The two forms cannot be confused: `release-1.5` does not parse as a constraint,
+and `>=1.5` is not a plausible branch name.
 
 ### Why this is worth more than it looks
 
 Where a project tags a release only once the previous one has finished rolling
-out, *"wait for the next `v1.N.0`"* means *"the previous release is fully
+out, *"wait for the next release"* means *"the previous release is fully
 deployed"* without observing any deployment at all. The approximation can only
 fire **late**, never early, which is the harmless direction for a gate.
-
-Gate on the `.0` rather than on "the next tag": a patch release is often cut
-precisely because something is wrong mid-rollout, so it carries the opposite
-implication.
 
 `wait_ref` has no `wait_days`. A release date is not yours to influence and
 there is nobody to chase, so an overdue report would be noise — and since an

@@ -139,7 +139,7 @@ INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires
   -- nobody to chase: since 0019 an overdue wait puts an item in the queue, so
   -- the noise would be durable rather than passing. See 0020.
   ('wait_ref',         'wait for a ref',    'predicate', 'ref_exists',        'wait',    0, 1, 0, NULL,
-   'Wait for a branch or tag to appear. Closes when one matching the pattern exists.'),
+   'Wait for a branch or tag to appear. Closes when one matching the expression exists.'),
 
   -- Human-closed. These are the items worth spending attention on, and the
   -- only ones that reach the queue as thinking work.
@@ -481,25 +481,32 @@ CREATE TABLE git_ref (
 
 -- What an action is waiting for, when it is waiting for a ref.
 --
--- The pattern is a glob rather than a literal name, which is the requirement
--- that shapes the table: when the block is written nobody knows whether the
--- next release is v1.5.0 or v1.5.1, and an item needing a hand correction
--- later is what this replaces. `after` is an exclusive lower bound and is what
--- makes "the next one" expressible -- pattern alone matches the release that
--- already shipped.
+-- Written as one expression, `[prefix/]matcher`, and stored as its two halves:
+-- `api/>=3.6` is the api series at 3.6 or later, `>=1.2` the top-level one.
+--
+-- The matcher is normally a semver constraint, which is what makes "the next
+-- release" expressible before anybody knows its number, and what settles
+-- pre-releases by a published rule rather than a local invention: `>=1.2` does
+-- not match 1.3.0-rc1 and `>=1.2.0-0` does. A matcher that does not parse as a
+-- constraint is a literal name or glob, which is the only way to wait on a ref
+-- no version scheme describes -- a `release-1.5` branch being cut.
+--
+-- The path prefix is compared for EQUALITY, never across. An empty prefix is a
+-- top-level ref and must not be satisfied by api/v2.3.4: different series that
+-- share a repository, whose versions mean nothing to each other.
 --
 -- Keyed on action_id: one action waits for one thing, the same constraint
 -- action_one_subject makes for pull requests and for the same reason.
 CREATE TABLE action_ref_wait (
-  action_id  TEXT PRIMARY KEY REFERENCES action(id),
-  repo_id    TEXT NOT NULL REFERENCES github_repo(id),
-  kind       TEXT NOT NULL CHECK (kind IN ('branch','tag')),
-  -- glob over the short name, e.g. 'v*.*.0'
-  pattern    TEXT NOT NULL CHECK (pattern <> ''),
-  -- exclusive lower bound on the version in the name, e.g. 'v1.4.7'.
-  -- NULL means any name matching the pattern will do.
-  after      TEXT,
-  created_at TEXT NOT NULL
+  action_id   TEXT PRIMARY KEY REFERENCES action(id),
+  repo_id     TEXT NOT NULL REFERENCES github_repo(id),
+  kind        TEXT NOT NULL CHECK (kind IN ('branch','tag')),
+  -- everything before the final slash: 'api', 'service/s3', or '' for
+  -- top-level. Not NULL -- absent is the empty string, since it is compared.
+  path_prefix TEXT NOT NULL,
+  -- everything after it: a semver constraint, or a literal name or glob
+  matcher     TEXT NOT NULL CHECK (matcher <> ''),
+  created_at  TEXT NOT NULL
 ) STRICT;
 
 -- ── the page's own prose ─────────────────────────────────────────────

@@ -11,10 +11,9 @@ import (
 )
 
 const (
-	flagRefRepo    = "ref-repo"
-	flagRefKind    = "ref-kind"
-	flagRefPattern = "ref-pattern"
-	flagRefAfter   = "ref-after"
+	flagRefRepo = "ref-repo"
+	flagRefKind = "ref-kind"
+	flagRef     = "ref"
 )
 
 // addRefWaitFlags puts the four parts of a ref wait on a command.
@@ -26,17 +25,16 @@ func addRefWaitFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.String(flagRefRepo, "", "repository whose refs to watch, e.g. acme/api")
 	f.String(flagRefKind, store.RefTag, "branch or tag")
-	f.String(flagRefPattern, "", "glob over the ref name, e.g. 'v*.*.0'")
-	f.String(flagRefAfter, "",
-		"exclusive lower bound, e.g. v1.4.7; without it the release that already shipped matches")
+	f.String(flagRef, "",
+		"what to wait for: [prefix/]constraint, e.g. '>=1.2' or 'api/>=3.6'")
 }
 
 // refWaitFrom reads a ref wait off the flags, returning nil when none was
 // given.
 //
-// Repository and pattern together or neither: a repository with no pattern
-// would wait for any ref at all, which is never what somebody meant, and a
-// pattern with no repository has nothing to match against.
+// Repository and expression together or neither: a repository with nothing to
+// wait for would match any ref at all, which is never what somebody meant, and
+// an expression with no repository has nothing to match against.
 func refWaitFrom(cmd *cobra.Command, actionID string) (*store.RefWait, error) {
 	f := cmd.Flags()
 
@@ -44,16 +42,16 @@ func refWaitFrom(cmd *cobra.Command, actionID string) (*store.RefWait, error) {
 	if err != nil {
 		return nil, err
 	}
-	pattern, err := f.GetString(flagRefPattern)
+	spec, err := f.GetString(flagRef)
 	if err != nil {
 		return nil, err
 	}
-	if repo == "" && pattern == "" {
+	if repo == "" && spec == "" {
 		return nil, nil
 	}
-	if repo == "" || pattern == "" {
+	if repo == "" || spec == "" {
 		return nil, fmt.Errorf("--%s and --%s go together: name the repository and what to wait for",
-			flagRefRepo, flagRefPattern)
+			flagRefRepo, flagRef)
 	}
 	if _, _, err := store.ParseRepoID(repo); err != nil {
 		return nil, err
@@ -63,17 +61,19 @@ func refWaitFrom(cmd *cobra.Command, actionID string) (*store.RefWait, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := store.ValidateRefKind(kind); err != nil {
-		return nil, err
-	}
-	after, err := f.GetString(flagRefAfter)
+	prefix, matcher, err := store.ParseRefSpec(spec)
 	if err != nil {
 		return nil, err
 	}
 
-	return &store.RefWait{
-		ActionID: actionID, RepoID: repo, Kind: kind, Pattern: pattern, After: after,
-	}, nil
+	wait := &store.RefWait{
+		ActionID: actionID, RepoID: repo, Kind: kind,
+		PathPrefix: prefix, Matcher: matcher,
+	}
+	if err := wait.Validate(); err != nil {
+		return nil, err
+	}
+	return wait, nil
 }
 
 func newActionWaitRefCmd() *cobra.Command {
@@ -84,12 +84,18 @@ func newActionWaitRefCmd() *cobra.Command {
 			"wrong in both directions: the action wakes early if the release slips\n" +
 			"and sleeps through it if it ships early. This waits for the condition\n" +
 			"instead.\n\n" +
-			"The pattern is a glob, not a name, because when the block is written\n" +
-			"nobody knows whether the next release is v1.5.0 or v1.5.1:\n\n" +
-			"  roz action wait-ref --action NA103 --ref-repo acme/api \\\n" +
-			"      --ref-pattern 'v*.*.0' --ref-after v1.4.7\n\n" +
-			"--ref-after is what makes it mean the *next* one; without it the\n" +
-			"release that already shipped matches and the action closes at once.\n\n" +
+			"What to wait for is a semver constraint rather than a name, because\n" +
+			"when the block is written nobody knows whether the next release is\n" +
+			"v1.5.0 or v1.5.1:\n\n" +
+			"  roz action wait-ref --action NA103 --ref-repo acme/api --ref '>=1.5'\n\n" +
+			"A path prefix selects one series in a monorepo, and series never\n" +
+			"compare across: 'api/>=3.6' waits on api/v3.6.0 and later, while\n" +
+			"'>=1.2' waits on a top-level tag and is never satisfied by an api\n" +
+			"one, whatever the numbers say.\n\n" +
+			"Pre-releases are excluded by the constraint's own rule: '>=1.2' does\n" +
+			"not match v1.3.0-rc1, and '>=1.2.0-0' does.\n\n" +
+			"An expression that is not a constraint is a literal name or glob,\n" +
+			"for a ref no version scheme describes: --ref 'release-1.5'.\n\n" +
 			"Sync polls only the refs something is waiting for, so this is also\n" +
 			"what makes a repository's tags start being read.",
 		Args: cobra.NoArgs,
@@ -99,7 +105,7 @@ func newActionWaitRefCmd() *cobra.Command {
 	_ = cmd.MarkFlagRequired(flagAction)
 	addRefWaitFlags(cmd)
 	_ = cmd.MarkFlagRequired(flagRefRepo)
-	_ = cmd.MarkFlagRequired(flagRefPattern)
+	_ = cmd.MarkFlagRequired(flagRef)
 	addActorFlag(cmd)
 	return cmd
 }

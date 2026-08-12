@@ -437,51 +437,43 @@ bites; not worth one before.
   means no read transaction may be open across it — SQLite answers the upgrade
   with `SQLITE_BUSY_SNAPSHOT` rather than waiting.
 - **A predicate reads a `Facts` struct, not a `*PR`.** `ref_exists` asks about
-  a repository and a pattern and has no subject pull request at all, so the
+  a repository and an expression and has no subject pull request at all, so the
   signature had to widen. The six that only want the pull request go through an
   `onPR` adapter, which is also where "no subject means false" lives — one
   place rather than the top of each.
+- **A ref wait is a semver constraint, not a name or a glob.** `>=1.5` says
+  "the next release" without knowing whether it will be v1.5.0 or v1.5.1, which
+  a literal cannot and a glob can only approximate. Constraints also settle
+  pre-releases by a published rule rather than a local invention: `>=1.2` does
+  not match v1.3.0-rc1, and `>=1.2.0-0` does. `github.com/Masterminds/semver/v3`
+  parses both halves — a leaf package, pure Go, no cgo, nothing transitive.
+  Lenient enough that `v1.5.0`, `1.5.0` and `1.5` all read as versions.
+- **An expression that is not a constraint is a literal name or a glob.** The
+  only way to wait on a ref no version scheme describes — a `release-1.5`
+  branch being cut — and the two forms cannot be confused, since `release-1.5`
+  does not parse as a constraint. One flag rather than two, because a wait is
+  one thing and the reading is unambiguous.
+- **A series is identified by its path prefix, compared for equality.** A
+  monorepo tags `v1.2.3` and, disjointly, `api/v3.4.5`; the numbers of one mean
+  nothing to the other, so `api/>=3.6` and `>=1.2` can never satisfy each
+  other. An absent prefix means the top level, *not* "any prefix" — otherwise
+  `>=1.2` would be answered by `api/v2.3.4`, which is both numerically true and
+  entirely wrong. The final slash divides path from constraint, which is
+  unambiguous because no constraint contains one; a colon was the alternative,
+  and lost only because `api/>=3.6` looks like the tag it selects.
 - **Which refs to poll is derived from the outstanding waits**, not configured
-  per repository, which is what the issue proposed. The poll set is then right
-  by construction: nothing is asked about that nothing waits for, and a wait
-  cannot be written against a repository somebody forgot to add to a list. The
-  cost is that roz cannot answer "when was v1.4.0 cut" for a release nobody
-  gated on — a question it was never asked.
-- **Versions are the digits pulled out of the name, compared numerically.** So
-  `v1.10.0` is above `v1.5.0`, and `v1.5.0`, `1.5.0` and `release-1.5.0` all
-  order alike. The issue suggested a naming rule configured per repository;
-  that is a setting to get wrong, and a built-in covering every common scheme
-  is less to maintain. Pre-releases are *not* ordered — `v1.5.0-rc1` reads as
-  `[1 5 0 1]` and sorts above the release — which is wrong, and unreachable,
-  because a pattern like `v*.*.0` does not match one.
-- **`golang.org/x/mod/semver` orders semantic versions; the digits handle the
-  rest.** The seventh direct dependency, and the case for it is one thing the
-  digits cannot do at all: put `v1.2.0-rc1` *below* `v1.2.0`. Extracted digits
-  say `[1 2 0 1]` against `[1 2 0]`, which is greater, and no ordering of them
-  fixes that. It is a leaf package — pure Go, one package in the build, no cgo,
-  nothing transitive — and `x/mod` was already in the module graph beneath
-  `modernc.org/libc`, so the version is pinned to the one already selected
-  rather than bumped. Both sides of a comparison must parse or neither is used,
-  so a `release-1.5.0` is never compared against a `v1.6.0` under rules only
-  one of them follows.
-- **A pre-release is excluded unless the wait asks for one**, which is a
-  separate fix from ordering and the one that actually matters. `v*.*.*` is the
-  natural way to write "any release" and its glob matches `v1.2.0-rc1`; correct
-  ordering does not help, since that candidate still beats a bound of `v1.1.0`.
-  The wait asks by naming one — a hyphen in the pattern, or a bound that is
-  itself a pre-release. The pattern is tested for the hyphen rather than
-  parsed, because `v1.2.0-rc*` is exactly what somebody would write and exactly
-  what semver rejects.
-- **A version is the digits in a ref's last path segment**, not in the whole
-  name. A monorepo tags `service/s3/v1.107.0`, and reading the whole string
-  gives `[3 1 107 0]` — the `3` belongs to the component. It passed anyway at
-  first, because both sides of a bound carried the same prefix; it was a
-  coincidence, and there were no tests for the shape. Reading the last segment
-  also means the bound may be written with the prefix or without it.
+  per repository. The poll set is then right by construction: nothing is asked
+  about that nothing waits for, and a wait cannot name a repository somebody
+  forgot to add to a list. Two costs, both real. Refs are only observed while
+  something waits for one, so roz cannot answer "when was v1.4.0 cut" for a
+  release nobody gated on. And a top-level wait has no path to narrow on, so a
+  monorepo returns its most recent tags across every component — which is why
+  polling targets are the one thing that may yet belong on the repository,
+  tracked as [#128](https://github.com/scottlaird/roz/issues/128).
 - **A repository's first poll is a backfill, not news.** It sees the whole tag
   history at once — a hundred releases that existed long before anybody waited
-  for one — so those are counted rather than listed. Found by running it for
-  real against `cli/cli`, where the first sync printed a hundred lines.
+  for one — so those are counted rather than listed. Only what appears after
+  that is worth a line.
 
 ## Deliberately out of scope
 

@@ -36,30 +36,39 @@ CREATE INDEX git_ref_repo ON git_ref(repo_id, kind);
 
 -- What an action is waiting for, when it is waiting for a ref.
 --
--- The pattern is a glob rather than a literal name, which is the requirement
--- that shapes this table. When the block is written nobody knows whether the
--- next release is v1.5.0 or v1.5.1, and an item that has to be corrected by
--- hand later is precisely the thing this replaces.
+-- Written as one expression, `[prefix/]matcher`, and stored as its two halves.
+-- `api/>=3.6` is the api series at 3.6 or later; `>=1.2` is the top-level one.
 --
--- `after` is an exclusive lower bound, and it is what makes "the next one"
--- expressible: pattern alone matches the release that already shipped. Both
--- are needed — a bound with no pattern would match a patch tag, and a patch
--- does not carry the "the previous release finished rolling out" implication
--- that makes this a useful proxy in the first place.
+-- The matcher is normally a semver constraint, which is what makes "the next
+-- release" expressible: when the block is written nobody knows whether it will
+-- be v1.5.0 or v1.5.1, and an item needing a hand correction later is what
+-- this replaces. Constraints also settle pre-releases by a published rule
+-- rather than a local invention -- `>=1.2` does not match 1.3.0-rc1, and
+-- `>=1.2.0-0` does.
+--
+-- A matcher that is not a constraint is a literal name or a glob, which is the
+-- only way to wait on a ref no version scheme describes: a `release-1.5`
+-- branch being cut. `release-1.5` is not a parseable constraint, so the two
+-- forms do not overlap.
+--
+-- The path prefix is compared for EQUALITY, never across. An empty prefix
+-- means a top-level ref and must not be satisfied by api/v2.3.4: those are
+-- different series that happen to share a repository, and comparing their
+-- versions to each other is meaningless.
 --
 -- Keyed on action_id: one action waits for one thing. The same constraint
--- action_one_subject makes for pull requests, for the same reason — an item
+-- action_one_subject makes for pull requests, for the same reason -- an item
 -- covering two unrelated conditions is one somebody should have split.
 CREATE TABLE action_ref_wait (
-  action_id  TEXT PRIMARY KEY REFERENCES action(id),
-  repo_id    TEXT NOT NULL REFERENCES github_repo(id),
-  kind       TEXT NOT NULL CHECK (kind IN ('branch','tag')),
-  -- glob over the short name, e.g. 'v*.*.0'
-  pattern    TEXT NOT NULL CHECK (pattern <> ''),
-  -- exclusive lower bound on the version in the name, e.g. 'v1.4.7'.
-  -- NULL means any name matching the pattern will do.
-  after      TEXT,
-  created_at TEXT NOT NULL
+  action_id   TEXT PRIMARY KEY REFERENCES action(id),
+  repo_id     TEXT NOT NULL REFERENCES github_repo(id),
+  kind        TEXT NOT NULL CHECK (kind IN ('branch','tag')),
+  -- everything before the final slash: 'api', 'service/s3', or '' for
+  -- top-level. Not NULL -- absent is the empty string, since it is compared.
+  path_prefix TEXT NOT NULL,
+  -- everything after it: a semver constraint, or a literal name or glob
+  matcher     TEXT NOT NULL CHECK (matcher <> ''),
+  created_at  TEXT NOT NULL
 ) STRICT;
 
 -- Sync polls the refs something is actually waiting for, so this is the query
@@ -85,4 +94,4 @@ INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class,
                         requires_pr, requires_ref, starts_pipeline, wait_days, description)
 VALUES
   ('wait_ref', 'wait for a ref', 'predicate', 'ref_exists', 'wait', 0, 1, 0, NULL,
-   'Wait for a branch or tag to appear. Closes when one matching the pattern exists.');
+   'Wait for a branch or tag to appear. Closes when one matching the expression exists.');

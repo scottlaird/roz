@@ -198,7 +198,7 @@ func checkActionReferences(ctx context.Context, st *store.Store, actor store.Act
 	if err := checkPredicateHasSubject(v, prID != "", "pass --"+flagPR); err != nil {
 		return err
 	}
-	if err := checkPredicateHasRefWait(v, wait != nil, "pass --"+flagRefRepo+" and --"+flagRefPattern); err != nil {
+	if err := checkPredicateHasRefWait(v, wait != nil, "pass --"+flagRefRepo+" and --"+flagRef); err != nil {
 		return err
 	}
 	if wait != nil {

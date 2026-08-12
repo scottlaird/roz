@@ -16,15 +16,15 @@ func TestWaitRefRefusesAVerbWithNothingToWaitFor(t *testing.T) {
 	if err == nil {
 		t.Fatal("action add accepted a wait_ref with nothing to wait for")
 	}
-	for _, want := range []string{"ref-repo", "ref-pattern"} {
+	for _, want := range []string{"ref-repo", "ref"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not name --%s: %v", want, err)
 		}
 	}
 }
 
-// TestWaitRefNeedsBothHalves: a repository with no pattern would wait for any
-// ref at all, which is never what anybody meant.
+// TestWaitRefNeedsBothHalves: a repository with nothing to wait for would
+// match any ref at all, which is never what anybody meant.
 func TestWaitRefNeedsBothHalves(t *testing.T) {
 	db := initDB(t)
 	trackRepo(t, db, "acme/api")
@@ -32,7 +32,7 @@ func TestWaitRefNeedsBothHalves(t *testing.T) {
 	_, err := runCLI(t, "action", "add", "--db", db,
 		"--title", "Wait", "--verb", "wait_ref", "--ref-repo", "acme/api")
 	if err == nil {
-		t.Fatal("action add accepted a repository with no pattern")
+		t.Fatal("action add accepted a repository with nothing to wait for")
 	}
 	if !strings.Contains(err.Error(), "go together") {
 		t.Errorf("error does not explain the pairing: %v", err)
@@ -44,7 +44,7 @@ func TestAddAWaitAndSeeIt(t *testing.T) {
 	trackRepo(t, db, "acme/api")
 
 	id := addAction(t, db, "--title", "Wait for the next release", "--verb", "wait_ref",
-		"--ref-repo", "acme/api", "--ref-pattern", "v*.*.0", "--ref-after", "v1.4.7")
+		"--ref-repo", "acme/api", "--ref", ">=1.5")
 
 	out, err := runCLI(t, "action", "list", "--db", db)
 	if err != nil {
@@ -61,21 +61,21 @@ func TestAddAWaitAndSeeIt(t *testing.T) {
 	}
 }
 
-// TestWaitRefCorrectsAMistypedPattern: the wait is set on an existing action,
-// which is the path `action wait-ref` exists for.
-func TestWaitRefCorrectsAMistypedPattern(t *testing.T) {
+// TestWaitRefCorrectsAMistypedExpression: the wait is set on an existing
+// action, which is the path `action wait-ref` exists for.
+func TestWaitRefCorrectsAMistypedExpression(t *testing.T) {
 	db := initDB(t)
 	trackRepo(t, db, "acme/api")
 
 	id := addAction(t, db, "--title", "Wait for the next release", "--verb", "wait_ref",
-		"--ref-repo", "acme/api", "--ref-pattern", "v*.*.1")
+		"--ref-repo", "acme/api", "--ref", ">=1.4")
 
 	out, err := runCLI(t, "action", "wait-ref", "--db", db, "--action", id,
-		"--ref-repo", "acme/api", "--ref-pattern", "v*.*.0", "--ref-after", "v1.4.7")
+		"--ref-repo", "acme/api", "--ref", "api/>=3.6")
 	if err != nil {
 		t.Fatalf("action wait-ref returned error: %v", err)
 	}
-	if want := "acme/api tag v*.*.0 after v1.4.7"; !strings.Contains(out, want) {
+	if want := "acme/api tag api/>=3.6"; !strings.Contains(out, want) {
 		t.Errorf("wait-ref printed %q, want it to name %q", out, want)
 	}
 }
@@ -88,7 +88,7 @@ func TestWaitRefRefusesAnUntrackedRepository(t *testing.T) {
 
 	_, err := runCLI(t, "action", "add", "--db", db,
 		"--title", "Wait", "--verb", "wait_ref",
-		"--ref-repo", "acme/api", "--ref-pattern", "v*.*.0")
+		"--ref-repo", "acme/api", "--ref", ">=1.5")
 	if err == nil {
 		t.Fatal("action add accepted a wait on an untracked repository")
 	}
@@ -105,11 +105,47 @@ func TestWaitRefRefusesAnUnknownKind(t *testing.T) {
 
 	_, err := runCLI(t, "action", "add", "--db", db,
 		"--title", "Wait", "--verb", "wait_ref",
-		"--ref-repo", "acme/api", "--ref-pattern", "v*", "--ref-kind", "note")
+		"--ref-repo", "acme/api", "--ref", ">=1.5", "--ref-kind", "note")
 	if err == nil {
 		t.Fatal("action add accepted a ref kind that is not a branch or a tag")
 	}
 	if !strings.Contains(err.Error(), "branch") {
 		t.Errorf("error does not name the alternatives: %v", err)
+	}
+}
+
+// TestWaitRefRefusesAPathWithNothingToMatch: `api/` names a series and says
+// nothing about which release, so it can never be satisfied.
+func TestWaitRefRefusesAPathWithNothingToMatch(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "acme/api")
+
+	_, err := runCLI(t, "action", "add", "--db", db,
+		"--title", "Wait", "--verb", "wait_ref",
+		"--ref-repo", "acme/api", "--ref", "api/")
+	if err == nil {
+		t.Fatal("action add accepted a path with nothing to match")
+	}
+	if !strings.Contains(err.Error(), "nothing to match") {
+		t.Errorf("error does not say what is missing: %v", err)
+	}
+}
+
+// TestAWaitOnAMonorepoSeries: the shape the path prefix exists for, end to end
+// through the command.
+func TestAWaitOnAMonorepoSeries(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "acme/api")
+
+	id := addAction(t, db, "--title", "Wait for the next s3 release", "--verb", "wait_ref",
+		"--ref-repo", "acme/api", "--ref", "service/s3/>=1.107")
+
+	out, err := runCLI(t, "action", "wait-ref", "--db", db, "--action", id,
+		"--ref-repo", "acme/api", "--ref", "service/s3/>=1.108")
+	if err != nil {
+		t.Fatalf("action wait-ref returned error: %v", err)
+	}
+	if want := "service/s3/>=1.108"; !strings.Contains(out, want) {
+		t.Errorf("wait-ref printed %q, want it to name %q", out, want)
 	}
 }

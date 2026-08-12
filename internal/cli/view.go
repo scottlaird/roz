@@ -143,6 +143,9 @@ type pageContent struct {
 	Elsewhere []actionView
 	// Closed is the same for projects the table above omits.
 	Closed []projectView
+	// Notes is the authored prose, by slot. A slot with nothing in it is
+	// absent rather than empty, so the template can ask without guarding.
+	Notes map[string]noteView
 	// Live adds the script that reloads when the server says something moved.
 	// A page written to a file has no server to listen to.
 	Live bool
@@ -174,6 +177,14 @@ type actionView struct {
 	PRs       []prView
 	Issues    []issueView
 	Expired   bool
+}
+
+// noteView is one keyed prose block, rendered.
+type noteView struct {
+	Body template.HTML
+	// Set is when it was last written. Worth showing: a note is authored and
+	// nothing revisits it, so how old it is says how much to trust it.
+	Set string
 }
 
 type prView struct {
@@ -221,6 +232,10 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		return nil, err
 	}
 	shortNames, err := st.ShortNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pageNotes, err := st.PageNotes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -357,6 +372,21 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			Priority: nullIntText(p.Priority),
 			Effort:   nullText(p.Effort),
 		})
+	}
+
+	// Rendered after the linker exists, so a note naming SL7 links it the way
+	// a project summary does.
+	for slot, note := range pageNotes {
+		if strings.TrimSpace(note.Body) == "" {
+			continue // an emptied slot draws nothing, not an empty box
+		}
+		if content.Notes == nil {
+			content.Notes = map[string]noteView{}
+		}
+		content.Notes[slot] = noteView{
+			Body: text.markdown.Render(note.Body),
+			Set:  shortDate(note.UpdatedAt),
+		}
 	}
 
 	content.Stamp = fmt.Sprintf("%d in the queue · %d waiting · %d open projects",

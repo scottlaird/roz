@@ -119,7 +119,8 @@ func (t *Tx) Load(ctx context.Context, r Record, id string) error {
 	}
 
 	// Table and column names come from struct tags, not from user input.
-	query := fmt.Sprintf("SELECT %s FROM %s WHERE id = ?", strings.Join(columns, ", "), r.table())
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = ?",
+		strings.Join(columns, ", "), r.table(), keyColumnOf(r))
 	if err := t.tx.QueryRowContext(ctx, query, id).Scan(dest...); err != nil {
 		return err
 	}

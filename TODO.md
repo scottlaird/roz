@@ -22,126 +22,30 @@ and each closure frees the next. Nobody types "the pull request merged".
 
 Empty. Everything the sketch put in dependency order is built: the entities,
 the pipelines, the cascade, sync closing what GitHub finishes, the queue
-queries and a page to read them on. What is left below is depth and polish,
-and none of it blocks anything else.
+queries and a page to read them on. What is left is depth and polish, tracked in
+issues, and none of it blocks anything else.
 
-## What dogfooding needs
+## What is left
 
-Nothing blocking. Track the repo, track a pull request, `action add --verb
-write`, `action close --pr`, and let `roz syncer` close the steps as GitHub
-finishes them. What would make it pleasant rather than merely possible:
+**In [issues](https://github.com/scottlaird/roz/issues).** Everything that was
+listed here as an open item now lives there, where it can be discussed, closed
+by a pull request, and read by someone who is not holding this file in their
+head. What follows is the record of what was decided, which is the part worth
+keeping in the repository.
 
-- [ ] A `roz pr announce` habit, since `send_for_review` closes on the
-      announcement and GitHub cannot supply it.
+One thing did not become an issue, because it is not work:
 
-`roz render` and the web server are not needed for it.
+- **`roz pr announce` is a habit, not a gap.** `send_for_review` closes on the
+  announcement and GitHub cannot supply it, so somebody has to say so. The
+  tooling half of it — noticing a `wait_review` whose pull request was never
+  announced — is [#83](https://github.com/scottlaird/roz/issues/83).
 
-## Entities the sketch specifies but nothing uses
-
-The tables exist and migrate; there is no Go entity and no command for any of
-them.
-
-- [ ] `priority` and `priority_target` — the dated priorities block. Authored,
-      superseded rather than edited.
-- [ ] `review_rule` — routing policy. The sketch says implement it late.
-
-## Smaller gaps
-
-- [ ] Nothing consumes `roz watch`. Sync raises a `pr_unresolvable` exception
-      when a tracked pull request goes invisible, and today only a human
-      watching would see it.
-- [ ] Sync polls whatever is tracked, one pull request at a time by hand. A
-      per-repository "poll everything of mine" would want a `search` query and
-      a rule for when a pull request stops being tracked.
-- [ ] **Pipelines with more than one review step.** A real change can need
-      reviewing by your own team, then by the owners of code it happens to
-      touch, then by whoever guards the protected parts — three reviews, in
-      order, by different groups. Today `wait_review` is one step closing on
-      one `reviewDecision`, which cannot express any of that.
-
-      This is a design and schema question before it is code. A step would
-      need to name *who* it waits for, the predicate would need to ask whether
-      that group has approved rather than whether the pull request has, and
-      GitHub's `reviewDecision` is a single verdict that will not answer it —
-      it wants the individual reviews and the teams they came from.
-
-      **Blocked on the CODEOWNERS inference below**, which is where knowing
-      which teams a pull request needs comes from. Designing this first would
-      mean guessing at the shape of what feeds it.
-- [ ] **Infer reviewers from CODEOWNERS.** Which teams a pull request needs
-      is derivable: the files it touches, matched against the repository's
-      CODEOWNERS. Nothing here reads either yet — sync asks for the pull
-      request's state, not its file list.
-
-      It is worth doing for its own sake, since "who is this waiting for" is
-      most of what makes a `wait_review` action readable. Three other things
-      want it: pipelines with more than one review step, which is blocked on
-      it; `review_rule`, which the sketch describes as routing policy; and the
-      `review` verb, which cannot close on a predicate while nothing knows
-      whose review was wanted.
-
-      Ownership can be per-directory and can change under a long-lived pull
-      request, so what is inferred is an observation with a time, not a fact
-      about the repository.
-- [ ] **Push events into an agent's session, as an MCP channel.** The MCP
-      server answers when asked; nothing reaches an agent between turns. A
-      Claude Code *channel* is the mechanism for that — a server declaring
-      `experimental: {"claude/channel": {}}` and emitting
-      `notifications/claude/channel` has its events injected into the session,
-      and the agent reacts. The contract is a capability key and a
-      notification, so this server can do it without the Node SDK the
-      documentation's examples use.
-
-      Worth knowing before building it: the transport is not where the delay
-      is. A merge reaches the queue when the syncer next polls, so the
-      interval dominates anything the notification path costs, and the lever
-      for a faster round trip is that interval or a GitHub webhook. Channels
-      are a research preview and need
-      `--dangerously-load-development-channels`, so this buys reach into
-      sessions nobody is watching rather than speed.
-- [ ] **Track GitHub issues, not only Jira.** The `jira_*` columns on
-      `project` name one tracker in the schema, in the entity, and in `roz
-      project jira`. Home projects use GitHub issues, and the reader for them
-      already exists — `gh api graphql` and the batching that polls pull
-      requests. The refactor is generalising the columns to a tracker and a
-      key, which is a table rebuild and a decision: one set of columns with a
-      `tracker` discriminator, or a child table so a project can carry both.
-      Worth doing before there is much data to migrate.
-- [ ] **A `git_ref` entity, and the two predicates it enables.** Waiting for a
-      release is currently a snooze to a guessed date, which is wrong in both
-      directions: if the release slips the item wakes early, and if it ships
-      early the item sleeps through it.
-
-      An observed row — repository, name, kind, commit, created_at — supports
-      both `ref_exists`, for "the vX.Y branch was cut", and `ref_contains`, for
-      "this pull request is in that release". The first is a condition in its
-      own right, and it is also a cheap proxy for the second: where a release
-      is tagged only once the previous one has finished rolling out, waiting
-      for the next `.0` says "the previous one is deployed" without observing
-      any deployment. The proxy can only fire late, never early, which is the
-      harmless direction for a gate.
-
-      Two things to get right. The argument wants to be a pattern or a lower
-      bound rather than a literal name, since at the time the block is written
-      nobody knows whether the next release is `v1.5.0` or `v1.5.1`. And
-      ancestry cannot be `merge-base --is-ancestor` against a merge commit: a
-      change cherry-picked onto a release branch has a different SHA there than
-      on the default branch, so the obvious check reports "not present" for
-      every patch release. That wants `git cherry` or patch-id matching.
-
-      Predicates stay pure over the database — the work is the observation and
-      its sync, not the predicate.
-## Open questions
-
-**Sync cadence versus event fidelity.** The sketch's own question, mostly
-answered: the log records transitions rather than poll results, so a quiet
-poll writes nothing. What remains open is whether a minute is often enough to
-catch states that do not persist — `UNSTABLE` and `BEHIND` in particular.
-
-**`--json` can reach columns that have a dedicated verb.** `project set --json
-'{"superseded_by":"ROZ94"}'` skips the target-existence check that `project
-supersede` performs. The foreign key still catches a bad target, so the cost is
-a rawer error. Worth deciding whether `ApplyJSON` should refuse such columns.
+Still genuinely open, and deliberately not an issue: **sync cadence versus
+event fidelity.** The sketch's own question, mostly answered — the log records
+transitions rather than poll results, so a quiet poll writes nothing. What
+remains is whether a minute is often enough to catch states that do not
+persist, `UNSTABLE` and `BEHIND` in particular. Worth an issue if it ever
+bites; not worth one before.
 
 ## Settled, recorded so it is not relitigated
 

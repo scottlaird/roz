@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,8 +110,8 @@ type stubChange struct {
 	err     error
 	asked   string
 	members map[string][]string
-	// membersErr defaults to ErrNotImplemented, which is what the real client
-	// returns today.
+	// membersErr defaults to a read:org failure, which is the common way a real
+	// client cannot answer: the scope is not on the token.
 	membersErr error
 }
 
@@ -126,7 +127,7 @@ func (s *stubChange) TeamMembers(context.Context, []string) (map[string][]string
 	if s.membersErr != nil {
 		return nil, s.membersErr
 	}
-	return nil, github.ErrNotImplemented
+	return nil, errors.New(`organisation "org" did not resolve: membership needs read:org`)
 }
 
 func withChangeReader(t *testing.T, stub *stubChange) {
@@ -245,7 +246,7 @@ func TestCodeownersReportsUnresolvedTeams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codeowners returned error: %v", err)
 	}
-	if !strings.Contains(out, "not resolved yet") {
+	if !strings.Contains(out, "could not read team membership") {
 		t.Errorf("the unresolved membership was not reported:\n%s", out)
 	}
 	// And the rest of the answer is still there.
@@ -254,8 +255,8 @@ func TestCodeownersReportsUnresolvedTeams(t *testing.T) {
 	}
 }
 
-// TestCodeownersUsesResolvedTeams is what happens the day TeamMembers is
-// written: the same command, with no flags, expands bob into his team.
+// TestCodeownersUsesResolvedTeams: with membership resolved, the same command
+// and no flags expands bob into the teams he belongs to.
 func TestCodeownersUsesResolvedTeams(t *testing.T) {
 	withChangeReader(t, &stubChange{
 		change: github.Change{
@@ -275,7 +276,7 @@ func TestCodeownersUsesResolvedTeams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codeowners returned error: %v", err)
 	}
-	if strings.Contains(out, "not resolved yet") {
+	if strings.Contains(out, "could not read team membership") {
 		t.Errorf("membership was resolved but still reported as missing:\n%s", out)
 	}
 	if !strings.Contains(out, "@org/platform") || !strings.Contains(out, "outstanding  1") {

@@ -2,20 +2,13 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
-
-// ErrNotImplemented is returned by TeamMembers until it is written.
-//
-// A distinct error rather than a panic or a silent empty result: an empty
-// membership table is a legitimate answer — an organisation whose teams happen
-// to have no members visible to this token — and it would make every question
-// about teams quietly answer "still needed". Failing loudly is the only safe
-// placeholder.
-var ErrNotImplemented = errors.New("not implemented")
 
 // TeamMembers returns the logins in each of the named teams.
 //
@@ -39,40 +32,32 @@ var ErrNotImplemented = errors.New("not implemented")
 // is the form NewStaticTeams expects and the form the file uses. Values are
 // bare logins, as a review reports them.
 //
-// # Implementing it
+// # What it costs to get wrong
 //
-// Teams belong to organisations, so group the input by org and ask in one
-// query with aliases, the way buildQuery and the CODEOWNERS lookup already do:
-//
-//	query {
-//	  o0: organization(login: "acme") {
-//	    t0: team(slug: "platform") {
-//	      members(first: 100, after: null) {
-//	        pageInfo { hasNextPage endCursor }
-//	        nodes { login }
-//	      }
-//	    }
-//	    t1: team(slug: "storage") { ... }
-//	  }
-//	}
-//
-// Three things to get right, in rough order of how easily they are missed:
+// Three hazards, in rough order of how easily they are missed:
 //
 //   - Membership needs the read:org scope, which a token holding only repo
-//     does not have. gh reports that as a 404 on the organisation rather than
-//     as a permission error, so the failure looks like "no such org".
-//   - A team of more than 100 needs paging, the way Change pages files. An
-//     incomplete list here is worse than a slow one: a missing member means a
-//     reviewer's approval silently fails to satisfy their team.
+//     does not have. GitHub reports that as a null organisation rather than as
+//     a permission error, so the failure reads as "no such org" — hence the
+//     error here says so outright.
+//   - A team of more than 100 pages. An incomplete list is worse than a slow
+//     one: a missing member means a reviewer's approval silently fails to
+//     satisfy their team, so running past the bound is an error rather than a
+//     truncation to report.
 //   - A team that does not resolve — renamed, deleted, or invisible to this
-//     token — should be reported and not treated as empty, for the same
-//     reason. Nulling one alias does not fail the query, so the response has
-//     to be checked per team rather than as a whole.
+//     token — is an error and not an empty team. Nulling one alias does not
+//     fail the query, so every alias is checked rather than the response as a
+//     whole. An empty team is a real answer and is recorded as one.
 //
-// Nested teams are deliberately out of scope, matching the rest of this: a
-// parent team's members are its own, and GitHub's own CODEOWNERS resolution
-// treats a child team's members as satisfying the parent. Whoever needs that
-// can ask for members(membership: ALL) and say so here.
+// A caller that cannot read membership is not stuck: every other part of the
+// answer is correct without it, so `roz codeowners` reports the gap and carries
+// on with whatever --team supplied.
+//
+// Child teams are included, via membership: ALL. That is GitHub's default, and
+// it is also what GitHub's own CODEOWNERS resolution does — a child team's
+// members satisfy the parent — so anything narrower would answer "still
+// needed" for a reviewer GitHub is perfectly happy with. It is passed
+// explicitly because the default is load-bearing here rather than incidental.
 func (c *Client) TeamMembers(ctx context.Context, teams []string) (map[string][]string, error) {
 	if len(teams) == 0 {
 		return map[string][]string{}, nil
@@ -81,12 +66,204 @@ func (c *Client) TeamMembers(ctx context.Context, teams []string) (map[string][]
 	if err != nil {
 		return nil, err
 	}
+	plan := teamPlan(byOrg)
 
-	// Everything above this line is the part that does not need the network,
-	// and is tested. What is missing is the query and its decoding.
-	_ = byOrg
-	_ = ctx
-	return nil, fmt.Errorf("looking up team members: %w", ErrNotImplemented)
+	members := make(map[string][]string, len(plan))
+	// cursors holds the teams with more to read, by index into plan. A team
+	// leaves the map when GitHub says there is no next page.
+	cursors := make(map[int]string, len(plan))
+	for i := range plan {
+		cursors[i] = ""
+	}
+
+	for page := 0; len(cursors) > 0; page++ {
+		if page >= teamMaxPages {
+			return nil, fmt.Errorf("looking up team members: %s still had more after %d pages",
+				plan[anyIndex(cursors)], teamMaxPages)
+		}
+
+		query, aliases := buildTeamQuery(plan, cursors)
+		body, runErr := c.run(ctx, query)
+
+		// Rate limiting means wait, not that the question was wrong.
+		if errors.Is(runErr, ErrRateLimited) {
+			return nil, runErr
+		}
+		// Any other run error still gets decoded: gh exits non-zero whenever an
+		// alias fails to resolve, and the rest of that response is good. The
+		// error only surfaces if the body turns out to be unusable.
+		next, err := decodeTeamPage(body, plan, aliases, members)
+		if err != nil {
+			if runErr != nil {
+				return nil, fmt.Errorf("looking up team members: %w", runErr)
+			}
+			return nil, err
+		}
+		cursors = next
+	}
+	return members, nil
+}
+
+// teamPage caps one round trip. GitHub will not return more than 100 nodes
+// from a connection.
+const teamPage = 100
+
+// teamMaxPages bounds the paging at 10,000 members per team.
+//
+// Unlike the ref read, hitting this is an error rather than a truncation to
+// report: an incomplete membership list means a reviewer's approval silently
+// fails to satisfy their team, which is wrong in the direction that costs a
+// review round. A team that large is not a CODEOWNERS entry anyone reasons
+// about, so failing is both safe and honest.
+//
+// It also bounds the loop if GitHub ever returns hasNextPage with a cursor
+// that does not advance.
+const teamMaxPages = 100
+
+// anyIndex returns one key, for naming a team in the bound's error. Which one
+// is arbitrary because the bound is a runaway guard rather than a diagnosis.
+func anyIndex(cursors map[int]string) int {
+	for i := range cursors {
+		return i
+	}
+	return 0
+}
+
+// teamRef is one team to look up, and the key it is reported under.
+type teamRef struct {
+	org  string
+	slug string
+}
+
+// String is the "org/slug" form: what the caller asked for, what the map is
+// keyed by, and what an error should name.
+func (t teamRef) String() string { return t.org + "/" + t.slug }
+
+// teamPlan flattens the per-org grouping into a stable ordered list, so
+// aliases are positional and a query is deterministic.
+func teamPlan(byOrg map[string][]string) []teamRef {
+	orgs := make([]string, 0, len(byOrg))
+	for org := range byOrg {
+		orgs = append(orgs, org)
+	}
+	sort.Strings(orgs)
+
+	plan := make([]teamRef, 0, len(byOrg))
+	for _, org := range orgs {
+		for _, slug := range byOrg[org] {
+			plan = append(plan, teamRef{org: org, slug: slug})
+		}
+	}
+	return plan
+}
+
+// buildTeamQuery renders one aliased query for the teams that still have
+// members to read.
+//
+// Aliased per team rather than nested per organisation: two teams in one org
+// page independently, so a shared org alias would have to be rebuilt as each
+// team finishes. One flat alias per team costs the same and pages cleanly.
+func buildTeamQuery(plan []teamRef, cursors map[int]string) (string, map[string]int) {
+	indexes := make([]int, 0, len(cursors))
+	for i := range cursors {
+		indexes = append(indexes, i)
+	}
+	sort.Ints(indexes)
+
+	aliases := make(map[string]int, len(indexes))
+	var b strings.Builder
+	b.WriteString("query {\n  rateLimit { cost remaining limit resetAt }\n")
+	for _, i := range indexes {
+		alias := "tm" + strconv.Itoa(i)
+		aliases[alias] = i
+
+		after := "null"
+		if cursors[i] != "" {
+			after = fmt.Sprintf("%q", cursors[i])
+		}
+		fmt.Fprintf(&b, `  %s: organization(login: %q) {
+    team(slug: %q) {
+      members(first: %d, after: %s, membership: ALL) {
+        pageInfo { hasNextPage endCursor }
+        nodes { login }
+      }
+    }
+  }
+`, alias, plan[i].org, plan[i].slug, teamPage, after)
+	}
+	b.WriteString("}\n")
+
+	return b.String(), aliases
+}
+
+// decodeTeamPage reads one round's response into members, and returns the
+// teams that still have more.
+//
+// An alias that came back null is an error rather than an empty team, because
+// the two are indistinguishable in the response and only one of them is safe
+// to believe. Which half was null decides the message: a whole organisation
+// resolving to nothing is what a token without read:org looks like, and that
+// is worth saying outright rather than leaving as "no such org".
+func decodeTeamPage(body []byte, plan []teamRef, aliases map[string]int, members map[string][]string) (map[int]string, error) {
+	var decoded struct {
+		Data map[string]*struct {
+			Team *struct {
+				Members struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						Login string `json:"login"`
+					} `json:"nodes"`
+				} `json:"members"`
+			} `json:"team"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil, fmt.Errorf("decoding team members: %w", err)
+	}
+
+	// Sorted, so which team an error names does not depend on map order.
+	names := make([]string, 0, len(aliases))
+	for alias := range aliases {
+		names = append(names, alias)
+	}
+	sort.Strings(names)
+
+	next := map[int]string{}
+	for _, alias := range names {
+		ref := plan[aliases[alias]]
+		org := decoded.Data[alias]
+		if org == nil {
+			return nil, fmt.Errorf(
+				"organisation %q did not resolve, so %s could not be read: %s"+
+					" (a token with only the repo scope reads this as a missing"+
+					" organisation; membership needs read:org)",
+				ref.org, ref, firstMessage(decoded.Errors))
+		}
+		if org.Team == nil {
+			return nil, fmt.Errorf("team %s did not resolve — renamed, deleted,"+
+				" or invisible to this token: %s", ref, firstMessage(decoded.Errors))
+		}
+
+		for _, node := range org.Team.Members.Nodes {
+			members[ref.String()] = append(members[ref.String()], node.Login)
+		}
+		// A team with no members is a real answer, and has to be recorded as
+		// one: leaving the key absent would read as "not looked up".
+		if _, ok := members[ref.String()]; !ok {
+			members[ref.String()] = []string{}
+		}
+
+		if org.Team.Members.PageInfo.HasNextPage {
+			next[aliases[alias]] = org.Team.Members.PageInfo.EndCursor
+		}
+	}
+	return next, nil
 }
 
 // groupTeamsByOrg sorts "org/slug" references into a query plan: one entry per

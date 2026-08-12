@@ -28,7 +28,12 @@ const realResponse = `{
         {"state": "CHANGES_REQUESTED", "author": {"login": "grumpy"}}
       ]},
       "timelineItems": {"nodes": [{"createdAt": "2026-08-01T10:00:00Z"}]},
-      "comments": {"nodes": [{"createdAt": "2026-08-02T11:00:00Z", "author": {"login": "someone"}}]},
+      "comments": {"nodes": [
+        {"createdAt": "2026-08-02T11:00:00Z", "author": {"login": "someone", "__typename": "User"}},
+        {"createdAt": "2026-08-02T12:00:00Z", "author": {"login": "reviewer1", "__typename": "User"}},
+        {"createdAt": "2026-08-02T13:00:00Z", "author": {"login": "dependabot", "__typename": "Bot"}}
+      ]},
+      "reviews": {"nodes": []},
       "commits": {"nodes": [{"commit": {"statusCheckRollup": {
         "state": "FAILURE",
         "contexts": {"nodes": [
@@ -47,6 +52,7 @@ const realResponse = `{
       "latestOpinionatedReviews": {"nodes": []},
       "timelineItems": {"nodes": []},
       "comments": {"nodes": []},
+      "reviews": {"nodes": []},
       "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]}
     }},
     "pr2": {"pullRequest": null}
@@ -95,8 +101,10 @@ func TestFetchDecodesARealResponse(t *testing.T) {
 	if got, want := open.Checks["ci/legacy"], "SUCCESS"; got != want {
 		t.Errorf("checks[ci/legacy] = %q, want %q", got, want)
 	}
-	if got := open.HumanCommentedAt; got != "2026-08-02T11:00:00Z" {
-		t.Errorf("humanCommentedAt = %q", got)
+	// The newest comment is a bot's and the oldest is the author's own; the
+	// one in between is the only one that means somebody read this.
+	if got := open.HumanCommentedAt; got != "2026-08-02T12:00:00Z" {
+		t.Errorf("humanCommentedAt = %q, want the reviewer's comment", got)
 	}
 	if got := open.FirstReviewRequestedAt; got != "2026-08-01T10:00:00Z" {
 		t.Errorf("firstReviewRequestedAt = %q", got)

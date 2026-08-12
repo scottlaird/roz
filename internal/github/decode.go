@@ -72,6 +72,9 @@ const (
 
 type wireActor struct {
 	Login string `json:"login"`
+	// TypeName distinguishes a Bot from a User. Asked for only where it is
+	// read, so it is empty on the actors nothing tests.
+	TypeName string `json:"__typename"`
 }
 
 type wireReviewer struct {
@@ -144,6 +147,14 @@ type wirePullRequest struct {
 		} `json:"nodes"`
 	} `json:"comments"`
 
+	Reviews struct {
+		Nodes []struct {
+			CreatedAt string     `json:"createdAt"`
+			State     string     `json:"state"`
+			Author    *wireActor `json:"author"`
+		} `json:"nodes"`
+	} `json:"reviews"`
+
 	Commits struct {
 		Nodes []wireCommit `json:"nodes"`
 	} `json:"commits"`
@@ -202,9 +213,7 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 	if len(p.TimelineItems.Nodes) > 0 {
 		pr.FirstReviewRequestedAt = p.TimelineItems.Nodes[0].CreatedAt
 	}
-	if len(p.Comments.Nodes) > 0 {
-		pr.HumanCommentedAt = p.Comments.Nodes[0].CreatedAt
-	}
+	pr.HumanCommentedAt = humanCommentedAt(p)
 	pr.ChecksState, pr.Checks = checks(p)
 	pr.UnresolvedThreads = unresolvedThreads(p)
 
@@ -278,4 +287,76 @@ func checks(p *wirePullRequest) (string, map[string]string) {
 		}
 	}
 	return rollup.State, byName
+}
+
+// botType is what GraphQL calls an actor that is an integration rather than a
+// person.
+//
+// The type, not the login. A `[bot]` suffix is a convention rather than a
+// guarantee, and plenty of integrations comment as ordinary users — but
+// anything GitHub itself calls a Bot certainly is one. A Mannequin, which is
+// how an import represents somebody who never joined, stands for a real person
+// and is left alone.
+const botType = "Bot"
+
+// pendingReview is a review its author has not submitted. Nobody else can see
+// it, so it is not evidence that anybody read anything.
+const pendingReview = "PENDING"
+
+// humanCommentedAt is when somebody other than the author last said something.
+//
+// The name is the specification: not the newest comment, but the newest one
+// from a person who is not the author. Both exclusions matter, and for the same
+// reason — the field decides `frozen`, which decides whether amending is safe.
+// An author's own comment is not somebody having read the commits, and a bot
+// replying to itself four times in as many minutes is not either. Counting
+// them freezes a pull request against its own author on the strength of
+// something the author caused.
+//
+// Reviews count as well as issue comments, and are the stronger signal of the
+// two: leaving a review means having read the code, where an issue comment may
+// be about anything. A pull request whose only engagement is an inline review
+// is exactly the case where amending would rewrite what a reviewer has already
+// read, so excluding reviews would miss the freeze where it matters most.
+//
+// An actor GitHub reports as null counts. It cannot be checked against the
+// author, so this is a guess — and it is made in the direction that freezes,
+// because a freeze that should not have happened costs an extra commit while a
+// missing one rewrites something somebody has already read.
+//
+// Timestamps compare as text, which is sound here: GitHub returns RFC-3339 in
+// UTC with no fractional part, so the lexical and chronological orders agree.
+func humanCommentedAt(p *wirePullRequest) string {
+	var author string
+	if p.Author != nil {
+		author = p.Author.Login
+	}
+
+	newest := ""
+	consider := func(at string, actor *wireActor) {
+		if at <= newest || !isSomebodyElse(actor, author) {
+			return
+		}
+		newest = at
+	}
+
+	for _, c := range p.Comments.Nodes {
+		consider(c.CreatedAt, c.Author)
+	}
+	for _, r := range p.Reviews.Nodes {
+		if r.State == pendingReview {
+			continue
+		}
+		consider(r.CreatedAt, r.Author)
+	}
+	return newest
+}
+
+// isSomebodyElse reports whether an actor is a person other than the pull
+// request's author.
+func isSomebodyElse(actor *wireActor, author string) bool {
+	if actor == nil {
+		return true
+	}
+	return actor.TypeName != botType && actor.Login != author
 }

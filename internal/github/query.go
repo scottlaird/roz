@@ -16,6 +16,12 @@ import (
 // The nested connections are capped rather than paginated. A pull request
 // with more than twenty requested reviewers or unresolved threads is beyond
 // what this is for, and capping keeps one batch to one request.
+//
+// comments and reviews take a window rather than a single node because the
+// newest of each may not be the one that counts: an author replying to their
+// own pull request, or a bot doing so repeatedly, has to be skipped to find
+// whoever actually read it. Twenty is a guess at how much noise can sit on top
+// of a real comment.
 const prFields = `
     number title url state isDraft baseRefName headRefOid isInMergeQueue
     reviewDecision mergeStateStatus
@@ -28,7 +34,8 @@ const prFields = `
     timelineItems(first: 1, itemTypes: [REVIEW_REQUESTED_EVENT]) {
       nodes { ... on ReviewRequestedEvent { createdAt } }
     }
-    comments(last: 1) { nodes { createdAt author { login } } }
+    comments(last: 20) { nodes { createdAt author { login __typename } } }
+    reviews(last: 20) { nodes { createdAt state author { login __typename } } }
     reviewThreads(first: 50) { nodes { isResolved isOutdated } }
     commits(last: 1) {
       nodes { commit { statusCheckRollup {

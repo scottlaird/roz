@@ -505,6 +505,23 @@ bites; not worth one before.
   matches: a constraint-shaped matcher is not a name any ref has, and a
   name-shaped one does not parse, so the arms overlap only where a name is also
   a version.
+- **`human_commented_at` means somebody who is not the author and not a bot.**
+  It was set from the newest comment by anyone, so it also recorded the author
+  replying to their own pull request and bots talking to themselves. That
+  inverts the rule it feeds: `frozen` is generated from it and decides amend
+  against new commit, so a pull request nobody else had read was frozen against
+  its own author's amendments — permanently, since the column never clears.
+  Bots are told apart by GraphQL's `__typename` rather than by a `[bot]` suffix,
+  which is a convention some integrations do not follow.
+- **Reviews count towards it as well as issue comments, and are the stronger
+  signal.** Leaving a review means having read the code, where an issue comment
+  may be about anything, so a pull request whose only engagement is an inline
+  review is exactly where amending would rewrite what a reviewer has read. A
+  pending review does not count: nobody else can see it.
+- **An unnamed actor counts.** A deleted account cannot be checked against the
+  author, so the guess is made in the direction that freezes — an unnecessary
+  freeze costs one extra commit, a missing one rewrites something somebody has
+  already read.
 - **An exception for a standing condition is logged once a day, not once a
   poll.** Sync re-derives the world every few seconds, so a pull request that
   has gone invisible or a repository too large for the ref feed is found again

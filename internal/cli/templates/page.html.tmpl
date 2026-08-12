@@ -114,6 +114,13 @@
   tr.detail td{padding-top:0;color:var(--mid);font-size:13px}
   td.n{font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:nowrap;width:1%}
   td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mid);width:1%}
+  .note{
+    background:var(--raise); border:1px solid var(--rule); border-radius:8px;
+    padding:.75rem 1rem; margin:1rem 0;
+  }
+  .note .prose>*:first-child{margin-top:0}
+  .note .prose>*:last-child{margin-bottom:0}
+  .noteset{color:var(--faint); font-size:.75rem; margin:.5rem 0 0}
   .empty{color:var(--faint);font-size:13.5px}
   footer{border-top:1px solid var(--rule);padding-top:12px;color:var(--faint);font-size:12px}
 </style>
@@ -127,6 +134,8 @@
     <div class="stamp">{{.GeneratedAt}} · {{.Stamp}}</div>
   </header>
 
+  {{template "note" (index .Notes "intro")}}
+
   <section>
     <h2>next fortnight</h2>
     {{if .Windows}}
@@ -137,6 +146,8 @@
     </div>
     {{else}}<p class="empty">no calendar entries</p>{{end}}
   </section>
+
+  {{template "note" (index .Notes "before-queue")}}
 
   <section>
     <h2>queue</h2>
@@ -173,6 +184,8 @@
     </ol>
   </section>
   {{end}}
+
+  {{template "note" (index .Notes "before-projects")}}
 
   <section>
     <h2>projects</h2>
@@ -262,6 +275,8 @@
   </section>
   {{end}}
 
+  {{template "note" (index .Notes "footer")}}
+
   <footer>The page is a view; the database is the truth. Nothing reads it back.</footer>
 </div>
 {{if .Live}}
@@ -285,6 +300,17 @@
   {{range .Issues}}<span>{{template "issue" .}}</span>{{end}}
 </div>
 {{end}}
+{{end}}
+
+{{/* A slot's prose, or nothing at all. Absent is the ordinary state — most
+     slots are empty on most pages — so this draws no container when there is
+     nothing to put in one. */}}
+{{define "note"}}
+{{/* On .Body, not on the value: a missing key yields a zero struct, and a
+     struct is always truthy in a template, so `{{if .}}` would draw an empty
+     box for every slot nobody has written to. */}}
+{{if .Body}}<section class="note"><div class="prose">{{.Body}}</div>
+<p class="noteset">written {{.Set}}</p></section>{{end}}
 {{end}}
 
 {{define "issue"}}

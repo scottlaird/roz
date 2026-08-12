@@ -52,6 +52,7 @@ func NewRootCmd() *cobra.Command {
 		newCodeownersCmd(),
 		newNoteCmd(),
 		newExceptionCmd(),
+		newPageCmd(),
 		newRenderCmd(),
 		newServeCmd(),
 		newMCPCmd(),

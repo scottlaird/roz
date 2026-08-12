@@ -438,6 +438,19 @@ CREATE TABLE project_tracker_issue (
 -- "one item covering two unrelated PRs" unrepresentable rather than merely wrong
 CREATE UNIQUE INDEX action_one_subject ON action_pr(action_id) WHERE role = 'subject';
 
+-- ── the page's own prose ─────────────────────────────────────────────
+
+-- Authored prose the page places, keyed by slot rather than attached to an
+-- item. Distinct from `roz note`, which puts a comment in the log against a
+-- subject. The key comes from a closed set the renderer knows; see 0018 for
+-- why that set is not a CHECK.
+CREATE TABLE page_note (
+  key        TEXT PRIMARY KEY,
+  body       TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
 -- ── log — deliberately no foreign keys ───────────────────────────────
 CREATE TABLE event (
   seq          INTEGER PRIMARY KEY,            -- rowid: monotonic, and the tiebreak

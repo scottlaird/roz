@@ -77,6 +77,7 @@ directory.
 | `roz exception` | Record an exception for a monitor to surface. |
 | **other** | |
 | `roz calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
+| `roz page set` / `show` / `list` / `clear` | Prose the page places, keyed by slot. |
 | `roz render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `roz config set`. |
 | `roz verify` | Record that a project or action was checked against reality. Feeds `--sort staleness`. |
 | `roz db backup` / `restore` | Copy the database out with `VACUUM INTO`, and put one back. |
@@ -562,6 +563,47 @@ Error: the short name "api" is already acme/api-server
 It cannot contain `/` or `#`, since those are exactly what tell `acme/api#1`
 and `api#1` apart. A reference written out in full still wins over a short name
 matching its tail, so `acme/api-server#1` is one link and not two.
+
+## Prose the page places
+
+Some of what belongs on a queue page is text nothing can derive: an
+introduction, what you have decided matters this week, a standing caveat.
+
+```console
+$ roz page set intro --body - <<'MD'
+This week is about the merge queue.
+
+- finish the ejection work
+- then CODEOWNERS
+MD
+
+$ roz page list
+SLOT             SET         FIRST LINE
+intro            2026-08-12  This week is about the merge queue.
+before-queue     -           -
+before-projects  -           -
+footer           -           -
+```
+
+This is not `roz note`, which puts a comment in the log against a subject so
+that narrative stays out of the record. This is the opposite case: content that
+exists in order to be shown.
+
+A slot is a place on the page, and the set is closed. That is deliberate twice
+over. A note filed under a key nothing renders would be invisible rather than
+wrong, with no error to say so — so an unknown key is refused. And the page is
+worth reading because almost all of it is derived; four places to put prose is
+a page with some prose on it, while arbitrary keys would be somewhere to put
+anything, which is how that erodes one block at a time.
+
+Notes are Markdown and are linked like every other prose field, so an
+introduction naming `SL7` links it. An empty slot draws nothing, not an empty
+box, and `page clear` empties rather than deletes — what the page used to say
+is in the log.
+
+Each shows when it was last written. A note is authored and nothing revisits
+it, so its age is how much to trust it — the same risk `--why` and `--summary`
+already carry.
 
 ## The page links to itself
 

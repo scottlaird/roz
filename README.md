@@ -798,8 +798,35 @@ would cover
 nothing. Somebody in two owning teams satisfies both at once, which is why one
 review can finish a change that has no sole approver at team granularity.
 
-`--team` is a stand-in. Resolving a login to its teams properly needs the
-GitHub API, and until that exists the mapping is supplied by hand.
+`--pr` fetches all three from GitHub instead — the changed files, the
+CODEOWNERS on the base branch, and who has already approved:
+
+```console
+$ roz codeowners --pr cli/cli#14130
+owners  .github/CODEOWNERS@trunk
+files       16
+any one of  @cli/code-reviewers
+
+would cover
+  @cli/code-reviewers  16 of 16
+```
+
+The rules come from the **base branch**, not the default one: a change into a
+release branch is governed by that branch's file, and the output names the ref
+it used so it is clear which.
+
+The file list is paginated to completion rather than capped. A missing file
+could turn "no single owner covers this" into "one does", and being wrong in
+that direction is worse than being slow.
+
+This is deliberately not part of the poll. The file list is large, changes only
+when someone pushes, and is wanted when a person asks — so paying for it per
+pull request per minute would be the wrong trade.
+
+`--team` is still a stand-in. Resolving a login to its teams needs an org read
+the rest of this does not, so until that exists the mapping is supplied by
+hand; `--approved` adds to whatever the pull request already reports rather
+than replacing it.
 
 ## When a pull request falls out of the merge queue
 

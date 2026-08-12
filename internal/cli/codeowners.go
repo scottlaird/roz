@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/scottlaird/roz/internal/codeowners"
+	"github.com/scottlaird/roz/internal/github"
 )
 
 const (
@@ -18,6 +20,7 @@ const (
 	flagApproved   = "approved"
 	flagPath       = "path"
 	flagTeam       = "team"
+	flagForPR      = "pr"
 )
 
 func newCodeownersCmd() *cobra.Command {
@@ -37,6 +40,10 @@ func newCodeownersCmd() *cobra.Command {
 			"the teams it approves for needs the GitHub API. --team supplies that\n" +
 			"mapping by hand where it matters: --team org/platform=alice,bob makes\n" +
 			"--approved alice satisfy the team as well as the person.\n\n" +
+			"--pr fetches all three from GitHub instead — the changed files, the\n" +
+			"CODEOWNERS on the base branch, and who has already approved — which is\n" +
+			"the whole question in one command:\n\n" +
+			"  roz codeowners --pr owner/repo#812\n\n" +
 			"Nothing here reads the database. It is the library behind review\n" +
 			"routing, exposed so it can be pointed at a real change today.",
 		Args: cobra.NoArgs,
@@ -49,50 +56,106 @@ func newCodeownersCmd() *cobra.Command {
 	// stdin is the natural way to pipe a file list, and the one way an agent
 	// calling this over MCP cannot use.
 	f.StringArray(flagPath, nil, "a changed path; repeatable, and read from stdin when not given")
+	f.String(flagForPR, "", "read the files, CODEOWNERS and approvals from a pull request, e.g. owner/repo#812")
 	return cmd
 }
 
 func runCodeowners(cmd *cobra.Command, _ []string) error {
 	f := cmd.Flags()
 
-	path, err := f.GetString(flagOwnersFile)
+	text, source, paths, approvedBy, err := changeUnderReview(cmd)
 	if err != nil {
 		return err
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", path, err)
-	}
-	owners, err := codeowners.ParseString(string(raw))
-	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
 	}
 
-	paths, err := f.GetStringArray(flagPath)
+	owners, err := codeowners.ParseString(text)
 	if err != nil {
-		return err
-	}
-	if len(paths) == 0 {
-		if paths, err = readPaths(cmd.InOrStdin()); err != nil {
-			return err
-		}
-	}
-	if len(paths) == 0 {
-		return fmt.Errorf("no paths: pass --%s, or pipe a file list, e.g. `gh pr diff N --name-only`",
-			flagPath)
+		return fmt.Errorf("%s: %w", source, err)
 	}
 
 	teams, err := teamsFrom(cmd)
 	if err != nil {
 		return err
 	}
-	approvedBy, err := f.GetStringSlice(flagApproved)
+	// --approved adds to whatever the pull request already reports, rather
+	// than replacing it: naming somebody by hand should not quietly discard
+	// the approvals GitHub knows about.
+	given, err := f.GetStringSlice(flagApproved)
 	if err != nil {
 		return err
 	}
-	approved := codeowners.Approval(approvedBy, teams)
+	approvedBy = append(approvedBy, given...)
 
-	return reportOwnership(cmd.OutOrStdout(), owners.Of(paths), approved, len(approvedBy) > 0)
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "owners  %s\n", source)
+	return reportOwnership(out, owners.Of(paths),
+		codeowners.Approval(approvedBy, teams), len(approvedBy) > 0)
+}
+
+// changeUnderReview resolves what to reason about: a pull request GitHub can
+// describe, or a file and a list of paths supplied by hand.
+func changeUnderReview(cmd *cobra.Command) (text, source string, paths, approved []string, err error) {
+	f := cmd.Flags()
+
+	key, err := f.GetString(flagForPR)
+	if err != nil {
+		return "", "", nil, nil, err
+	}
+
+	if key != "" {
+		if f.Changed(flagPath) {
+			return "", "", nil, nil,
+				fmt.Errorf("--%s brings its own file list; drop --%s", flagForPR, flagPath)
+		}
+		change, err := newChangeReader().Change(cmd.Context(), key)
+		if err != nil {
+			return "", "", nil, nil, err
+		}
+		if change.Codeowners == "" {
+			return "", "", nil, nil, fmt.Errorf(
+				"%s has no CODEOWNERS on %s, so nobody in particular is required",
+				key, change.BaseRef)
+		}
+		// Who has already approved is part of the answer, not something to go
+		// and look up and type back in.
+		return change.Codeowners,
+			fmt.Sprintf("%s@%s", change.CodeownersPath, change.BaseRef),
+			change.Files, change.Approvals, nil
+	}
+
+	path, err := f.GetString(flagOwnersFile)
+	if err != nil {
+		return "", "", nil, nil, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", nil, nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	if paths, err = f.GetStringArray(flagPath); err != nil {
+		return "", "", nil, nil, err
+	}
+	if len(paths) == 0 {
+		if paths, err = readPaths(cmd.InOrStdin()); err != nil {
+			return "", "", nil, nil, err
+		}
+	}
+	if len(paths) == 0 {
+		return "", "", nil, nil, fmt.Errorf(
+			"no paths: pass --%s or --%s, or pipe a file list, e.g. `gh pr diff N --name-only`",
+			flagForPR, flagPath)
+	}
+	return string(raw), path, paths, nil, nil
+}
+
+// newChangeReader builds the GitHub client. A test replaces it, the way
+// newFetcher is replaced for sync.
+var newChangeReader = func() changeReader { return github.New() }
+
+// changeReader is the one call this needs, named so a test can stand in for
+// it without a network.
+type changeReader interface {
+	Change(ctx context.Context, key string) (github.Change, error)
 }
 
 // readPaths takes the file list off stdin, one per line.
@@ -132,18 +195,30 @@ func reportOwnership(out io.Writer, o *codeowners.Ownership,
 	approved codeowners.OwnerSet, anyApproved bool) error {
 
 	remaining := o.Remaining(approved)
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	unowned := o.Unowned()
+	// Nothing owned at all is its own answer, and a common one against a
+	// CODEOWNERS that covers a few specific paths in a large repository.
+	// Reporting "no single owner covers every file" there is true and
+	// misleading: it reads as a problem, and sits oddly beside the "nothing
+	// outstanding" that follows.
+	nobodyRequired := len(unowned) == len(o.Files)
 
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(w, "files\t%d\n", len(o.Files))
-	if unowned := o.Unowned(); len(unowned) > 0 {
+	if len(unowned) > 0 {
 		fmt.Fprintf(w, "unowned\t%d\n", len(unowned))
 	}
 
-	// The cheap answer first: it is often the only one needed.
-	if sole := o.SoleApprovers(); len(sole) > 0 {
-		fmt.Fprintf(w, "any one of\t%s\n", joinOwners(sole))
-	} else if !anyApproved {
-		fmt.Fprintf(w, "any one of\t-\tno single owner covers every file\n")
+	switch {
+	case nobodyRequired:
+		fmt.Fprintf(w, "required\t-\tno rule matches any of these files\n")
+	// The cheap answer next: it is often the only one needed.
+	default:
+		if sole := o.SoleApprovers(); len(sole) > 0 {
+			fmt.Fprintf(w, "any one of\t%s\n", joinOwners(sole))
+		} else if !anyApproved {
+			fmt.Fprintf(w, "any one of\t-\tno single owner covers every file\n")
+		}
 	}
 
 	if anyApproved {
@@ -155,7 +230,9 @@ func reportOwnership(out io.Writer, o *codeowners.Ownership,
 	}
 
 	if len(remaining) == 0 {
-		fmt.Fprintln(out, "\nnothing outstanding")
+		if !nobodyRequired {
+			fmt.Fprintln(out, "\nnothing outstanding")
+		}
 		return nil
 	}
 

@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/roz/internal/github"
 )
 
 const ownersFile = `*            @org/platform
@@ -97,5 +100,116 @@ func TestCodeownersRejections(t *testing.T) {
 	// No paths at all, with stdin empty.
 	if _, err := runCLI(t, "codeowners", "--owners", owners); err == nil {
 		t.Error("running with no paths was accepted")
+	}
+}
+
+// stubChange stands in for GitHub.
+type stubChange struct {
+	change github.Change
+	err    error
+	asked  string
+}
+
+func (s *stubChange) Change(_ context.Context, key string) (github.Change, error) {
+	s.asked = key
+	return s.change, s.err
+}
+
+func withChangeReader(t *testing.T, stub *stubChange) {
+	t.Helper()
+	previous := newChangeReader
+	newChangeReader = func() changeReader { return stub }
+	t.Cleanup(func() { newChangeReader = previous })
+}
+
+// TestCodeownersFromAPullRequest is the whole question in one command: the
+// files, the CODEOWNERS on the base branch, and who has already approved.
+func TestCodeownersFromAPullRequest(t *testing.T) {
+	withChangeReader(t, &stubChange{change: github.Change{
+		Key:            "owner/repo#1",
+		BaseRef:        "main",
+		Files:          []string{"README.md", "storage/engine.go", "api/v1.proto"},
+		Codeowners:     ownersFile,
+		CodeownersPath: ".github/CODEOWNERS",
+		Approvals:      []string{"bob"},
+	}})
+
+	out, err := runCLI(t, "codeowners", "--pr", "owner/repo#1",
+		"--team", "org/platform=alice,bob")
+	if err != nil {
+		t.Fatalf("codeowners returned error: %v", err)
+	}
+	// The base ref is named, so it is clear which rules were applied.
+	if !strings.Contains(out, ".github/CODEOWNERS@main") {
+		t.Errorf("the source of the rules is not reported:\n%s", out)
+	}
+	// bob's approval arrived from GitHub, and expanded to his team.
+	if !strings.Contains(out, "@org/platform") {
+		t.Errorf("the reported approval did not expand to a team:\n%s", out)
+	}
+	if !strings.Contains(out, "outstanding  2") {
+		t.Errorf("want two files left after platform:\n%s", out)
+	}
+}
+
+func TestCodeownersPullRequestRejections(t *testing.T) {
+	withChangeReader(t, &stubChange{change: github.Change{
+		BaseRef: "main", Files: []string{"a.go"},
+	}})
+	// No CODEOWNERS on the base branch: nobody in particular is required, and
+	// saying so beats printing a table about nothing.
+	if _, err := runCLI(t, "codeowners", "--pr", "owner/repo#1"); err == nil {
+		t.Error("a repository with no CODEOWNERS was accepted")
+	}
+
+	withChangeReader(t, &stubChange{change: github.Change{
+		BaseRef: "main", Files: []string{"a.go"}, Codeowners: ownersFile,
+	}})
+	if _, err := runCLI(t, "codeowners", "--pr", "owner/repo#1", "--path", "b.go"); err == nil {
+		t.Error("--pr together with --path was accepted")
+	}
+}
+
+// TestCodeownersAddsToTheApprovalsGitHubReports: naming somebody by hand
+// should not discard the approvals already on the pull request.
+func TestCodeownersAddsToTheApprovalsGitHubReports(t *testing.T) {
+	withChangeReader(t, &stubChange{change: github.Change{
+		BaseRef:        "main",
+		Files:          []string{"README.md", "storage/engine.go"},
+		Codeowners:     ownersFile,
+		CodeownersPath: "CODEOWNERS",
+		Approvals:      []string{"bob"},
+	}})
+
+	out, err := runCLI(t, "codeowners", "--pr", "owner/repo#1",
+		"--team", "org/platform=alice,bob", "--approved", "@org/storage")
+	if err != nil {
+		t.Fatalf("codeowners returned error: %v", err)
+	}
+	if !strings.Contains(out, "nothing outstanding") {
+		t.Errorf("the two approvals together did not cover the change:\n%s", out)
+	}
+}
+
+// TestCodeownersWhenNothingIsOwned: a CODEOWNERS covering a few specific paths
+// in a large repository leaves most changes matching no rule at all. Reporting
+// "no single owner covers every file" there is true and reads as a problem,
+// and sat oddly beside the "nothing outstanding" that followed it.
+func TestCodeownersWhenNothingIsOwned(t *testing.T) {
+	owners := writeOwners(t)
+
+	out, err := runCLI(t, "codeowners", "--owners", owners,
+		"--path", "vendor/a.go", "--path", "vendor/b.go")
+	if err != nil {
+		t.Fatalf("codeowners returned error: %v", err)
+	}
+	if !strings.Contains(out, "no rule matches any of these files") {
+		t.Errorf("want the plain answer that nobody is required:\n%s", out)
+	}
+	if strings.Contains(out, "no single owner covers every file") {
+		t.Errorf("a change nobody owns was reported as uncoverable:\n%s", out)
+	}
+	if strings.Contains(out, "nothing outstanding") {
+		t.Errorf("two answers to the same question:\n%s", out)
 	}
 }

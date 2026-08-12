@@ -49,6 +49,7 @@ func NewRootCmd() *cobra.Command {
 		newIssueCmd(),
 		newPipelineCmd(),
 		newVerifyCmd(),
+		newCodeownersCmd(),
 		newNoteCmd(),
 		newExceptionCmd(),
 		newRenderCmd(),

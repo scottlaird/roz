@@ -67,6 +67,7 @@ directory.
 | `roz mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
 | `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
 | **vocabulary** | |
+| `roz codeowners` | Who has to approve a set of changed files, and who is still worth asking. |
 | `roz verb set` | Change a verb's `wait_days` or `rank_class`. Settings, not definitions. |
 | `roz verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
 | `roz pipeline list` | The pipelines and their steps. |
@@ -752,6 +753,53 @@ A snooze outranks the graph: a project deferred to a date is not un-deferred
 by an edge, because a snooze is a decision about time. There is no project
 equivalent of `hide-behind`, since folding something out of a queue is a
 judgement about a queue and the project table is not one.
+
+## Who has to approve this
+
+CODEOWNERS says who owns which paths. What it does not say — and what a list
+of the owners a change mentions cannot tell you — is whether one person could
+approve the whole thing, and once somebody has, which of the rest would
+actually help.
+
+```console
+$ gh pr diff 123 --name-only | roz codeowners --owners CODEOWNERS
+files       5
+unowned     1
+any one of  -  no single owner covers every file
+
+would cover
+  @org/platform  2 of 4
+  @org/api       1 of 4
+  @org/storage   1 of 4
+
+fewest approvals: @org/platform @org/api @org/storage
+```
+
+The reduction is the point. Rules overlap: one owner has the repository, a
+second carves out a directory, a third owns a glob reaching back into it. Only
+the last rule matching a path decides it, so which owners a change genuinely
+needs is a question about the file-to-owner map rather than about the file.
+
+A review arrives naming a person, and the files are owned by teams, so an
+approval is expanded into every owner it satisfies — the person, and each team
+they belong to:
+
+```console
+$ ... | roz codeowners --owners CODEOWNERS --team org/platform=alice,bob --approved bob
+approved as  @bob @org/platform
+outstanding  2
+
+would cover
+  @org/api      1 of 2
+  @org/storage  1 of 2
+```
+
+`@org/platform` is gone from that list: asking them again would achieve
+nothing. Somebody in two owning teams satisfies both at once, which is why one
+review can finish a change that has no sole approver at team granularity.
+
+`--team` is a stand-in. Resolving a login to its teams properly needs the
+GitHub API, and until that exists the mapping is supplied by hand.
 
 ## When a pull request falls out of the merge queue
 

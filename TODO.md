@@ -496,6 +496,16 @@ bites; not worth one before.
   matches: a constraint-shaped matcher is not a name any ref has, and a
   name-shaped one does not parse, so the arms overlap only where a name is also
   a version.
+- **An exception for a standing condition is logged once a day, not once a
+  poll.** Sync re-derives the world every few seconds, so a pull request that
+  has gone invisible or a repository too large for the ref feed is found again
+  on every pass. Logging each one buries the log a monitor watches and teaches
+  whoever reads it to skip that source, which costs more than the repeats do —
+  the first notice was worth having. Keyed on the condition, never the message:
+  two problems on one repository stay separate, and a detail moving does not
+  defeat it. The log is the record, the same way the overdue query already
+  decides whether a wait has been reported. `roz exception` is untouched, since
+  a person recording one deliberately is not a poll restating itself.
 - **A ref page that fails stops that batch rather than the sync.** A connection
   large enough to need paging is large enough for GitHub to time out serving
   it, and one unreadable repository must not take the pull request poll down

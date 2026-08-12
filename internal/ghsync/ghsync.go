@@ -239,10 +239,15 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 		}
 	}
 
-	result.Truncated = fetched.Truncated
+	// Reported to the caller only when it was reported to the log, so a
+	// syncer polling every few seconds does not restate it either.
 	for _, t := range fetched.Truncated {
-		if err := reportTruncated(ctx, st, t); err != nil {
+		reported, err := reportTruncated(ctx, st, t)
+		if err != nil {
 			return err
+		}
+		if reported {
+			result.Truncated = append(result.Truncated, t)
 		}
 	}
 	return nil
@@ -264,7 +269,7 @@ const eventRefsTruncated = "ref_poll_truncated"
 // The remedy is narrowing the filter rather than reading more: a repository
 // with eighty thousand tags has them one per component release, and no number
 // of pages makes a top-level release findable among those.
-func reportTruncated(ctx context.Context, st *store.Store, t github.RefTruncation) error {
+func reportTruncated(ctx context.Context, st *store.Store, t github.RefTruncation) (bool, error) {
 	filter := t.Query.Contains
 	if filter == "" {
 		filter = "the whole namespace"
@@ -275,24 +280,27 @@ func reportTruncated(ctx context.Context, st *store.Store, t github.RefTruncatio
 
 	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 
 	subject, err := tx.LoadGitHubRepo(ctx, t.Query.Repo)
 	if err != nil {
-		return nil
+		return false, nil
 	}
-	if err := tx.Exception(ctx, subject, eventRefsTruncated, why); err != nil {
-		return err
+	// Once a day rather than once a poll. The filter being too broad is a
+	// standing fact about the repository, not something that happens.
+	reported, err := tx.ExceptionOnce(ctx, subject, eventRefsTruncated, why)
+	if err != nil {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return false, err
 	}
 
 	_, err = st.RaiseAction(ctx, eventRefsTruncated, subject,
 		fmt.Sprintf("narrow the ref filter for %s", t.Query.Repo), why)
-	return err
+	return reported, err
 }
 
 // firstPollOf reports which of the repositories about to be read have never
@@ -387,7 +395,9 @@ func reportUnreadableRepo(ctx context.Context, st *store.Store, repo, why string
 		// was never tracked, and that is the command's business, not sync's.
 		return nil
 	}
-	if err := tx.Exception(ctx, subject, eventUnreadableRepo, why); err != nil {
+	// A repository that will not resolve stays unresolvable, and sync sees it
+	// afresh every poll. One notice a day, not one a poll.
+	if _, err := tx.ExceptionOnce(ctx, subject, eventUnreadableRepo, why); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -533,7 +543,9 @@ func reportMissing(ctx context.Context, st *store.Store, key, why string) error 
 		// useful to attach the exception to.
 		return nil
 	}
-	if err := tx.Exception(ctx, subject, eventUnresolvable, why); err != nil {
+	// Same standing condition as the two above: sync re-derives it on every
+	// poll, so the log gets one notice a day rather than one each time.
+	if _, err := tx.ExceptionOnce(ctx, subject, eventUnresolvable, why); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

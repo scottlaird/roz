@@ -1106,6 +1106,26 @@ A wait is reported once. The log is the record of that, so nothing else has to
 remember; and if the deadline moves out because a fresh review was requested,
 it is reported again, because it is a different wait.
 
+### A standing condition is reported once a day
+
+Some exceptions describe a situation rather than an event: a pull request that
+has gone invisible, a repository too large for the ref feed. Sync cannot tell
+"this just became true" from "this is still true" — it re-derives the world
+every few seconds and finds the same thing each time — so those are logged once
+and then stay quiet for a day.
+
+The key is the condition: the exception kind, and what it is about. Two
+problems on one repository are two conditions and both surface; rewording a
+message does not defeat the suppression, and neither does a detail moving, like
+a ref count creeping up. A condition still outstanding tomorrow is mentioned
+again, because by then the first notice has scrolled out of view.
+
+The first occurrence is never delayed. Suppressing repeats is the point;
+suppressing the signal would be a different bug.
+
+`roz exception` is unaffected — a person recording one deliberately is not a
+poll restating itself.
+
 ## Waiting for a release
 
 Waiting for a release used to be a snooze to a guessed date. That is wrong in

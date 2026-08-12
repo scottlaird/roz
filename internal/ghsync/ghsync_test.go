@@ -1005,3 +1005,82 @@ func newBareStore(t *testing.T) *store.Store {
 	}
 	return st
 }
+
+// TestSyncReportsAnUnreadablePullRequestOnce is the reported bug through sync:
+// a condition that is true on every poll writes one line, not one per poll.
+func TestSyncReportsAnUnreadablePullRequestOnce(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{
+		Missing: map[string]string{key: "is not a pull request GitHub will show us"},
+	}}
+
+	for i := 0; i < 6; i++ {
+		if _, err := Sync(ctx, st, client); err != nil {
+			t.Fatalf("Sync() returned error: %v", err)
+		}
+	}
+
+	events, err := st.Events(ctx, store.EventQuery{Severity: store.SeverityException})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	var reported int
+	for _, e := range events {
+		if e.Kind == "pr_unresolvable" && e.SubjectID == key {
+			reported++
+		}
+	}
+	if reported != 1 {
+		t.Errorf("six polls logged %d exceptions for one standing condition, want 1", reported)
+	}
+}
+
+// TestSyncReportsATruncatedFilterOnce is the same for the ref feed, and also
+// checks that the caller is told only when the log was.
+func TestSyncReportsATruncatedFilterOnce(t *testing.T) {
+	ctx := context.Background()
+	st := newBareStore(t)
+	addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.5",
+	})
+
+	client := &fakeFetcher{refs: github.RefResult{
+		Truncated: []github.RefTruncation{{
+			Query:   github.RefQuery{Repo: "owner/repo", Prefix: "refs/tags/"},
+			Matched: 82234, Read: 500,
+		}},
+	}}
+
+	first, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(first.Truncated) != 1 {
+		t.Fatalf("the first sync reported %d truncations, want 1", len(first.Truncated))
+	}
+
+	for i := 0; i < 5; i++ {
+		again, err := Sync(ctx, st, client)
+		if err != nil {
+			t.Fatalf("Sync() returned error: %v", err)
+		}
+		if len(again.Truncated) != 0 {
+			t.Fatalf("poll %d restated the truncation", i+2)
+		}
+	}
+
+	events, err := st.Events(ctx, store.EventQuery{Severity: store.SeverityException})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	var reported int
+	for _, e := range events {
+		if e.Kind == "ref_poll_truncated" {
+			reported++
+		}
+	}
+	if reported != 1 {
+		t.Errorf("six polls logged %d truncation exceptions, want 1", reported)
+	}
+}

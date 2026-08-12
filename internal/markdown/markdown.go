@@ -33,7 +33,32 @@ var (
 	prPattern      = regexp.MustCompile(`\b([\w.-]+/[\w.-]+)#(\d+)\b`)
 )
 
-// A Linker knows which identifiers point somewhere and where they point.
+// Kinds of thing a link can point at.
+const (
+	KindPR   = "pr"
+	KindJira = "jira"
+)
+
+// Target is what a link destination resolves to: a kind and the identifier
+// roz knows that thing by.
+//
+// Resolution keys off the destination rather than off how the link was
+// written, which is what lets a hand-written link be annotated as readily as
+// an auto-linked identifier. `[cp#12345](https://github.com/acme/api/pull/12345)`
+// keeps whatever text its author wanted and still resolves, because the href
+// says unambiguously what it points at.
+type Target struct {
+	Kind string
+	Key  string
+}
+
+// TitleFunc describes what a target is, for a tooltip. An empty string means
+// nothing is known about it, and nothing is what should then be shown: a link
+// to something untracked is better bare than captioned with a guess.
+type TitleFunc func(Target) string
+
+// A Linker knows which identifiers point somewhere, where they point, and —
+// given a destination — what is there.
 //
 // It is shared by the two paths deliberately. Titles are plain text and prose
 // fields are Markdown, so they are escaped and parsed quite differently, but
@@ -42,6 +67,64 @@ var (
 type Linker struct {
 	jiraBase string
 	jira     map[string]bool
+	titles   TitleFunc
+}
+
+// prURLPattern matches the destination this package emits for a pull request,
+// and the one a person writing the link out in full would use. The trailing
+// segment is deliberately loose: GitHub redirects /issues/N to /pull/N for the
+// same number, and both forms appear in prose.
+var prURLPattern = regexp.MustCompile(
+	`^https?://(?:www\.)?github\.com/([\w.-]+)/([\w.-]+)/(?:pull|issues)/(\d+)(?:[/?#].*)?$`)
+
+// Resolve says what a link destination points at.
+//
+// Only shapes roz can name are resolved: a pull request in a repository it
+// could be tracking, and a Jira issue under the configured base. Anything else
+// is a link to the wider world, which this has nothing to add to.
+func (l *Linker) Resolve(dest string) (Target, bool) {
+	if m := prURLPattern.FindStringSubmatch(dest); m != nil {
+		return Target{Kind: KindPR, Key: m[1] + "/" + m[2] + "#" + m[3]}, true
+	}
+	if l.jiraBase != "" && strings.HasPrefix(dest, l.jiraBase+"/") {
+		key := strings.TrimPrefix(dest, l.jiraBase+"/")
+		if key != "" && !strings.ContainsAny(key, "/?#") {
+			return Target{Kind: KindJira, Key: key}, true
+		}
+	}
+	return Target{}, false
+}
+
+// titleFor is the tooltip for a destination, or empty when there is none.
+func (l *Linker) titleFor(dest string) string {
+	if l.titles == nil {
+		return ""
+	}
+	target, ok := l.Resolve(dest)
+	if !ok {
+		return ""
+	}
+	return Tooltip(l.titles(target))
+}
+
+// tooltipLimit is where a title is cut. A tooltip is a glance, not a place to
+// read eighty characters plus a repository name, and browsers will render
+// whatever length they are given on one line.
+const tooltipLimit = 90
+
+// Tooltip trims a title to something a hover can hold, cutting on a word
+// boundary so the result reads as a truncated sentence rather than a truncated
+// word.
+func Tooltip(title string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	if len(title) <= tooltipLimit {
+		return title
+	}
+	cut := title[:tooltipLimit]
+	if i := strings.LastIndex(cut, " "); i > tooltipLimit/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,;:.") + "…"
 }
 
 // NewLinker configures linking. An empty jiraBase or an empty prefix list
@@ -51,8 +134,8 @@ type Linker struct {
 // prefixes. The shape of a key is not distinctive enough to match on: the
 // obvious pattern also matches UTF-8, SHA-256, ISO-8601 and CVE-2024, each of
 // which would become a confident link to nothing.
-func NewLinker(jiraBase string, jiraPrefixes []string) *Linker {
-	l := &Linker{jiraBase: strings.TrimSuffix(jiraBase, "/")}
+func NewLinker(jiraBase string, jiraPrefixes []string, titles TitleFunc) *Linker {
+	l := &Linker{jiraBase: strings.TrimSuffix(jiraBase, "/"), titles: titles}
 	if l.jiraBase == "" {
 		return l
 	}
@@ -131,6 +214,10 @@ func (l *Linker) Text(s string) template.HTML {
 		b.WriteString(template.HTMLEscapeString(s[at:r.start]))
 		b.WriteString(`<a href="`)
 		b.WriteString(template.HTMLEscapeString(r.dest))
+		if title := l.titleFor(r.dest); title != "" {
+			b.WriteString(`" title="`)
+			b.WriteString(template.HTMLEscapeString(title))
+		}
 		b.WriteString(`">`)
 		b.WriteString(template.HTMLEscapeString(s[r.start:r.end]))
 		b.WriteString(`</a>`)
@@ -199,12 +286,21 @@ func (t *linkTransformer) Transform(doc *ast.Document, reader text.Reader, _ par
 	// Collected first and rewritten after: replacing a node splices its
 	// parent's child list, which is not a thing to do to a walk in progress.
 	var targets []*ast.Text
+	var written []*ast.Link
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
 		switch n.Kind() {
-		case ast.KindLink, ast.KindAutoLink, ast.KindCodeSpan,
+		case ast.KindLink:
+			// A link the author wrote. Its children are its display text and
+			// hold no identifiers to rewrite, but the link itself may point at
+			// something worth captioning.
+			if node, ok := n.(*ast.Link); ok {
+				written = append(written, node)
+			}
+			return ast.WalkSkipChildren, nil
+		case ast.KindAutoLink, ast.KindCodeSpan,
 			ast.KindCodeBlock, ast.KindFencedCodeBlock, ast.KindHTMLBlock, ast.KindRawHTML:
 			return ast.WalkSkipChildren, nil
 		case ast.KindText:
@@ -217,6 +313,23 @@ func (t *linkTransformer) Transform(doc *ast.Document, reader text.Reader, _ par
 
 	for _, node := range targets {
 		t.rewrite(node, source)
+	}
+	// Hand-written links, annotated the same way the generated ones are: what
+	// a link points at is a property of its destination, not of how it came to
+	// be there.
+	for _, node := range written {
+		t.annotate(node)
+	}
+}
+
+// annotate gives a link the title of whatever it points at, leaving a title
+// the author wrote alone.
+func (t *linkTransformer) annotate(node *ast.Link) {
+	if len(node.Title) > 0 {
+		return
+	}
+	if title := t.links.titleFor(string(node.Destination)); title != "" {
+		node.Title = []byte(title)
 	}
 }
 
@@ -251,6 +364,7 @@ func (t *linkTransformer) rewrite(node *ast.Text, source []byte) {
 		}
 		link := ast.NewLink()
 		link.Destination = []byte(r.dest)
+		t.annotate(link)
 		link.AppendChild(link, ast.NewTextSegment(
 			text.NewSegment(segment.Start+r.start, segment.Start+r.end)))
 		insert(link)

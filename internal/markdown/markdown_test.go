@@ -7,7 +7,7 @@ import (
 
 const base = "https://example.atlassian.net/browse"
 
-func testLinker() *Linker { return NewLinker(base, []string{"CDSS"}) }
+func testLinker() *Linker { return NewLinker(base, []string{"CDSS"}, nil) }
 
 // TestText covers the plain path: most of a title's references are written
 // into the sentence rather than attached as a link, so the page has to find
@@ -51,7 +51,7 @@ func TestTextLinksNothingItCannotPlace(t *testing.T) {
 
 	// Without a base URL there is nowhere for a key to point, and guessing at
 	// a host would produce links that look right and go nowhere.
-	for _, l := range []*Linker{NewLinker("", []string{"CDSS"}), NewLinker(base, nil)} {
+	for _, l := range []*Linker{NewLinker("", []string{"CDSS"}, nil), NewLinker(base, nil, nil)} {
 		if got := string(l.Text("Close CDSS-1557")); strings.Contains(got, "<a") {
 			t.Errorf("Text linked with an unconfigured linker: %q", got)
 		}
@@ -62,7 +62,7 @@ func TestTextLinksNothingItCannotPlace(t *testing.T) {
 // Jira project sits inside the pull request's own match, and linking it would
 // put an anchor in the middle of a repository name.
 func TestOverlappingIdentifiersResolveToTheLongerOne(t *testing.T) {
-	links := NewLinker(base, []string{"ACME"})
+	links := NewLinker(base, []string{"ACME"}, nil)
 
 	got := string(links.Text("see ACME-1/tools#4 for the rest"))
 	want := `<a href="https://github.com/ACME-1/tools/pull/4">ACME-1/tools#4</a>`
@@ -196,5 +196,146 @@ func TestValidateSaysWhatItFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "<b>") {
 		t.Errorf("error = %v, want it to quote the tag", err)
+	}
+}
+
+// titles is a lookup for the tests: one tracked pull request and one observed
+// Jira issue, and nothing else known.
+func titles() TitleFunc {
+	known := map[Target]string{
+		{Kind: KindPR, Key: "acme/api#1234"}: "Retry the upstream call on 503",
+		{Kind: KindJira, Key: "CDSS-1744"}:   "Allow scaling the nodepool up",
+	}
+	return func(t Target) string { return known[t] }
+}
+
+func withTitles() *Linker {
+	return NewLinker("https://example.atlassian.net/browse", []string{"CDSS"}, titles())
+}
+
+// renderWithTitles is the Markdown path with the same lookup behind it.
+func renderWithTitles() *Renderer { return NewRenderer(withTitles()) }
+
+func TestResolve(t *testing.T) {
+	l := withTitles()
+
+	for _, tc := range []struct {
+		dest string
+		want Target
+		ok   bool
+	}{
+		{"https://github.com/acme/api/pull/1234", Target{KindPR, "acme/api#1234"}, true},
+		// GitHub redirects between the two for a given number, and both forms
+		// turn up in prose.
+		{"https://github.com/acme/api/issues/1234", Target{KindPR, "acme/api#1234"}, true},
+		{"https://github.com/acme/api/pull/1234#discussion_r1", Target{KindPR, "acme/api#1234"}, true},
+		{"http://github.com/acme/api/pull/1234", Target{KindPR, "acme/api#1234"}, true},
+		{"https://example.atlassian.net/browse/CDSS-1744", Target{KindJira, "CDSS-1744"}, true},
+		// Not ours to caption.
+		{"https://example.com/anything", Target{}, false},
+		{"https://github.com/acme/api", Target{}, false},
+		{"https://github.com/acme/api/pull/notanumber", Target{}, false},
+		{"https://example.atlassian.net/browse/CDSS-1744/extra", Target{}, false},
+	} {
+		t.Run(tc.dest, func(t *testing.T) {
+			got, ok := l.Resolve(tc.dest)
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("Resolve(%q) = %v, %v; want %v, %v", tc.dest, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// TestTooltipOnAnAutoLinkedIdentifier: the identifier the linker found itself
+// gets the same treatment as one written out.
+func TestTooltipOnAnAutoLinkedIdentifier(t *testing.T) {
+	got := string(withTitles().Text("blocked on acme/api#1234"))
+
+	if !strings.Contains(got, `title="Retry the upstream call on 503"`) {
+		t.Errorf("Text() = %q, want the pull request's title", got)
+	}
+}
+
+// TestTooltipOnAHandWrittenLink is the case the design turns on. Keying off
+// the destination rather than the syntax means an author keeps whatever
+// display text they wanted and the link is still annotated.
+func TestTooltipOnAHandWrittenLink(t *testing.T) {
+	got := string(renderWithTitles().Render("see [cp#1234](https://github.com/acme/api/pull/1234)"))
+
+	if !strings.Contains(got, `title="Retry the upstream call on 503"`) {
+		t.Errorf("Render() = %q, want the tooltip on a hand-written link", got)
+	}
+	if !strings.Contains(got, ">cp#1234<") {
+		t.Errorf("Render() = %q, want the author's own display text kept", got)
+	}
+}
+
+func TestTooltipOnAJiraKey(t *testing.T) {
+	got := string(renderWithTitles().Render("tracked as CDSS-1744"))
+
+	if !strings.Contains(got, `title="Allow scaling the nodepool up"`) {
+		t.Errorf("Render() = %q, want the issue summary", got)
+	}
+}
+
+// TestNoTooltipWhenNothingIsKnown: absent rather than guessed. A blank title
+// claims roz looked and found nothing, which is a worse thing to say on a
+// hover than saying nothing at all.
+func TestNoTooltipWhenNothingIsKnown(t *testing.T) {
+	for _, src := range []string{
+		"untracked acme/other#99",
+		"unobserved CDSS-9999",
+		"elsewhere [a thing](https://example.com/x)",
+	} {
+		t.Run(src, func(t *testing.T) {
+			if got := string(renderWithTitles().Render(src)); strings.Contains(got, "title=") {
+				t.Errorf("Render(%q) = %q, want no tooltip", src, got)
+			}
+		})
+	}
+}
+
+// TestATitleTheAuthorWroteIsKept: Markdown has its own title syntax, and an
+// author who used it meant it.
+func TestATitleTheAuthorWroteIsKept(t *testing.T) {
+	got := string(renderWithTitles().Render(
+		`see [it](https://github.com/acme/api/pull/1234 "mine")`))
+
+	if !strings.Contains(got, `title="mine"`) {
+		t.Errorf("Render() = %q, want the author's title", got)
+	}
+}
+
+// TestNoTooltipInsideACodeSpan: the identifier is being quoted as text, and
+// nothing about it should become a link, captioned or otherwise.
+func TestNoTooltipInsideACodeSpan(t *testing.T) {
+	got := string(renderWithTitles().Render("write `acme/api#1234` literally"))
+
+	if strings.Contains(got, "title=") || strings.Contains(got, "<a ") {
+		t.Errorf("Render() = %q, want the code span left alone", got)
+	}
+}
+
+func TestTooltipTruncation(t *testing.T) {
+	long := "Make the scheduler retry transient upstream failures instead of " +
+		"failing the whole batch, which has been biting us since March"
+
+	got := Tooltip(long)
+	if len(got) > tooltipLimit+3 {
+		t.Errorf("Tooltip() = %q (%d bytes), want it cut near %d", got, len(got), tooltipLimit)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("Tooltip() = %q, want it to show it was cut", got)
+	}
+	// Cut on a word boundary, so it reads as a truncated sentence.
+	if strings.HasSuffix(strings.TrimSuffix(got, "…"), " ") {
+		t.Errorf("Tooltip() = %q, want no trailing space before the ellipsis", got)
+	}
+	if short := "already short"; Tooltip(short) != short {
+		t.Errorf("Tooltip(%q) = %q, want it untouched", short, Tooltip(short))
+	}
+	// Newlines in a stored title would break out of the attribute's line.
+	if got := Tooltip("two\nlines"); got != "two lines" {
+		t.Errorf("Tooltip() = %q, want the whitespace collapsed", got)
 	}
 }

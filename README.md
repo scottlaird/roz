@@ -529,6 +529,35 @@ override — one named verb instead of a hole in the rule — and it is logged a
 `sync:verify`, so the log says a person went and looked rather than that
 something reported it.
 
+## What a link points at
+
+Every link the page draws to something roz tracks carries a tooltip taken from
+the record it points at: a pull request's title, a Jira issue's summary.
+
+```html
+<a href="https://github.com/acme/api/pull/1234"
+   title="Retry the upstream call on 503">acme/api#1234</a>
+```
+
+The annotation keys off **where the link goes**, not how it was written, and
+that is the part worth knowing. A link written out in full keeps whatever
+display text its author chose and is still captioned:
+
+```markdown
+see [cp#1234](https://github.com/acme/api/pull/1234)
+```
+
+So there is no shorthand syntax to invent for this. A short form like `cp#1234`
+could not be resolved anyway — the alias is not knowable — while the full link
+is unambiguous, and an author who wants the short label can simply write it as
+the link text.
+
+Titles are read at render, so a renamed pull request shows its new title with
+nothing re-synced. Anything untracked, or tracked but never observed, gets no
+tooltip at all: a blank one would say roz looked and found nothing, which is a
+worse thing to claim on a hover than saying nothing. Long titles are cut at
+about ninety characters on a word boundary, because a tooltip is a glance.
+
 ## Prose fields
 
 Some fields are written as sentences rather than as values, and those are

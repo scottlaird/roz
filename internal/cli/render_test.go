@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/roz/internal/github"
 )
 
 // renderedFixture builds a database with something in every block, and
@@ -524,5 +526,57 @@ func TestPageLeavesALiveSnoozeHidden(t *testing.T) {
 	}
 	if strings.Contains(page, "still deferred") {
 		t.Errorf("a snooze that has not expired reached the page:\n%s", page)
+	}
+}
+
+// TestPageTooltipsLinksFromTheDatabase: the titles are already stored, and a
+// reader hovering an identifier should not have to follow it to learn what it
+// is.
+func TestPageTooltipsLinksFromTheDatabase(t *testing.T) {
+	db, key := trackedPR(t)
+	withFetcher(t, stubFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{{
+			Key: key, Repo: "owner/repo", Number: 1,
+			Title: "Retry the upstream call on 503", State: "OPEN", BaseRef: "main",
+		}},
+	}})
+	if _, err := runCLI(t, "sync", "github", "--db", db, "--quiet"); err != nil {
+		t.Fatalf("sync returned error: %v", err)
+	}
+
+	// One reference the linker finds itself, and one written out by hand with
+	// its own display text.
+	addAction(t, db, "--title", "look at "+key, "--verb", "decide",
+		"--why", "blocked on [that one](https://github.com/owner/repo/pull/1)")
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if got := strings.Count(page, `title="Retry the upstream call on 503"`); got != 2 {
+		t.Errorf("%d captioned links, want both the auto-linked and the hand-written one:\n%s",
+			got, page)
+	}
+	// The author's display text survives.
+	if !strings.Contains(page, ">that one<") {
+		t.Errorf("the hand-written link lost its text:\n%s", page)
+	}
+}
+
+// TestPageLeavesUntrackedLinksBare: absent rather than guessed.
+func TestPageLeavesUntrackedLinksBare(t *testing.T) {
+	db := initDB(t)
+	addAction(t, db, "--title", "look at owner/other#99", "--verb", "decide")
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if strings.Contains(page, "title=") {
+		t.Errorf("an untracked pull request was captioned:\n%s", page)
+	}
+	// Still linked, though — the link is right, only the caption is unknown.
+	if !strings.Contains(page, "owner/other/pull/99") {
+		t.Errorf("the link itself is missing:\n%s", page)
 	}
 }

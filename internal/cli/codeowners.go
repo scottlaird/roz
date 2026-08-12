@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -172,12 +171,12 @@ type changeReader interface {
 // call to make and --team is the whole answer. Only asked about the teams the
 // file names, which is why File.Teams exists.
 //
-// Not implemented yet, and that is handled rather than propagated: the rest of
-// the answer — which owners exist, what is unowned, whether one owner covers
-// everything — is correct without it, and refusing to print any of that
-// because one enrichment is missing would be the wrong trade. The gap is
-// reported instead, since silently under-resolving membership would make a
-// change look less approved than it is.
+// A failure here is reported and not propagated: the rest of the answer — which
+// owners exist, what is unowned, whether one owner covers everything — is
+// correct without it, and refusing to print any of that because one enrichment
+// failed would be the wrong trade. It is said out loud rather than absorbed,
+// since silently under-resolving membership makes a change look less approved
+// than it is. A token without read:org is the common way to land here.
 func resolveTeams(cmd *cobra.Command, owners *codeowners.File, byHand codeowners.Teams) codeowners.Teams {
 	named := owners.Teams()
 	if len(named) == 0 {
@@ -190,13 +189,9 @@ func resolveTeams(cmd *cobra.Command, owners *codeowners.File, byHand codeowners
 
 	members, err := newChangeReader().TeamMembers(cmd.Context(), refs)
 	if err != nil {
-		if errors.Is(err, github.ErrNotImplemented) {
-			fmt.Fprintf(cmd.ErrOrStderr(),
-				"note: team membership is not resolved yet, so an approval only "+
-					"satisfies the person who gave it; pass --%s to supply it\n", flagTeam)
-		} else {
-			fmt.Fprintf(cmd.ErrOrStderr(), "note: could not read team membership: %v\n", err)
-		}
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: could not read team membership, so an approval only satisfies "+
+				"the person who gave it; pass --%s to supply it: %v\n", flagTeam, err)
 		return byHand
 	}
 	return codeowners.NewStaticTeams(members)

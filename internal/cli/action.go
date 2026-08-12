@@ -76,6 +76,10 @@ func newActionAddCmd() *cobra.Command {
 		RunE:  runActionAdd,
 	}
 	addActionFieldFlags(cmd)
+	// A predicate verb needs a subject to evaluate, so the pull request has to
+	// be nameable in the same command that chooses the verb. Without this the
+	// check below would refuse a legitimate add and offer a two-step fix.
+	cmd.Flags().String(flagPR, "", "the pull request this action is about, e.g. owner/repo#812")
 	_ = cmd.MarkFlagRequired(flagTitle)
 	_ = cmd.MarkFlagRequired(flagVerb)
 	addActorFlag(cmd)
@@ -119,7 +123,11 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 	// must still consume the number. A read transaction left open across it
 	// cannot then upgrade to a writer: its snapshot is stale, and SQLite
 	// returns SQLITE_BUSY_SNAPSHOT rather than waiting.
-	if err := checkActionReferences(ctx, st, actor, a); err != nil {
+	prID, err := f.GetString(flagPR)
+	if err != nil {
+		return err
+	}
+	if err := checkActionReferences(ctx, st, actor, a, prID); err != nil {
 		return err
 	}
 
@@ -137,6 +145,14 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 	if err := tx.Insert(ctx, a); err != nil {
 		return err
 	}
+	// After the insert, so the link has a row to point at. Subject rather than
+	// context: this is the pull request the action is about, which is what a
+	// predicate asks.
+	if prID != "" {
+		if err := tx.LinkPR(ctx, a, prID, store.RoleSubject); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -147,15 +163,24 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 
 // checkActionReferences confirms the verb and project exist, in a
 // transaction that is finished with before anything else runs.
-func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action) error {
+func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action, prID string) error {
 	tx, err := st.Begin(ctx, actor)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if err := checkVerbUsable(ctx, tx, a.Verb); err != nil {
+	v, err := loadUsableVerb(ctx, tx, a.Verb)
+	if err != nil {
 		return err
+	}
+	if err := checkPredicateHasSubject(v, prID != "", "pass --"+flagPR); err != nil {
+		return err
+	}
+	if prID != "" {
+		if _, err := tx.LoadPR(ctx, prID); err != nil {
+			return notFoundOr(err, prID)
+		}
 	}
 	return checkProjectExists(ctx, tx, a.ProjectID)
 }
@@ -163,17 +188,47 @@ func checkActionReferences(ctx context.Context, st *store.Store, actor store.Act
 // checkVerbUsable reports an unknown or retired verb as itself, rather than
 // letting the foreign key report a constraint.
 func checkVerbUsable(ctx context.Context, tx *store.Tx, verb string) error {
+	_, err := loadUsableVerb(ctx, tx, verb)
+	return err
+}
+
+func loadUsableVerb(ctx context.Context, tx *store.Tx, verb string) (*store.ActionVerb, error) {
 	v, err := tx.LoadVerb(ctx, verb)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%q is not a verb; see `roz verb list`", verb)
+		return nil, fmt.Errorf("%q is not a verb; see `roz verb list`", verb)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !v.Active {
-		return fmt.Errorf("%q is retired and cannot be used for new actions", verb)
+		return nil, fmt.Errorf("%q is retired and cannot be used for new actions", verb)
 	}
-	return nil
+	return v, nil
+}
+
+// checkPredicateHasSubject refuses an action that could never close.
+//
+// A predicate verb closes by asking its pull request a question. With no
+// subject there is nothing to ask, and the answer is false forever — correctly,
+// since absence is not completion — so the action sits in the queue describing
+// work that may well be finished, with nothing on it saying why it will not
+// move.
+//
+// Keyed on closes = predicate rather than on requires_pr alone: `review`
+// carries a pull request and still closes on a person, so it is unaffected.
+// Both conditions, so a future predicate that asks something other than a pull
+// request is not caught by a rule about pull requests.
+// remedy differs by command: `action add` can take the pull request inline,
+// while `action set` has no such flag and wants `action link-pr`. An error
+// naming a flag the command does not have is its own small bug.
+func checkPredicateHasSubject(v *store.ActionVerb, hasPR bool, remedy string) error {
+	if hasPR || v.Closes != store.ClosesPredicate || !v.RequiresPR {
+		return nil
+	}
+	return fmt.Errorf(
+		"%q closes when %s says so, so it needs a pull request to ask: %s, "+
+			"or use a verb that closes on a person and let closing it open the chain",
+		v.Verb, v.PredicateKey.String, remedy)
 }
 
 func checkProjectExists(ctx context.Context, tx *store.Tx, project sql.NullString) error {
@@ -329,7 +384,18 @@ func runActionSet(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if f.Changed(flagVerb) {
-			if err := checkVerbUsable(ctx, tx, a.Verb); err != nil {
+			v, err := loadUsableVerb(ctx, tx, a.Verb)
+			if err != nil {
+				return err
+			}
+			// Moving an action onto a predicate verb has the same requirement
+			// as creating one there, and the subject it needs may already be
+			// linked.
+			_, hasPR, err := tx.SubjectPR(ctx, a.ID)
+			if err != nil {
+				return err
+			}
+			if err := checkPredicateHasSubject(v, hasPR, "link one with `roz action link-pr`"); err != nil {
 				return err
 			}
 		}

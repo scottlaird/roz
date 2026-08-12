@@ -1,0 +1,32 @@
+-- When an action last became something a person could act on.
+--
+-- The deadline behind `waited_too_long` was derived from waiting_since, or
+-- from created_at where nothing had observed a wait beginning. Both are the
+-- wrong clock for a step that was not actionable yet, and they went wrong
+-- independently:
+--
+--   * waiting_since is written for every action sharing a subject pull
+--     request, from the moment reviewers could first have seen it, regardless
+--     of verb. A `merge` step created against a pull request that has been in
+--     review for two days inherited that and was overdue the moment it
+--     existed.
+--
+--   * created_at catches the other half. A chain step hidden behind the step
+--     before it has no waiting_since at all, so its deadline was simply its
+--     own birthday plus the allowance — it went overdue while still hidden,
+--     with nothing anyone could do about it.
+--
+-- Neither fix subsumes the other, which is why this is a column and not a
+-- tighter WHERE clause: the deadline needs a clock that starts when the action
+-- became actionable, and nothing recorded that.
+--
+-- NULL means "since it was created", which is the ordinary case: an action
+-- born ready has been actionable all along. It is stamped only on the
+-- transitions *into* being actionable — un-hidden, or freed by its last
+-- blocker closing — so an action that was hidden for a week gets its full
+-- allowance from the moment it surfaces rather than arriving already late.
+--
+-- Authored rather than observed, and so written by the predicate actor that
+-- runs the cascade. Nothing external reports it: it is a fact about this
+-- queue's own shape, in the same way state and hidden_behind are.
+ALTER TABLE action ADD COLUMN ready_since TEXT;

@@ -268,6 +268,12 @@ CREATE TABLE action (
   -- NULL means the verb's wait_days, read when the deadline is checked rather
   -- than copied here. Last because ADD COLUMN put it there. See 0013.
   okay_to_wait_until TEXT,
+  -- authored: when this last became something a person could act on --
+  -- un-hidden, or freed by its last blocker. NULL means since it was created.
+  -- The deadline takes the latest of this, created_at and waiting_since, so a
+  -- step cannot be late before it was actionable. Last because ADD COLUMN put
+  -- it there. See 0021.
+  ready_since TEXT,
   UNIQUE (kind, n),
   CHECK (id = kind || n),
   CHECK (hidden_behind IS NULL OR hidden_behind <> id),

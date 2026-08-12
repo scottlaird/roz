@@ -112,6 +112,11 @@ func (t *Tx) applyBlockedState(ctx context.Context, a *Action) error {
 
 	after := current.Clone()
 	after.State = want
+	if want == ActionReady {
+		// Freed by its last blocker, so its allowance starts here for the same
+		// reason un-hiding restarts one: it was not actionable until now.
+		after.ReadySince = sql.NullString{String: t.at, Valid: true}
+	}
 	if _, err := t.Update(ctx, current, after); err != nil {
 		return err
 	}

@@ -70,6 +70,17 @@ type Action struct {
 	WaitingOn    string         `db:"waiting_on" kind:"observed" format:"json"`
 	WaitingSince sql.NullString `db:"waiting_since" kind:"observed"`
 
+	// ReadySince is when this last became something a person could act on:
+	// un-hidden, or freed by its last blocker. NULL means since it was
+	// created, which is the ordinary case.
+	//
+	// A deadline needs this because waiting_since answers a different
+	// question. That one is when reviewers could first have seen the pull
+	// request, which is right for wait_review and meaningless for a merge step
+	// that did not exist yet — see the overdue query, where the two are taken
+	// together.
+	ReadySince sql.NullString `db:"ready_since"`
+
 	ClosedAt     sql.NullString `db:"closed_at"`
 	ClosedReason sql.NullString `db:"closed_reason"`
 

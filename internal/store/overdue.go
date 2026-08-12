@@ -34,10 +34,36 @@ type Overdue struct {
 // been reported for this wait.
 //
 // The deadline is coalesced rather than stored: the action's own
-// okay_to_wait_until if it has one, otherwise waiting_since (or created_at,
-// where nothing has observed a wait beginning) plus the verb's wait_days. A
-// verb with no wait_days can never be overdue, which is what the join's
-// NOT NULL enforces.
+// okay_to_wait_until if it has one, otherwise the latest of when it was
+// created, when it last became actionable, and when its subject was first
+// waiting, plus the verb's wait_days. A verb with no wait_days can never be
+// overdue, which is what the join's NOT NULL enforces.
+//
+// # Why the latest of three clocks, and not waiting_since
+//
+// The three answer different questions and each is wrong alone:
+//
+//   - waiting_since is when reviewers could first have seen the pull request.
+//     Right for wait_review, and the common case — but it is written for every
+//     action sharing that subject, so a merge step created against a pull
+//     request already two days in review inherited a deadline in the past.
+//   - created_at catches an action nothing has observed a wait for. On its own
+//     it makes a hidden chain step overdue on its own birthday, while there is
+//     still nothing to do about it.
+//   - ready_since is when the action last became actionable. NULL until it is
+//     un-hidden or freed, which is why it is folded in rather than preferred.
+//
+// Taking the latest means a clock can only ever push the deadline out, so no
+// combination of them produces an action that is late before it is actionable.
+// Each is passed through datetime() first: they arrive in different precisions
+// — GitHub's timestamps carry no fraction, the store's carry milliseconds —
+// and comparing those as strings puts "…:58Z" after "…:58.500Z".
+//
+// hidden_behind is excluded outright, not folded into the clock. An action
+// folded out of the queue has, by construction, nothing to do about it other
+// than clearing the one in front, so it cannot be late in any sense a person
+// can act on. Being ready is a state, so blocked and snoozed are already out
+// via state below.
 //
 // The last clause is what makes this idempotent without new state. An
 // exception already raised at or after the deadline means this wait has been
@@ -48,12 +74,15 @@ type Overdue struct {
 const overdueQuery = `
 SELECT %s,
        datetime(coalesce(a.okay_to_wait_until,
-                         datetime(coalesce(a.waiting_since, a.created_at),
+                         datetime(max(datetime(a.created_at),
+                                      datetime(coalesce(a.ready_since, a.created_at)),
+                                      datetime(coalesce(a.waiting_since, a.created_at))),
                                   '+' || v.wait_days || ' days'))) AS deadline
   FROM action a
   JOIN actionverb v ON v.verb = a.verb
  WHERE a.closed_at IS NULL
    AND a.state = ?
+   AND a.hidden_behind IS NULL
    AND (v.wait_days IS NOT NULL OR a.okay_to_wait_until IS NOT NULL)
    AND deadline < datetime(?)
    AND NOT EXISTS (
@@ -150,13 +179,19 @@ func (s *Store) reportOverdue(ctx context.Context, actor Actor, o Overdue) error
 	return tx.Commit()
 }
 
-// waitStartedAt is when the clock started: what sync observed if it observed
-// anything, and otherwise when the action was created.
+// waitStartedAt is when the clock started: the latest of the three the query
+// takes, so the "waiting N days" in a message agrees with the deadline that
+// produced it. Reporting a longer wait than the deadline was measured from is
+// how an item reads as more overdue than it is.
 func waitStartedAt(a *Action) string {
-	if a.WaitingSince.Valid && a.WaitingSince.String != "" {
-		return a.WaitingSince.String
+	since := a.CreatedAt
+	if a.ReadySince.Valid && a.ReadySince.String > since {
+		since = a.ReadySince.String
 	}
-	return a.CreatedAt
+	if a.WaitingSince.Valid && a.WaitingSince.String > since {
+		since = a.WaitingSince.String
+	}
+	return since
 }
 
 // daysSince is whole days, for a message rather than for a comparison — the

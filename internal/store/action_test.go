@@ -627,3 +627,110 @@ func TestStaleSaysNothingAboutAnUnsyncedPullRequest(t *testing.T) {
 		t.Errorf("--stale = %v on no evidence, want nothing", ids(stale))
 	}
 }
+
+// TestExpiredSnoozeIsInTheQueue: a snooze says "hide this until a date". After
+// that date it went on hiding, and the only way back was to notice — which
+// made the mechanism for deferring work also a way to lose it.
+func TestExpiredSnoozeIsInTheQueue(t *testing.T) {
+	st := newStore(t)
+
+	ready := addAction(t, st, "ordinary", "decide")
+	past := addAction(t, st, "past its date", "decide")
+	future := addAction(t, st, "still deferred", "decide")
+
+	attach(t, st, past, func(a *Action) {
+		a.State = ActionSnoozed
+		a.SnoozeUntil = sql.NullString{String: "2000-01-01", Valid: true}
+	})
+	attach(t, st, future, func(a *Action) {
+		a.State = ActionSnoozed
+		a.SnoozeUntil = sql.NullString{String: "2099-01-01", Valid: true}
+	})
+
+	got := listIDs(t, st, ActionFilter{Unblocked: true})
+	if !equalStrings(got, []string{ready.ID, past.ID}) {
+		t.Errorf("--unblocked = %v, want the ready one and the expired snooze %v",
+			got, []string{ready.ID, past.ID})
+	}
+
+	// The row itself is untouched: waking it would rewrite an authored column
+	// from a clock, and throw away the reason it was deferred.
+	still := reload(t, st, past.ID)
+	if still.State != ActionSnoozed || !still.SnoozeUntil.Valid {
+		t.Errorf("state = %q, snooze_until = %v, want the snooze left alone",
+			still.State, still.SnoozeUntil)
+	}
+}
+
+// TestExpiredSnoozeReachesTheWaitingListToo: Waiting is the complement of
+// Unblocked over the same set, so both sides have to agree about what is in it.
+func TestExpiredSnoozeReachesTheWaitingListToo(t *testing.T) {
+	st := newStore(t)
+
+	waiting := addAction(t, st, "waiting on somebody", "wait_review")
+	attach(t, st, waiting, func(a *Action) {
+		a.State = ActionSnoozed
+		a.SnoozeUntil = sql.NullString{String: "2000-01-01", Valid: true}
+	})
+
+	if got := listIDs(t, st, ActionFilter{Waiting: true}); !equalStrings(got, []string{waiting.ID}) {
+		t.Errorf("--waiting = %v, want the expired snooze %v", got, []string{waiting.ID})
+	}
+	if got := listIDs(t, st, ActionFilter{Unblocked: true}); len(got) != 0 {
+		t.Errorf("--unblocked = %v, want a wait verb to stay out of the queue", got)
+	}
+}
+
+// TestSnoozeUntilTodayHasArrived pins the boundary. "Hide this until the 12th"
+// stops hiding on the 12th, not the 13th, and the queue and --expired have to
+// say the same thing about it.
+func TestSnoozeUntilTodayHasArrived(t *testing.T) {
+	st := newStore(t)
+	today := st.now().UTC().Format(DateFormat)
+
+	a := addAction(t, st, "until today", "decide")
+	attach(t, st, a, func(x *Action) {
+		x.State = ActionSnoozed
+		x.SnoozeUntil = sql.NullString{String: today, Valid: true}
+	})
+
+	if got := listIDs(t, st, ActionFilter{Unblocked: true}); !equalStrings(got, []string{a.ID}) {
+		t.Errorf("--unblocked = %v, want the snooze that expires today", got)
+	}
+	if got := listIDs(t, st, ActionFilter{Expired: true}); !equalStrings(got, []string{a.ID}) {
+		t.Errorf("--expired = %v, want the same answer the queue gave", got)
+	}
+}
+
+// listIDs runs a filter and returns the ids it matched, in order.
+func listIDs(t *testing.T, st *Store, filter ActionFilter) []string {
+	t.Helper()
+
+	got, err := st.ListActions(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("ListActions(%+v) returned error: %v", filter, err)
+	}
+	ids := make([]string, len(got))
+	for i, a := range got {
+		ids[i] = a.ID
+	}
+	return ids
+}
+
+// reload reads an action back, to check what a query did not change.
+func reload(t *testing.T, st *Store, id string) *Action {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	a, err := tx.LoadAction(ctx, id)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	return a
+}

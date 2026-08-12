@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -708,11 +709,12 @@ func writeActionTable(out io.Writer, actions []*store.Action) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	now := time.Now().UTC().Format(store.TimeFormat)
 	fmt.Fprintln(w, "ID\tSTATE\tVERB\tPROJECT\tSNOOZED UNTIL\tTITLE")
 	for _, a := range actions {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			a.ID, a.State, a.Verb, nullText(a.ProjectID),
-			nullText(a.SnoozeUntil), a.Title)
+			snoozeCell(a.SnoozeUntil, now), a.Title)
 	}
 	return w.Flush()
 }

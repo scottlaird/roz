@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -165,4 +166,19 @@ func sortFrom(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("--%s %q is not an order: use %s, %s or %s",
 			sortFlag, value, sortCreated, sortPriority, sortStaleness)
 	}
+}
+
+// snoozeCell renders a snooze date for a table, saying so when it has arrived.
+//
+// The queue now contains expired snoozes, so a bare date in that column would
+// leave the reader to notice the year themselves. "due" is the word the status
+// page uses for the same state.
+//
+// Compared against a timestamp rather than today's date, which is what the
+// query does — see store.TimeFormat.
+func snoozeCell(until sql.NullString, now string) string {
+	if until.Valid && until.String != "" && until.String < now {
+		return "due " + until.String
+	}
+	return nullText(until)
 }

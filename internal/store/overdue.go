@@ -19,6 +19,10 @@ const EventWaitedTooLong = "waited_too_long"
 // Overdue is one action that has been waiting longer than it should.
 type Overdue struct {
 	Action *Action
+	// Raised is the action put in the queue about this wait, or nil when one
+	// was already open. An exception nobody sees is the thing this fixes, so
+	// the caller reports what it produced.
+	Raised *Action
 	// Deadline is when it stopped being reasonable.
 	Deadline string
 	// Waiting is how long it has been, rounded to whole days for a message
@@ -115,6 +119,18 @@ func (s *Store) OverdueWaits(ctx context.Context, actor Actor) ([]Overdue, error
 	for i := range overdue {
 		if err := s.reportOverdue(ctx, actor, overdue[i]); err != nil {
 			return nil, err
+		}
+		// The log has it either way; this is what makes it something a person
+		// meets rather than something they have to go looking for.
+		raised, err := s.RaiseAction(ctx, EventWaitedTooLong, overdue[i].Action,
+			fmt.Sprintf("chase %s", overdue[i].Action.ID),
+			fmt.Sprintf("%s has been waiting %d days, past %s.",
+				overdue[i].Action.ID, overdue[i].Waiting, overdue[i].Deadline))
+		if err != nil {
+			return nil, err
+		}
+		if raised != nil {
+			overdue[i].Raised = raised.Action
 		}
 	}
 	return overdue, nil

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 )
@@ -337,5 +338,96 @@ func TestUpdateKeysOnTheVerb(t *testing.T) {
 	}
 	if other.WaitDays.Int64 == 7 {
 		t.Error("updating merge also changed wait_review")
+	}
+}
+
+// TestAnOverdueWaitReachesTheQueue is the point of the whole thing: an
+// exception is durable and queryable, and neither of those is a thing anybody
+// does on a Monday morning. An action is simply there.
+func TestAnOverdueWaitReachesTheQueue(t *testing.T) {
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	found := overdueNow(t, st, "2026-08-05T00:00:00.000Z")
+	if len(found) != 1 {
+		t.Fatalf("overdue = %v, want one", found)
+	}
+	if found[0].Raised == nil {
+		t.Fatal("the overdue wait raised no action")
+	}
+	// Human-closed: "I looked and it is fine" has to be a way to close it, and
+	// a predicate would refuse until the world changed.
+	if got := found[0].Raised.Verb; got != RaiseVerb {
+		t.Errorf("verb = %q, want %q", got, RaiseVerb)
+	}
+	if !strings.Contains(found[0].Raised.Why, a.ID) {
+		t.Errorf("why = %q, want it to name the wait it is about", found[0].Raised.Why)
+	}
+}
+
+// TestOneActionPerCondition: the rule may be made to re-report later, and the
+// queue must not grow an item each time.
+func TestOneActionPerCondition(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	first, err := st.RaiseAction(ctx, EventWaitedTooLong, a, "chase it", "because")
+	if err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+	if first == nil {
+		t.Fatal("the first raise produced nothing")
+	}
+
+	again, err := st.RaiseAction(ctx, EventWaitedTooLong, a, "chase it", "because")
+	if err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+	if again != nil {
+		t.Errorf("a second firing raised %s as well", again.Action.ID)
+	}
+}
+
+// TestAClosedConditionStaysClosed. Some of these conditions persist and fire
+// on every poll, so raising again once the action is closed would make the
+// item impossible to clear — a nag with no off switch, which teaches people to
+// ignore the queue.
+func TestAClosedConditionStaysClosed(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	raised, err := st.RaiseAction(ctx, EventWaitedTooLong, a, "chase it", "because")
+	if err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+	closeIt(t, st, CloseRequest{ID: raised.Action.ID})
+
+	again, err := st.RaiseAction(ctx, EventWaitedTooLong, a, "chase it", "because")
+	if err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+	if again != nil {
+		t.Errorf("closing was undone by the next firing: raised %s", again.Action.ID)
+	}
+}
+
+// TestDifferentConditionsRaiseSeparately: the key is the pair, so another
+// exception about the same thing is a different item.
+func TestDifferentConditionsRaiseSeparately(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	if _, err := st.RaiseAction(ctx, EventWaitedTooLong, a, "one", ""); err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+	other, err := st.RaiseAction(ctx, "something_else", a, "two", "")
+	if err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+	if other == nil {
+		t.Error("a different exception about the same subject raised nothing")
 	}
 }

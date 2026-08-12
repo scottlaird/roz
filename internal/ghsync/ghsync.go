@@ -285,11 +285,25 @@ func reportMissing(ctx context.Context, st *store.Store, key, why string) error 
 		// useful to attach the exception to.
 		return nil
 	}
-	if err := tx.Exception(ctx, subject, "pr_unresolvable", why); err != nil {
+	if err := tx.Exception(ctx, subject, eventUnresolvable, why); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// A tracked pull request that has gone invisible needs a judgement —
+	// whether to stop tracking it — and nothing else will make that decision.
+	// Raised after the exception commits, for the reason the ejection is: the
+	// observation is the half that must not be lost.
+	_, err = st.RaiseAction(ctx, eventUnresolvable, subject,
+		fmt.Sprintf("decide what to do about %s", key),
+		fmt.Sprintf("%s could not be read: %s. Deleted, made private, or no longer visible.", key, why))
+	return err
 }
+
+// eventUnresolvable is raised when a tracked pull request goes invisible.
+const eventUnresolvable = "pr_unresolvable"
 
 // keepIfEmpty returns the observed value, or the stored one when GitHub said
 // nothing. Absence of information is not information.

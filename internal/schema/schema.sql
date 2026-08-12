@@ -451,6 +451,17 @@ CREATE TABLE page_note (
   updated_at TEXT NOT NULL
 ) STRICT;
 
+-- The action an exception raised, and the condition it was raised for, so that
+-- one outstanding condition yields one item in the queue however many times it
+-- fires. The subject pair is the informal FK `event` uses. See 0019.
+CREATE TABLE raised_action (
+  action_id    TEXT PRIMARY KEY REFERENCES action(id),
+  kind         TEXT NOT NULL,   -- the exception kind, e.g. 'waited_too_long'
+  subject_type TEXT NOT NULL,
+  subject_id   TEXT NOT NULL,
+  created_at   TEXT NOT NULL
+) STRICT;
+
 -- ── log — deliberately no foreign keys ───────────────────────────────
 CREATE TABLE event (
   seq          INTEGER PRIMARY KEY,            -- rowid: monotonic, and the tiebreak
@@ -543,3 +554,5 @@ CREATE INDEX action_project  ON action(project_id);
 CREATE INDEX project_tracker_issue_issue ON project_tracker_issue(issue_id);
 CREATE UNIQUE INDEX github_repo_short_name ON github_repo(short_name)
   WHERE short_name IS NOT NULL;
+CREATE INDEX raised_action_condition
+  ON raised_action(kind, subject_type, subject_id);

@@ -45,7 +45,7 @@ directory.
 | `roz issue show` / `list` | Issues as last observed, and which projects track them. |
 | `roz issue observe` | Record by hand what a tracker says about an issue — summary, status, iteration, assignee. Stands in for tracker sync. |
 | **actions** | |
-| `roz action add` | Allocate an action and print its id. |
+| `roz action add` | Allocate an action and print its id. `--pr` names the pull request it is about, which a predicate verb requires. |
 | `roz action show` | Print one action, with what blocks it, what it blocks, and its pull requests. `-o json` carries the same. |
 | `roz action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--waiting`, `--stale`, `--open`, `--expired` and filters. |
 | `roz action set` | Change authored columns. Closing is not one of them. |
@@ -183,6 +183,17 @@ NA2 is blocked, waiting on NA1
 `--verb` comes from the vocabulary (`roz verb list`) and is load-bearing
 rather than descriptive. `write` and `run` are human-closed, so both sit in
 the queue until you say otherwise.
+
+A predicate verb is refused without a pull request to ask, because the answer
+would be false forever and the action could never close:
+
+```console
+$ roz action add --title "bring it up to date" --verb rebase
+Error: "rebase" closes when pr_mergeable says so, so it needs a pull request to ask: pass --pr, or use a verb that closes on a person and let closing it open the chain
+```
+
+`review` is unaffected: it carries a pull request and still closes on a
+person, so the rule is about how a verb closes, not about whether it has one.
 
 ### Sync
 

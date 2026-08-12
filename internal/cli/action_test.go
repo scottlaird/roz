@@ -284,9 +284,10 @@ func TestActionListUnblocked(t *testing.T) {
 // TestActionListWaiting is the other half of the queue: what it leaves out
 // because somebody else has it.
 func TestActionListWaiting(t *testing.T) {
-	db := initDB(t)
+	// A wait verb closes on its pull request, so it needs one to exist at all.
+	db, pr := trackedPR(t)
 	addAction(t, db, "--title", "write it", "--verb", "write")
-	addAction(t, db, "--title", "wait for review", "--verb", "wait_review")
+	addAction(t, db, "--title", "wait for review", "--verb", "wait_review", "--pr", pr)
 
 	queue, err := runCLI(t, "action", "list", "--db", db, "--unblocked")
 	if err != nil {
@@ -323,11 +324,7 @@ func TestActionListStale(t *testing.T) {
 		t.Fatalf("sync returned error: %v", err)
 	}
 
-	id := addAction(t, db, "--title", "merge it", "--verb", "merge")
-	if _, err := runCLI(t, "action", "link-pr", "--db", db,
-		"--action", id, "--pr", "owner/repo#1"); err != nil {
-		t.Fatalf("action link-pr returned error: %v", err)
-	}
+	id := addAction(t, db, "--title", "merge it", "--verb", "merge", "--pr", "owner/repo#1")
 	if _, err := runCLI(t, "action", "close", "--db", db, id); err != nil {
 		t.Fatalf("action close returned error: %v", err)
 	}
@@ -338,5 +335,74 @@ func TestActionListStale(t *testing.T) {
 	}
 	if !strings.Contains(out, id) {
 		t.Errorf("--stale did not surface the contradiction:\n%s", out)
+	}
+}
+
+// TestActionAddRefusesAPredicateVerbWithNoSubject: the action would be created
+// ready, enter the queue, and never close, because its predicate has nothing
+// to ask.
+func TestActionAddRefusesAPredicateVerbWithNoSubject(t *testing.T) {
+	db := initDB(t)
+
+	_, err := runCLI(t, "action", "add", "--db", db, "--title", "bring it up to date", "--verb", "rebase")
+	if err == nil {
+		t.Fatal("action add with a predicate verb and no pull request returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "pr_mergeable") {
+		t.Errorf("error = %v, want it to name the predicate that would have nothing to ask", err)
+	}
+	if !strings.Contains(err.Error(), "--pr") {
+		t.Errorf("error = %v, want it to name the flag that fixes this", err)
+	}
+}
+
+// TestActionAddTakesThePullRequestInline keeps the refusal above from forcing
+// a two-step add-then-link.
+func TestActionAddTakesThePullRequestInline(t *testing.T) {
+	db, pr := trackedPR(t)
+
+	id := addAction(t, db, "--title", "bring it up to date", "--verb", "rebase", "--pr", pr)
+	if got := showActionJSON(t, db, id)["subject_pr"]; got != pr {
+		t.Errorf("subject_pr = %#v, want %s", got, pr)
+	}
+}
+
+// TestActionAddAllowsAHumanVerbCarryingAPullRequest: `review` has requires_pr
+// set and still closes on a person, so the check must not catch it. Keying on
+// the column alone would.
+func TestActionAddAllowsAHumanVerbCarryingAPullRequest(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "action", "add", "--db", db,
+		"--title", "look at someone else's", "--verb", "review"); err != nil {
+		t.Errorf("action add --verb review returned error: %v", err)
+	}
+}
+
+// TestActionSetRefusesMovingOntoAPredicateVerbWithNoSubject: the same gap,
+// reached by changing the verb after creation.
+func TestActionSetRefusesMovingOntoAPredicateVerbWithNoSubject(t *testing.T) {
+	db := initDB(t)
+	id := addAction(t, db, "--title", "write it", "--verb", "write")
+
+	_, err := runCLI(t, "action", "set", id, "--db", db, "--verb", "merge")
+	if err == nil {
+		t.Fatal("action set onto a predicate verb with no subject returned nil, want an error")
+	}
+	// `action set` has no --pr, so the error must not tell anyone to pass one.
+	if strings.Contains(err.Error(), "--pr,") {
+		t.Errorf("error = %v, want it to name link-pr rather than a flag this command lacks", err)
+	}
+	if !strings.Contains(err.Error(), "link-pr") {
+		t.Errorf("error = %v, want it to name link-pr", err)
+	}
+}
+
+func TestActionSetAllowsAPredicateVerbWhenTheSubjectIsThere(t *testing.T) {
+	db, pr := trackedPR(t)
+	id := addAction(t, db, "--title", "bring it up to date", "--verb", "rebase", "--pr", pr)
+
+	if _, err := runCLI(t, "action", "set", id, "--db", db, "--verb", "merge"); err != nil {
+		t.Errorf("action set onto a predicate verb with a subject returned error: %v", err)
 	}
 }

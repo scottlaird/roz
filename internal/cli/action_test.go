@@ -406,3 +406,98 @@ func TestActionSetAllowsAPredicateVerbWhenTheSubjectIsThere(t *testing.T) {
 		t.Errorf("action set onto a predicate verb with a subject returned error: %v", err)
 	}
 }
+
+// mergedPR returns a database holding one pull request already observed as
+// merged, with nothing yet pointing at it. Any predicate action linked to it
+// afterwards is satisfiable the moment the link exists.
+func mergedPR(t *testing.T) (db, key string) {
+	t.Helper()
+	db, key = trackedPR(t)
+	withFetcher(t, stubFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{{
+			Key: key, Repo: "owner/repo", Number: 1,
+			Title: "already merged", State: "MERGED", BaseRef: "main",
+		}},
+	}})
+	if _, err := runCLI(t, "sync", "github", "--db", db, "--quiet"); err != nil {
+		t.Fatalf("sync returned error: %v", err)
+	}
+	return db, key
+}
+
+// TestActionAddWithASatisfiedPullRequestSettles: the fact arrived from a
+// command rather than a poll, and the action should not wait for the next one.
+func TestActionAddWithASatisfiedPullRequestSettles(t *testing.T) {
+	db, key := mergedPR(t)
+
+	out, err := runCLI(t, "action", "add", "--db", db,
+		"--title", "merge it", "--verb", "merge", "--pr", key)
+	if err != nil {
+		t.Fatalf("action add returned error: %v", err)
+	}
+	if !strings.Contains(out, "closed: "+key+" is merge") {
+		t.Errorf("action add did not settle:\n%s", out)
+	}
+	id := strings.Fields(out)[0]
+	if got := showActionJSON(t, db, id)["state"]; got != "done" {
+		t.Errorf("state = %#v, want done", got)
+	}
+}
+
+// TestActionSetVerbSettles is the door that is left once a predicate verb
+// cannot be created without a subject: change the verb of an action that
+// already has one.
+func TestActionSetVerbSettles(t *testing.T) {
+	db, key := mergedPR(t)
+	id := addAction(t, db, "--title", "do it", "--verb", "write")
+	if _, err := runCLI(t, "action", "link-pr", "--db", db,
+		"--action", id, "--pr", key, "--role", "subject"); err != nil {
+		t.Fatalf("action link-pr returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "action", "set", id, "--db", db, "--verb", "merge")
+	if err != nil {
+		t.Fatalf("action set returned error: %v", err)
+	}
+	if !strings.Contains(out, "closed: "+key+" is merge") {
+		t.Errorf("action set --verb did not settle:\n%s", out)
+	}
+}
+
+// TestLinkPRSettlesNothingOnAHumanVerb: linking a subject to an action that
+// closes on a person must not close it. Only a predicate is asked.
+func TestLinkPRSettlesNothingOnAHumanVerb(t *testing.T) {
+	db, key := mergedPR(t)
+	id := addAction(t, db, "--title", "review it", "--verb", "review")
+
+	out, err := runCLI(t, "action", "link-pr", "--db", db,
+		"--action", id, "--pr", key, "--role", "subject")
+	if err != nil {
+		t.Fatalf("action link-pr returned error: %v", err)
+	}
+	if strings.Contains(out, "closed") {
+		t.Errorf("a human verb was closed by linking:\n%s", out)
+	}
+	if got := showActionJSON(t, db, id)["state"]; got != "ready" {
+		t.Errorf("state = %#v, want ready", got)
+	}
+}
+
+// TestActionAddSettlesNothingWhenThePullRequestIsUnobserved: every predicate
+// is false where nothing has been observed, so this has to be a no-op rather
+// than a verdict.
+func TestActionAddSettlesNothingWhenThePullRequestIsUnobserved(t *testing.T) {
+	db, key := trackedPR(t) // tracked, never synced
+
+	out, err := runCLI(t, "action", "add", "--db", db,
+		"--title", "merge it", "--verb", "merge", "--pr", key)
+	if err != nil {
+		t.Fatalf("action add returned error: %v", err)
+	}
+	if strings.Contains(out, "closed") {
+		t.Errorf("an unobserved pull request settled something:\n%s", out)
+	}
+	if got := showActionJSON(t, db, strings.Fields(out)[0])["state"]; got != "ready" {
+		t.Errorf("state = %#v, want ready", got)
+	}
+}

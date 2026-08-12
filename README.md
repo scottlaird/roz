@@ -195,6 +195,19 @@ Error: "rebase" closes when pr_mergeable says so, so it needs a pull request to 
 `review` is unaffected: it carries a pull request and still closes on a
 person, so the rule is about how a verb closes, not about whether it has one.
 
+Supplying the subject is also the moment the predicate becomes answerable, so
+it is asked there and then rather than at the next poll:
+
+```console
+$ roz action add --title "merge it" --verb merge --pr owner/repo#1
+NA2
+NA2 closed: owner/repo#1 is merge
+```
+
+`action link-pr --role subject` and `action set --verb` do the same, for the
+same reason. Only the action named is settled, plus whatever its closing
+frees — everything else on that pull request is sync's job.
+
 ### Sync
 
 ```console

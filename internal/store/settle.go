@@ -31,13 +31,38 @@ type Settled struct {
 // and then merge. The loop is bounded by the number of candidates, since each
 // pass must close at least one to continue.
 func (s *Store) Settle(ctx context.Context, actor Actor) ([]Settled, error) {
+	return s.settle(ctx, actor, nil)
+}
+
+// SettleAction closes one action if its predicate now holds, and then anything
+// that closing it freed.
+//
+// For a fact that arrives from a command rather than from a poll: linking a
+// subject pull request is exactly the moment a predicate becomes answerable,
+// and the action should not wait for the next sync to be asked.
+//
+// Scoped to the action named and what its closure unblocks, rather than
+// running the full sweep. Those are the consequences of what the caller just
+// did; everything else on that pull request is sync's job, and closing it here
+// would be a targeted command quietly doing a broad one.
+//
+// A pull request nothing has observed settles nothing: every predicate is
+// false where there is no observation, so this is a no-op rather than a
+// verdict.
+func (s *Store) SettleAction(ctx context.Context, actor Actor, id string) ([]Settled, error) {
+	return s.settle(ctx, actor, map[string]bool{id: true})
+}
+
+// settle is the shared loop. A nil scope means everything, which is what sync
+// wants; a non-nil one grows as closures unblock further actions.
+func (s *Store) settle(ctx context.Context, actor Actor, scope map[string]bool) ([]Settled, error) {
 	if actor.writes() != Authored {
 		return nil, fmt.Errorf("%s may not close actions: closing writes authored fields", actor)
 	}
 
 	var settled []Settled
 	for {
-		candidates, err := s.satisfiedActions(ctx)
+		candidates, err := s.satisfiedActions(ctx, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -55,6 +80,14 @@ func (s *Store) Settle(ctx context.Context, actor Actor) ([]Settled, error) {
 			}
 			settled = append(settled, Settled{Action: result.Closed, PR: c.pr, Result: result})
 			closedAny = true
+			// What this closure freed is a consequence of the caller's act, so
+			// it stays in scope. A freed successor whose predicate already
+			// holds should not have to wait for a poll either.
+			for _, freed := range result.Unblocked {
+				if scope != nil {
+					scope[freed.ID] = true
+				}
+			}
 		}
 		if !closedAny {
 			return settled, nil
@@ -76,7 +109,7 @@ type candidate struct {
 // closes if its work is demonstrably done: a merged pull request means the
 // merge happened, whatever the graph expected to come first. Reality outranks
 // the plan, and leaving it open would mean the queue disagreeing with GitHub.
-func (s *Store) satisfiedActions(ctx context.Context) ([]candidate, error) {
+func (s *Store) satisfiedActions(ctx context.Context, scope map[string]bool) ([]candidate, error) {
 	tx, err := s.Begin(ctx, ActorHuman)
 	if err != nil {
 		return nil, err
@@ -90,6 +123,9 @@ func (s *Store) satisfiedActions(ctx context.Context) ([]candidate, error) {
 
 	var satisfied []candidate
 	for _, c := range pending {
+		if scope != nil && !scope[c.action.ID] {
+			continue
+		}
 		verb, err := tx.LoadVerb(ctx, c.action.Verb)
 		if err != nil {
 			return nil, err

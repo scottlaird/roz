@@ -257,3 +257,77 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// TestSettleActionIsScopedToTheOneNamed: a command that linked one row should
+// not close every satisfied action on the pull request. That is sync's job,
+// and doing it here would make a targeted command quietly a broad one.
+func TestSettleActionIsScopedToTheOneNamed(t *testing.T) {
+	st := newStore(t)
+	pr, chain := pipelineFor(t, st, PipelineDirect) // undraft → merge
+
+	// Both steps are satisfied, so a full Settle would close both.
+	observe(t, st, pr, func(p *PR) {
+		p.IsDraft = sql.NullBool{Bool: false, Valid: true}
+		p.State = sql.NullString{String: PRStateMerged, Valid: true}
+	})
+
+	settled, err := st.SettleAction(context.Background(), ActorPredicate, chain[1].ID)
+	if err != nil {
+		t.Fatalf("SettleAction() returned error: %v", err)
+	}
+	if !equalStrings(settledIDs(settled), []string{chain[1].ID}) {
+		t.Errorf("SettleAction() closed %v, want only %s", settledIDs(settled), chain[1].ID)
+	}
+
+	// The other satisfied step is still open, waiting for a sync.
+	ctx := context.Background()
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+	still, err := tx.LoadAction(ctx, chain[0].ID)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	if !still.IsOpen() {
+		t.Errorf("%s was closed too, want it left for sync", chain[0].ID)
+	}
+}
+
+// TestSettleActionFollowsWhatItFreed: what a closure unblocks is a consequence
+// of the caller's act, so a freed successor that is already satisfied should
+// not have to wait for a poll either.
+func TestSettleActionFollowsWhatItFreed(t *testing.T) {
+	st := newStore(t)
+	pr, chain := pipelineFor(t, st, PipelineDirect) // undraft → merge, merge blocked
+
+	observe(t, st, pr, func(p *PR) {
+		p.IsDraft = sql.NullBool{Bool: false, Valid: true}
+		p.State = sql.NullString{String: PRStateMerged, Valid: true}
+	})
+
+	settled, err := st.SettleAction(context.Background(), ActorPredicate, chain[0].ID)
+	if err != nil {
+		t.Fatalf("SettleAction() returned error: %v", err)
+	}
+	if !equalStrings(settledIDs(settled), []string{chain[0].ID, chain[1].ID}) {
+		t.Errorf("SettleAction() closed %v, want the step and what it freed %v",
+			settledIDs(settled), []string{chain[0].ID, chain[1].ID})
+	}
+}
+
+// TestSettleActionOnAnUnobservedPullRequest: absence is not completion, so
+// this is a no-op rather than a verdict.
+func TestSettleActionOnAnUnobservedPullRequest(t *testing.T) {
+	st := newStore(t)
+	_, chain := pipelineFor(t, st, PipelineDirect)
+
+	settled, err := st.SettleAction(context.Background(), ActorPredicate, chain[0].ID)
+	if err != nil {
+		t.Fatalf("SettleAction() returned error: %v", err)
+	}
+	if len(settled) != 0 {
+		t.Errorf("SettleAction() closed %v against an unsynced pull request", settledIDs(settled))
+	}
+}

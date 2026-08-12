@@ -3,6 +3,7 @@ module github.com/scottlaird/roz
 go 1.26.2
 
 require (
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/adrg/xdg v0.5.3
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2

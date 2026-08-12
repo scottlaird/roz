@@ -436,6 +436,75 @@ bites; not worth one before.
   verb costs no number. Allocation still writes on its own connection, which
   means no read transaction may be open across it — SQLite answers the upgrade
   with `SQLITE_BUSY_SNAPSHOT` rather than waiting.
+- **A predicate reads a `Facts` struct, not a `*PR`.** `ref_exists` asks about
+  a repository and an expression and has no subject pull request at all, so the
+  signature had to widen. The six that only want the pull request go through an
+  `onPR` adapter, which is also where "no subject means false" lives — one
+  place rather than the top of each.
+- **A ref wait is a semver constraint, not a name or a glob.** `>=1.5` says
+  "the next release" without knowing whether it will be v1.5.0 or v1.5.1, which
+  a literal cannot and a glob can only approximate. Constraints also settle
+  pre-releases by a published rule rather than a local invention: `>=1.2` does
+  not match v1.3.0-rc1, and `>=1.2.0-0` does. `github.com/Masterminds/semver/v3`
+  parses both halves — a leaf package, pure Go, no cgo, nothing transitive.
+  Lenient enough that `v1.5.0`, `1.5.0` and `1.5` all read as versions.
+- **An expression that is not a constraint is a literal name or a glob.** The
+  only way to wait on a ref no version scheme describes — a `release-1.5`
+  branch being cut — and the two forms cannot be confused, since `release-1.5`
+  does not parse as a constraint. One flag rather than two, because a wait is
+  one thing and the reading is unambiguous.
+- **A series is identified by its path prefix, compared for equality.** A
+  monorepo tags `v1.2.3` and, disjointly, `api/v3.4.5`; the numbers of one mean
+  nothing to the other, so `api/>=3.6` and `>=1.2` can never satisfy each
+  other. An absent prefix means the top level, *not* "any prefix" — otherwise
+  `>=1.2` would be answered by `api/v2.3.4`, which is both numerically true and
+  entirely wrong. The final slash divides path from constraint, which is
+  unambiguous because no constraint contains one; a colon was the alternative,
+  and lost only because `api/>=3.6` looks like the tag it selects.
+- **Which refs to poll is derived from the outstanding waits**, not configured
+  per repository. The poll set is then right by construction: nothing is asked
+  about that nothing waits for, and a wait cannot name a repository somebody
+  forgot to add to a list. Two costs, both real. Refs are only observed while
+  something waits for one, so roz cannot answer "when was v1.4.0 cut" for a
+  release nobody gated on. And a top-level wait has no path to narrow on, so a
+  monorepo returns its most recent tags across every component — which is why
+  polling targets are the one thing that may yet belong on the repository,
+  tracked as [#128](https://github.com/scottlaird/roz/issues/128).
+- **Refs are read newest first, paged to a bound, and a filter too broad to
+  read through is reported.** Tags come back newest-commit-first, so a
+  forward-looking wait is answered by the first page; paging exists for the
+  repositories where one page is not the whole history. The bound exists
+  because some are unreasonable — `aws/aws-sdk-go-v2` has 82,000 tags and
+  GitHub answers page four of that connection about two times in three — and
+  no page count makes a top-level release findable among 82,000 component
+  ones. So the shortfall is reported and raises an action, since the remedy is
+  a narrower prefix and the alternative is a wait whose ref is never fetched,
+  sitting in the queue with nothing to explain it.
+- **Branches are read alphabetically, so a branch wait rests on its filter.**
+  GitHub orders refs by name or by tag commit date and nothing else, and a
+  branch has no commit date — so alphabetical it is, which is unrelated to what
+  anybody waits for. `facebook/react` has 945 branches whose release ones sort
+  past any bounded read. What makes it work is that the poll filter carries the
+  literal head of a name-shaped expression as well as the path prefix, turning
+  945 into three. A constraint contributes no filter, since `>=1.2` is not a
+  substring of any name. Recorded as thin in
+  [#129](https://github.com/scottlaird/roz/issues/129).
+- **A matcher matches either as a constraint or as a name, whichever hits.**
+  `releases/19.2.x` is a real branch and also parses as the constraint 19.2.*,
+  and the branch's own name is not a version — so a constraint-only reading
+  would never match the ref it was written to name. The union adds no false
+  matches: a constraint-shaped matcher is not a name any ref has, and a
+  name-shaped one does not parse, so the arms overlap only where a name is also
+  a version.
+- **A ref page that fails stops that batch rather than the sync.** A connection
+  large enough to need paging is large enough for GitHub to time out serving
+  it, and one unreadable repository must not take the pull request poll down
+  with it. Rate limiting still propagates, because that means wait rather than
+  something being wrong with the question.
+- **A repository's first poll is a backfill, not news.** It sees the whole tag
+  history at once — a hundred releases that existed long before anybody waited
+  for one — so those are counted rather than listed. Only what appears after
+  that is worth a line.
 
 ## Deliberately out of scope
 

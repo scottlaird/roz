@@ -95,11 +95,15 @@ func (s *Store) settle(ctx context.Context, actor Actor, scope map[string]bool) 
 	}
 }
 
-// candidate is an open action that closes on a predicate, with the pull
-// request the predicate reads.
+// candidate is an open action that closes on a predicate, with enough to find
+// what the predicate reads.
 type candidate struct {
 	action *Action
-	pr     string
+	// pr is the subject pull request, empty where there is none.
+	pr string
+	// hasWait says the action is waiting on a ref, so the wait and the
+	// repository's refs are worth loading.
+	hasWait bool
 }
 
 // satisfiedActions returns the open predicate-verb actions whose predicate
@@ -134,21 +138,54 @@ func (s *Store) satisfiedActions(ctx context.Context, scope map[string]bool) ([]
 		if !ok {
 			continue
 		}
-		pr, err := tx.LoadPR(ctx, c.pr)
+		facts, err := tx.factsFor(ctx, c)
 		if err != nil {
 			return nil, err
 		}
-		if predicate(pr) {
+		if predicate(facts) {
 			satisfied = append(satisfied, c)
 		}
 	}
 	return satisfied, nil
 }
 
-// pendingPredicateActions reads the open actions that close on a predicate
-// and have a subject pull request for it to read.
+// factsFor gathers the rows a predicate is allowed to read.
 //
-// A predicate verb with no subject can never close on its own. That is not an
+// Loaded here rather than inside the predicate so that predicates stay pure
+// functions over stored state: the alternative is every predicate holding a
+// transaction, and a rule that can query is a rule that can be slow, or
+// wrong, in ways a test of the rule alone would not show.
+func (t *Tx) factsFor(ctx context.Context, c candidate) (Facts, error) {
+	var facts Facts
+	if c.pr != "" {
+		pr, err := t.LoadPR(ctx, c.pr)
+		if err != nil {
+			return Facts{}, err
+		}
+		facts.PR = pr
+	}
+	if c.hasWait {
+		wait, err := t.RefWaitFor(ctx, c.action.ID)
+		if err != nil {
+			return Facts{}, err
+		}
+		if wait != nil {
+			facts.Wait = wait
+			refs, err := t.RefsIn(ctx, wait.RepoID, wait.Kind)
+			if err != nil {
+				return Facts{}, err
+			}
+			facts.Refs = refs
+		}
+	}
+	return facts, nil
+}
+
+// pendingPredicateActions reads the open actions that close on a predicate
+// and have something for it to read — a subject pull request, a ref wait, or
+// both.
+//
+// A predicate verb with neither can never close on its own. That is not an
 // error — an action may be linked later — so it is simply not a candidate.
 func (t *Tx) pendingPredicateActions(ctx context.Context) ([]candidate, error) {
 	fields, err := fieldsOfStruct(&Action{})
@@ -161,11 +198,13 @@ func (t *Tx) pendingPredicateActions(ctx context.Context) ([]candidate, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT %s, link.pr_id
+		SELECT %s, coalesce(link.pr_id, ''), w.action_id IS NOT NULL
 		FROM action a
 		JOIN actionverb v ON v.verb = a.verb
-		JOIN action_pr link ON link.action_id = a.id AND link.role = ?
+		LEFT JOIN action_pr link ON link.action_id = a.id AND link.role = ?
+		LEFT JOIN action_ref_wait w ON w.action_id = a.id
 		WHERE a.closed_at IS NULL AND v.closes = ?
+		  AND (link.pr_id IS NOT NULL OR w.action_id IS NOT NULL)
 		ORDER BY a.n`, strings.Join(columns, ", "))
 
 	rows, err := t.tx.QueryContext(ctx, query, RoleSubject, ClosesPredicate)
@@ -178,16 +217,17 @@ func (t *Tx) pendingPredicateActions(ctx context.Context) ([]candidate, error) {
 	for rows.Next() {
 		var a Action
 		var pr string
-		dest := make([]any, 0, len(fields)+1)
+		var hasWait bool
+		dest := make([]any, 0, len(fields)+2)
 		for _, f := range fields {
 			dest = append(dest, f.pointerOf(&a))
 		}
-		dest = append(dest, &pr)
+		dest = append(dest, &pr, &hasWait)
 
 		if err := rows.Scan(dest...); err != nil {
 			return nil, fmt.Errorf("reading actions waiting on a predicate: %w", err)
 		}
-		pending = append(pending, candidate{action: &a, pr: pr})
+		pending = append(pending, candidate{action: &a, pr: pr, hasWait: hasWait})
 	}
 	return pending, rows.Err()
 }

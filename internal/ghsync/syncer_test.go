@@ -169,6 +169,17 @@ func (c *countingFetcher) Fetch(context.Context, []string) (github.Result, error
 	return c.result, nil
 }
 
+// Refs is quiet: these tests are about how often the loop runs, and nothing
+// in them waits on a ref, so sync never asks.
+func (c *countingFetcher) Refs(context.Context, []github.RefQuery) (github.RefResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return github.RefResult{}, c.err
+	}
+	return github.RefResult{}, nil
+}
+
 func (c *countingFetcher) count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()

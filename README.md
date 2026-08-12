@@ -1106,6 +1106,136 @@ A wait is reported once. The log is the record of that, so nothing else has to
 remember; and if the deadline moves out because a fresh review was requested,
 it is reported again, because it is a different wait.
 
+## Waiting for a release
+
+Waiting for a release used to be a snooze to a guessed date. That is wrong in
+both directions: if the release slips the action wakes early and gets
+re-snoozed, and if it ships early it sleeps through the thing it was waiting
+for. A date was standing in for a condition, and closing on conditions is the
+one thing roz already knows how to do.
+
+```console
+$ roz action add --title "Ship the migration once cli 2.98 is out" --verb wait_ref \
+    --ref-repo cli/cli --ref '>=2.98'
+NA1
+```
+
+`--ref` is a [semver constraint](https://github.com/Masterminds/semver#checking-version-constraints),
+not a name, because when you write the block nobody knows whether the next
+release is `v2.98.0` or `v2.98.1`. The usual operators all work — `>=1.5`,
+`^1.2`, `~1.2.3`, `1.2.x`, `>=1.2, <2.0`.
+
+Sync polls only the refs something is waiting for. A repository with no
+outstanding wait is never asked, so this costs nothing until it is relevant,
+and there is no watch list to keep in step with the waits themselves.
+
+```console
+$ roz sync github
+cli/cli tag: 200 recorded on the first poll
+polled 0, 0 changed, 1 ref queries
+```
+
+A repository's first poll sees its whole tag history at once. None of that
+*appeared* in any sense a person means, so it is counted rather than listed;
+after that, a tag turning up is one line and is news.
+
+Refs are read in pages, to a bound. **Tags** come back newest-commit-first, so a
+forward-looking wait is answered by the first page. **Branches** have no commit
+date to order by — GitHub offers only alphabetical or tag-commit-date — so they
+are read alphabetically, which has nothing to do with recency, and what makes a
+branch wait work is the filter rather than the order. `facebook/react` has 945
+branches whose release ones sort well past any bounded read; asking GitHub for
+`releases/` narrows that to three.
+
+So the filter carries the path prefix and the literal head of a name-shaped
+expression. A constraint contributes nothing to it — `>=1.2` is not a substring
+of any ref name — which is why a top-level wait against a monorepo has nothing
+to narrow on. That case is reported rather than left to fail quietly, since
+some repositories are unreasonable: `aws/aws-sdk-go-v2` carries 82,000 tags,
+one per service release, and GitHub times out serving deep pages of a
+connection that size.
+
+```console
+$ roz sync github
+aws/aws-sdk-go-v2 tag: 500 recorded on the first poll
+aws/aws-sdk-go-v2: matched 82234 refs, read 500 — narrow the filter
+polled 0, 0 changed, 2 ref queries
+```
+
+The remedy is a narrower path prefix, not more pages: among 82,000 component
+tags a top-level release is not findable at any page count. Saying so is the
+point — a wait whose ref is never fetched would otherwise sit there forever
+with nothing to explain it.
+
+Both the bound and the branch ordering are deliberate for now and worth
+revisiting; [#129](https://github.com/scottlaird/roz/issues/129) records what
+is thin about them.
+
+```console
+$ roz sync github
+cli/cli tag v2.98.0 appeared
+NA1 closed: wait_ref
+polled 0, 0 changed, 1 closed, 1 ref queries
+```
+
+**A pre-release does not satisfy a wait for the release.** `>=2.98` is not
+answered by `v2.98.0-rc1`, by the constraint's own rule rather than by anything
+roz invents. Ask for one explicitly when that is the point:
+
+```console
+$ roz action add --title "Test against the next RC" --verb wait_ref \
+    --ref-repo cli/cli --ref '>=2.98.0-0'
+```
+
+### Several release series in one repository
+
+A monorepo tags `v1.2.3` and, disjointly, `api/v3.4.5`. A path prefix picks the
+series:
+
+```console
+$ roz action add --title "Wait for the next s3 release" --verb wait_ref \
+    --ref-repo aws/aws-sdk-go-v2 --ref 'service/s3/>=1.107'
+```
+
+**Series never compare across.** `service/s3/>=1.107` is answered only by a tag
+under `service/s3/`, and a wait with no prefix means a *top-level* tag — never
+`api/v2.3.4`, however the numbers fall. Two series that share a repository are
+unrelated, and their version numbers mean nothing to each other.
+
+The prefix is also what GitHub is asked to filter on, so a repository with
+thousands of tags across a dozen components returns only the one in question.
+
+### Waiting for something that is not a version
+
+An expression that is not a constraint is a literal name or a glob, which is
+how to wait for a branch being cut:
+
+```console
+$ roz action add --title "Port the fix once 1.5 is branched" --verb wait_ref \
+    --ref-repo acme/api --ref-kind branch --ref 'release-1.5'
+```
+
+The two forms cannot be confused: `release-1.5` does not parse as a constraint,
+and `>=1.5` is not a plausible branch name.
+
+### Why this is worth more than it looks
+
+Where a project tags a release only once the previous one has finished rolling
+out, *"wait for the next release"* means *"the previous release is fully
+deployed"* without observing any deployment at all. The approximation can only
+fire **late**, never early, which is the harmless direction for a gate.
+
+`wait_ref` has no `wait_days`. A release date is not yours to influence and
+there is nobody to chase, so an overdue report would be noise — and since an
+overdue wait now puts an item in the queue, it would be durable noise.
+
+`ref_contains` — "is this pull request in that release" — is
+[#124](https://github.com/scottlaird/roz/issues/124) and deliberately not here.
+The obvious implementation is an ancestry check, and it is wrong: a change
+cherry-picked onto a release branch has a different SHA there, so ancestry
+answers "not present" for anything that reached a release the way patch
+releases are usually built.
+
 ## Upgrading while something is running
 
 `serve`, `syncer`, `watch` and `mcp` read the schema once, at startup. If you

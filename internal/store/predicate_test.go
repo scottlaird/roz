@@ -65,7 +65,7 @@ func TestPredicates(t *testing.T) {
 			if !ok {
 				t.Fatalf("no predicate registered for %q", tt.key)
 			}
-			if got := predicate(&tt.pr); got != tt.want {
+			if got := predicate(Facts{PR: &tt.pr}); got != tt.want {
 				t.Errorf("%s(%+v) = %v, want %v", tt.key, tt.pr, got, tt.want)
 			}
 		})
@@ -74,12 +74,16 @@ func TestPredicates(t *testing.T) {
 
 // TestNothingIsDoneBeforeSync states the rule the individual cases follow: a
 // pull request nobody has looked at closes nothing.
+//
+// Facts carries only the pull request, so this also covers the predicates that
+// read something else: with no ref wait and no refs, ref_exists must be false
+// for the same reason.
 func TestNothingIsDoneBeforeSync(t *testing.T) {
 	fresh := NewPR("owner/repo", 1)
 
 	for _, key := range PredicateKeys() {
 		predicate, _ := LookupPredicate(key)
-		if predicate(fresh) {
+		if predicate(Facts{PR: fresh}) {
 			t.Errorf("%s reported done for a pull request that has never been synced", key)
 		}
 	}

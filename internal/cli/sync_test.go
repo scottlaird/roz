@@ -13,6 +13,7 @@ import (
 // stubFetcher stands in for GitHub so these tests touch no network.
 type stubFetcher struct {
 	result github.Result
+	refs   github.RefResult
 	err    error
 }
 
@@ -21,6 +22,13 @@ func (s stubFetcher) Fetch(context.Context, []string) (github.Result, error) {
 		return github.Result{}, s.err
 	}
 	return s.result, nil
+}
+
+func (s stubFetcher) Refs(context.Context, []github.RefQuery) (github.RefResult, error) {
+	if s.err != nil {
+		return github.RefResult{}, s.err
+	}
+	return s.refs, nil
 }
 
 // withFetcher swaps the client the command builds, and puts it back after.

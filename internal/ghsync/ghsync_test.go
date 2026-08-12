@@ -16,6 +16,10 @@ type fakeFetcher struct {
 	result github.Result
 	err    error
 	asked  []string
+
+	refs      github.RefResult
+	refErr    error
+	askedRefs []github.RefQuery
 }
 
 func (f *fakeFetcher) Fetch(_ context.Context, keys []string) (github.Result, error) {
@@ -24,6 +28,14 @@ func (f *fakeFetcher) Fetch(_ context.Context, keys []string) (github.Result, er
 		return github.Result{}, f.err
 	}
 	return f.result, nil
+}
+
+func (f *fakeFetcher) Refs(_ context.Context, queries []github.RefQuery) (github.RefResult, error) {
+	f.askedRefs = append(f.askedRefs, queries...)
+	if f.refErr != nil {
+		return github.RefResult{}, f.refErr
+	}
+	return f.refs, nil
 }
 
 // newStore returns a Store over a fresh database with one tracked repository
@@ -794,4 +806,200 @@ func TestAnUnreadablePullRequestReachesTheQueue(t *testing.T) {
 	if len(actions) != 1 {
 		t.Errorf("%d actions after four polls, want the same one", len(actions))
 	}
+}
+
+// waitFor adds an open action waiting on a ref, which is the only thing that
+// makes sync ask GitHub about a repository's refs at all.
+func addRefWait(t *testing.T, st *store.Store, w store.RefWait) *store.Action {
+	t.Helper()
+	ctx := context.Background()
+
+	a := store.NewAction("wait for a release", "wait_ref")
+	if err := st.AllocateAction(ctx, a); err != nil {
+		t.Fatalf("AllocateAction() returned error: %v", err)
+	}
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	if err := tx.Insert(ctx, a); err != nil {
+		t.Fatalf("inserting the action: %v", err)
+	}
+	w.ActionID = a.ID
+	if err := tx.SetRefWait(ctx, w); err != nil {
+		t.Fatalf("SetRefWait() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return a
+}
+
+// TestSyncAsksOnlyAboutRefsSomethingWaitsFor is the design in one test: the
+// poll set is derived from outstanding waits, so a database with none costs
+// no ref query at all.
+func TestSyncAsksOnlyAboutRefsSomethingWaitsFor(t *testing.T) {
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{observed(key)}}}
+
+	if _, err := Sync(context.Background(), st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(client.askedRefs) != 0 {
+		t.Errorf("Sync() asked about %v refs with nothing waiting", client.askedRefs)
+	}
+}
+
+// TestSyncCollapsesWaitsIntoOneQuery: three actions waiting for different
+// releases of the same repository ask GitHub the same question, and asking it
+// once is the difference between a query per item and a query per repository.
+func TestSyncCollapsesWaitsIntoOneQuery(t *testing.T) {
+	st, key := newStore(t)
+	for _, matcher := range []string{">=1.5", ">=1.6", ">=2.0"} {
+		addRefWait(t, st, store.RefWait{
+			RepoID: "owner/repo", Kind: store.RefTag, Matcher: matcher,
+		})
+	}
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{observed(key)}}}
+
+	result, err := Sync(context.Background(), st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(client.askedRefs) != 1 {
+		t.Fatalf("Sync() asked %d ref queries for three waits on one series, want 1: %v",
+			len(client.askedRefs), client.askedRefs)
+	}
+	want := github.RefQuery{Repo: "owner/repo", Prefix: "refs/tags/", Contains: ""}
+	if client.askedRefs[0] != want {
+		t.Errorf("asked %+v, want %+v", client.askedRefs[0], want)
+	}
+	if result.RefsPolled != 1 {
+		t.Errorf("RefsPolled = %d, want 1", result.RefsPolled)
+	}
+}
+
+// TestSyncClosesTheWaitWhenTheReleaseAppears is the whole feature through
+// sync: the tag turns up and the action is gone, with no date involved.
+func TestSyncClosesTheWaitWhenTheReleaseAppears(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+	a := addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.5",
+	})
+
+	client := &fakeFetcher{
+		result: github.Result{PullRequests: []github.PullRequest{observed(key)}},
+		refs: github.RefResult{Refs: []github.Ref{
+			// The release that already shipped is still there, and must not
+			// be mistaken for the one being waited for.
+			{Repo: "owner/repo", Prefix: "refs/tags/", Name: "v1.4.0", CommitSHA: "old"},
+		}},
+	}
+
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(result.Settled) != 0 {
+		t.Fatalf("Sync() closed something on a release older than the bound")
+	}
+	// The first poll of a repository sees its whole history at once. None of
+	// that appeared in any sense a person means, so it is counted, not listed.
+	if len(result.NewRefs) != 0 {
+		t.Errorf("NewRefs = %v on a first poll, want none", result.NewRefs)
+	}
+	if got := result.Backfilled["owner/repo tag"]; got != 1 {
+		t.Errorf("Backfilled[owner/repo tag] = %d, want 1", got)
+	}
+
+	client.refs.Refs = append(client.refs.Refs,
+		github.Ref{Repo: "owner/repo", Prefix: "refs/tags/", Name: "v1.5.0", CommitSHA: "new"})
+
+	result, err = Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(result.Settled) != 1 || result.Settled[0].Action.ID != a.ID {
+		t.Fatalf("Sync() settled %v, want [%s]", result.Settled, a.ID)
+	}
+	// Now the repository is known, a tag turning up is news — and only the
+	// new one is: v1.4.0 was already there.
+	if len(result.NewRefs) != 1 || result.NewRefs[0].Name != "v1.5.0" {
+		t.Errorf("NewRefs = %v, want just v1.5.0", result.NewRefs)
+	}
+	if len(result.Backfilled) != 0 {
+		t.Errorf("Backfilled = %v on a second poll, want none", result.Backfilled)
+	}
+
+	// And the query stops being asked, because nothing waits any more.
+	client.askedRefs = nil
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(client.askedRefs) != 0 {
+		t.Errorf("Sync() still asked %v after the wait closed", client.askedRefs)
+	}
+}
+
+// TestSyncPollsRefsWithNoPullRequestsTracked: a release gate is not about a
+// pull request, so it must work in a database that tracks none.
+func TestSyncPollsRefsWithNoPullRequestsTracked(t *testing.T) {
+	ctx := context.Background()
+	st := newBareStore(t)
+
+	a := addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefBranch, Matcher: "release-1.5",
+	})
+	client := &fakeFetcher{refs: github.RefResult{Refs: []github.Ref{
+		{Repo: "owner/repo", Prefix: "refs/heads/", Name: "release-1.5", CommitSHA: "sha"},
+	}}}
+
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(result.Settled) != 1 || result.Settled[0].Action.ID != a.ID {
+		t.Fatalf("Sync() settled %v, want [%s]", result.Settled, a.ID)
+	}
+}
+
+// newBareStore is newStore without the pull request: a database that tracks a
+// repository and nothing in it, which is the state a release gate can be the
+// only thing in.
+func newBareStore(t *testing.T) *store.Store {
+	t.Helper()
+	ctx := context.Background()
+
+	path := filepath.Join(t.TempDir(), "roz.db")
+	if _, err := store.Init(path, map[store.Entity]string{
+		store.EntityProject: "SL", store.EntityAction: "NA",
+	}); err != nil {
+		t.Fatalf("Init() returned error: %v", err)
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	st, err := store.New(db)
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.Insert(ctx, store.NewGitHubRepo("owner", "repo")); err != nil {
+		t.Fatalf("tracking the repository: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return st
 }

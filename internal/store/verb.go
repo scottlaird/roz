@@ -66,6 +66,13 @@ type ActionVerb struct {
 	// becomes something that sits in the queue until Monday rather than
 	// something that demands attention when it fires.
 	WaitDays sql.NullInt64 `db:"wait_days"`
+
+	// RequiresRef says the verb needs a ref wait to be able to close, the way
+	// RequiresPR says it needs a pull request. Separate flags rather than one
+	// "needs a subject", because the remedies differ — `action link-pr`
+	// against `action wait-ref` — and an error naming the wrong one is its own
+	// small bug.
+	RequiresRef bool `db:"requires_ref"`
 }
 
 func (v *ActionVerb) table() string       { return "actionverb" }

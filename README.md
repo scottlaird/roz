@@ -1106,6 +1106,26 @@ A wait is reported once. The log is the record of that, so nothing else has to
 remember; and if the deadline moves out because a fresh review was requested,
 it is reported again, because it is a different wait.
 
+### A standing condition is reported once a day
+
+Some exceptions describe a situation rather than an event: a pull request that
+has gone invisible, a repository too large for the ref feed. Sync cannot tell
+"this just became true" from "this is still true" — it re-derives the world
+every few seconds and finds the same thing each time — so those are logged once
+and then stay quiet for a day.
+
+The key is the condition: the exception kind, and what it is about. Two
+problems on one repository are two conditions and both surface; rewording a
+message does not defeat the suppression, and neither does a detail moving, like
+a ref count creeping up. A condition still outstanding tomorrow is mentioned
+again, because by then the first notice has scrolled out of view.
+
+The first occurrence is never delayed. Suppressing repeats is the point;
+suppressing the signal would be a different bug.
+
+`roz exception` is unaffected — a person recording one deliberately is not a
+poll restating itself.
+
 ## Waiting for a release
 
 Waiting for a release used to be a snooze to a guessed date. That is wrong in
@@ -1139,6 +1159,11 @@ A repository's first poll sees its whole tag history at once. None of that
 *appeared* in any sense a person means, so it is counted rather than listed;
 after that, a tag turning up is one line and is news.
 
+Only the first read of a repository walks its history. After that a poll stops
+as soon as it recognises a ref it already has — tags come back newest-first, so
+meeting a known one means the read has caught up and everything below is older
+still. A repository with eight hundred tags and nothing new costs one request.
+
 Refs are read in pages, to a bound. **Tags** come back newest-commit-first, so a
 forward-looking wait is answered by the first page. **Branches** have no commit
 date to order by — GitHub offers only alphabetical or tag-commit-date — so they
@@ -1158,14 +1183,18 @@ connection that size.
 ```console
 $ roz sync github
 aws/aws-sdk-go-v2 tag: 500 recorded on the first poll
-aws/aws-sdk-go-v2: matched 82234 refs, read 500 — narrow the filter
+aws/aws-sdk-go-v2: read the newest 500 of 82234 refs; older ones were not reached
 polled 0, 0 changed, 2 ref queries
 ```
 
-The remedy is a narrower path prefix, not more pages: among 82,000 component
-tags a top-level release is not findable at any page count. Saying so is the
-point — a wait whose ref is never fetched would otherwise sit there forever
-with nothing to explain it.
+That is a statement about history, not a complaint about the expression. Refs
+created from then on arrive at the top of the feed and are seen, so a wait for
+something that has not happened yet — nearly every wait — is unaffected. What
+is not covered is a wait for a ref that *already exists* and is older than the
+first read reached.
+
+A repository simply having a long history is not a problem to fix, so nothing
+is put in the queue about it.
 
 Both the bound and the branch ordering are deliberate for now and worth
 revisiting; [#129](https://github.com/scottlaird/roz/issues/129) records what

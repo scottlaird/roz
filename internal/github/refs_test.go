@@ -358,3 +358,82 @@ func refPageBody(n, total int, more bool, cursor string) string {
 	  "nodes": [{"name": "v1.%d.0", "target": {"oid": "sha%d"}}]
 	}}}}`, total, more, cursor, n, n)
 }
+
+// TestRefsStopsWhenItRecognisesSomething is what makes a poll incremental. A
+// repository with 800 tags and one new one should cost one request, not five:
+// tags come back newest-first, so a page carrying something already recorded
+// means the read has met what the last one left.
+func TestRefsStopsWhenItRecognisesSomething(t *testing.T) {
+	var asked int
+	client := NewWithRunner(func(context.Context, string) ([]byte, error) {
+		asked++
+		return []byte(`{"data": {"ref0": {"refs": {
+		  "totalCount": 800,
+		  "pageInfo": {"hasNextPage": true, "endCursor": "C"},
+		  "nodes": [
+		    {"name": "v2.1.0", "target": {"oid": "new"}},
+		    {"name": "v2.0.0", "target": {"oid": "old"}}
+		  ]}}}}`), nil
+	})
+
+	result, err := client.Refs(context.Background(), []RefQuery{{
+		Repo: "acme/api", Prefix: "refs/tags/",
+		Known: func(name string) bool { return name == "v2.0.0" },
+	}})
+	if err != nil {
+		t.Fatalf("Refs() returned error: %v", err)
+	}
+	if asked != 1 {
+		t.Errorf("asked %d times for a repository it had already read, want 1", asked)
+	}
+	if len(result.Refs) != 2 {
+		t.Errorf("read %d refs, want the page it fetched", len(result.Refs))
+	}
+	// Catching up is finishing, not running short. Reporting it as truncation
+	// would restate a non-problem on every poll for ever.
+	if len(result.Truncated) != 0 {
+		t.Errorf("Truncated = %+v, want nothing: the read caught up", result.Truncated)
+	}
+}
+
+// TestRefsWalksWhenNothingIsKnown: the first read of a repository has no
+// boundary to meet, so it uses the whole bound.
+func TestRefsWalksWhenNothingIsKnown(t *testing.T) {
+	var asked int
+	client := NewWithRunner(func(context.Context, string) ([]byte, error) {
+		asked++
+		return []byte(refPageBody(asked, 800, true, "C")), nil
+	})
+
+	result, err := client.Refs(context.Background(), []RefQuery{{
+		Repo: "acme/api", Prefix: "refs/tags/",
+		Known: func(string) bool { return false },
+	}})
+	if err != nil {
+		t.Fatalf("Refs() returned error: %v", err)
+	}
+	if asked != RefMaxPages {
+		t.Errorf("asked %d times on a first read, want the bound of %d", asked, RefMaxPages)
+	}
+	if len(result.Truncated) != 1 {
+		t.Errorf("Truncated = %+v, want the shortfall reported", result.Truncated)
+	}
+}
+
+// TestRefsWithNoKnownSetWalks: a nil Known is a first read by another name,
+// and must not be mistaken for "everything is already recorded".
+func TestRefsWithNoKnownSetWalks(t *testing.T) {
+	var asked int
+	client := NewWithRunner(func(context.Context, string) ([]byte, error) {
+		asked++
+		return []byte(refPageBody(asked, 800, true, "C")), nil
+	})
+
+	if _, err := client.Refs(context.Background(),
+		[]RefQuery{{Repo: "acme/api", Prefix: "refs/tags/"}}); err != nil {
+		t.Fatalf("Refs() returned error: %v", err)
+	}
+	if asked != RefMaxPages {
+		t.Errorf("asked %d times with no known set, want %d", asked, RefMaxPages)
+	}
+}

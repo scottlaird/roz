@@ -3,6 +3,7 @@ package ghsync
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -875,9 +876,10 @@ func TestSyncCollapsesWaitsIntoOneQuery(t *testing.T) {
 		t.Fatalf("Sync() asked %d ref queries for three waits on one series, want 1: %v",
 			len(client.askedRefs), client.askedRefs)
 	}
-	want := github.RefQuery{Repo: "owner/repo", Prefix: "refs/tags/", Contains: ""}
-	if client.askedRefs[0] != want {
-		t.Errorf("asked %+v, want %+v", client.askedRefs[0], want)
+	got := client.askedRefs[0]
+	if got.Repo != "owner/repo" || got.Prefix != "refs/tags/" || got.Contains != "" {
+		t.Errorf("asked %s %s %q, want owner/repo refs/tags/ with no filter",
+			got.Repo, got.Prefix, got.Contains)
 	}
 	if result.RefsPolled != 1 {
 		t.Errorf("RefsPolled = %d, want 1", result.RefsPolled)
@@ -1004,4 +1006,163 @@ func newBareStore(t *testing.T) *store.Store {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 	return st
+}
+
+// TestSyncReportsAnUnreadablePullRequestOnce is the reported bug through sync:
+// a condition that is true on every poll writes one line, not one per poll.
+func TestSyncReportsAnUnreadablePullRequestOnce(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+	client := &fakeFetcher{result: github.Result{
+		Missing: map[string]string{key: "is not a pull request GitHub will show us"},
+	}}
+
+	for i := 0; i < 6; i++ {
+		if _, err := Sync(ctx, st, client); err != nil {
+			t.Fatalf("Sync() returned error: %v", err)
+		}
+	}
+
+	events, err := st.Events(ctx, store.EventQuery{Severity: store.SeverityException})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	var reported int
+	for _, e := range events {
+		if e.Kind == "pr_unresolvable" && e.SubjectID == key {
+			reported++
+		}
+	}
+	if reported != 1 {
+		t.Errorf("six polls logged %d exceptions for one standing condition, want 1", reported)
+	}
+}
+
+// TestSyncReportsATruncatedFilterOnce is the same for the ref feed, and also
+// checks that the caller is told only when the log was.
+func TestSyncReportsATruncatedFilterOnce(t *testing.T) {
+	ctx := context.Background()
+	st := newBareStore(t)
+	addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.5",
+	})
+
+	client := &fakeFetcher{refs: github.RefResult{
+		Truncated: []github.RefTruncation{{
+			Query:   github.RefQuery{Repo: "owner/repo", Prefix: "refs/tags/"},
+			Matched: 82234, Read: 500,
+		}},
+	}}
+
+	first, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(first.Truncated) != 1 {
+		t.Fatalf("the first sync reported %d truncations, want 1", len(first.Truncated))
+	}
+
+	for i := 0; i < 5; i++ {
+		again, err := Sync(ctx, st, client)
+		if err != nil {
+			t.Fatalf("Sync() returned error: %v", err)
+		}
+		if len(again.Truncated) != 0 {
+			t.Fatalf("poll %d restated the truncation", i+2)
+		}
+	}
+
+	events, err := st.Events(ctx, store.EventQuery{Severity: store.SeverityException})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	var reported int
+	for _, e := range events {
+		if e.Kind == "ref_poll_truncated" {
+			reported++
+		}
+	}
+	if reported != 1 {
+		t.Errorf("six polls logged %d truncation exceptions, want 1", reported)
+	}
+}
+
+// TestASecondPollCostsOneRequest is the reported case: a repository with more
+// tags than one page, waited on for something that has not happened yet. The
+// first poll walks what it can; every poll after it should ask once and stop
+// as soon as it recognises something.
+func TestASecondPollCostsOneRequest(t *testing.T) {
+	ctx := context.Background()
+	st := newBareStore(t)
+	addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=9.0",
+	})
+
+	// Two pages of history, then nothing new.
+	var page int
+	client := &pagingFetcher{next: func(known func(string) bool) github.RefResult {
+		page++
+		var refs []github.Ref
+		for i := 0; i < 3; i++ {
+			refs = append(refs, github.Ref{
+				Repo: "owner/repo", Prefix: "refs/tags/",
+				Name: fmt.Sprintf("v1.%d.0", i), CommitSHA: "sha",
+			})
+		}
+		return github.RefResult{Refs: refs, Missing: map[string]string{}}
+	}}
+
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if client.calls != 1 {
+		t.Fatalf("first sync made %d ref reads, want 1", client.calls)
+	}
+	// Everything the second poll sees is already recorded.
+	known, err := st.RefNames(ctx, "owner/repo", store.RefTag)
+	if err != nil {
+		t.Fatalf("RefNames() returned error: %v", err)
+	}
+	if len(known) != 3 {
+		t.Fatalf("recorded %d refs, want 3", len(known))
+	}
+
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(result.NewRefs) != 0 {
+		t.Errorf("the second poll called %d refs new", len(result.NewRefs))
+	}
+	// And the query it asked carried the boundary, which is what lets the
+	// client stop after one page.
+	if client.lastKnown == nil {
+		t.Fatal("the second poll asked without saying what it already had")
+	}
+	if !client.lastKnown("v1.0.0") {
+		t.Error("the known set does not contain a ref that was recorded")
+	}
+	if client.lastKnown("v9.9.9") {
+		t.Error("the known set claims a ref that was never recorded")
+	}
+}
+
+// pagingFetcher records what the ref query was told, so a test can check that
+// the boundary reaches the client.
+type pagingFetcher struct {
+	next      func(known func(string) bool) github.RefResult
+	calls     int
+	lastKnown func(string) bool
+}
+
+func (f *pagingFetcher) Fetch(context.Context, []string) (github.Result, error) {
+	return github.Result{Missing: map[string]string{}}, nil
+}
+
+func (f *pagingFetcher) Refs(_ context.Context, queries []github.RefQuery) (github.RefResult, error) {
+	f.calls++
+	if len(queries) > 0 {
+		f.lastKnown = queries[0].Known
+	}
+	return f.next(f.lastKnown), nil
 }

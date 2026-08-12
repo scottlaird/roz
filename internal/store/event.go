@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Severity is kept apart from an event's kind so a monitor can filter on
@@ -212,4 +213,54 @@ func (t *Tx) Exception(ctx context.Context, r Record, kind, note string) error {
 		severity: SeverityException,
 		note:     note,
 	})
+}
+
+// ExceptionInterval is how long a standing condition stays quiet after it has
+// been reported.
+//
+// A day, because these describe situations rather than events: a repository
+// too large for the ref feed is the same fact tomorrow as it is today, and one
+// notice a day is the most that can be acted on. Sync polls every few seconds,
+// so without this a single standing condition writes thousands of identical
+// lines a day into the log a monitor watches.
+const ExceptionInterval = 24 * time.Hour
+
+// ExceptionOnce records an exception unless the same condition has already
+// been reported recently, and says whether it wrote one.
+//
+// For conditions observed by polling rather than at a transition. Sync cannot
+// tell "this just became true" from "this is still true": it re-derives the
+// world every few seconds, and every derivation finds the same unreadable
+// repository. Reporting each one buries the log in restatements and teaches
+// whoever reads it to skip that source — which costs more than the repeats,
+// because the first notice was worth having.
+//
+// The key is the condition — kind, subject type, subject id — and never the
+// message. Two problems on one repository are two kinds and stay separate,
+// while rewording a message does not defeat the suppression.
+//
+// The log is the record, so nothing else has to remember. Same reasoning as
+// the overdue query, which asks the same question about its own deadline.
+func (t *Tx) ExceptionOnce(ctx context.Context, r Record, kind, note string) (bool, error) {
+	since, err := time.Parse(timeFormat, t.at)
+	if err != nil {
+		return false, fmt.Errorf("reading the transaction clock: %w", err)
+	}
+	cutoff := since.Add(-ExceptionInterval).UTC().Format(timeFormat)
+
+	var reported int
+	err = t.tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+		  SELECT 1 FROM event
+		  WHERE severity = ? AND kind = ? AND subject_type = ? AND subject_id = ?
+		    AND at >= ?)`,
+		SeverityException, kind, r.subjectType(), r.subjectID(), cutoff).Scan(&reported)
+	if err != nil {
+		return false, fmt.Errorf("checking whether %s was already reported for %s: %w",
+			kind, r.subjectID(), err)
+	}
+	if reported == 1 {
+		return false, nil
+	}
+	return true, t.Exception(ctx, r, kind, note)
 }

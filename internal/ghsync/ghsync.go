@@ -192,7 +192,10 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 	if err != nil {
 		return err
 	}
-	queries := refQueries(waits)
+	queries, err := refQueries(ctx, st, waits)
+	if err != nil {
+		return err
+	}
 	if len(queries) == 0 {
 		return nil
 	}
@@ -257,26 +260,23 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 // can get through.
 const eventRefsTruncated = "ref_poll_truncated"
 
-// reportTruncated says that a filter was too broad to read to the end.
+// reportTruncated says that a repository's history was not read to the end.
 //
-// This one raises an action as well as logging, because of what it means: the
-// refs being matched against are only the newest few hundred of many
-// thousands, so a wait on that filter may never see the ref it names and would
-// sit in the queue forever without anything saying why. That is the failure
-// this codebase refuses everywhere else — better a decision to make than a
-// wait that silently cannot close.
+// What that does and does not mean is the whole content of the message. Refs
+// created from now on arrive at the top of the feed and are seen: a wait for
+// something that has not happened yet is unaffected, which is nearly every
+// wait. What is not covered is a wait for a ref that *already exists* and is
+// old enough to fall outside the first read.
 //
-// The remedy is narrowing the filter rather than reading more: a repository
-// with eighty thousand tags has them one per component release, and no number
-// of pages makes a top-level release findable among those.
+// No action is raised. An earlier version told the reader to narrow the path
+// prefix, which is wrong whenever the prefix is already exact — a repository
+// simply having eight hundred tags is not a filter problem, and an item in the
+// queue advising a fix that does not apply is worse than no item.
 func reportTruncated(ctx context.Context, st *store.Store, t github.RefTruncation) (bool, error) {
-	filter := t.Query.Contains
-	if filter == "" {
-		filter = "the whole namespace"
-	}
 	why := fmt.Sprintf(
-		"%s: %s matches %d refs and only the newest %d were read, so a wait on it may never see its ref. Narrow the path prefix.",
-		t.Query.Repo, filter, t.Matched, t.Read)
+		"%s: %d refs match and the newest %d were read, so history was not reached to the end. "+
+			"Refs created from now on will be seen; a wait for one that already exists and is older than that may not be.",
+		t.Query.Repo, t.Matched, t.Read)
 
 	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
 	if err != nil {
@@ -294,13 +294,7 @@ func reportTruncated(ctx context.Context, st *store.Store, t github.RefTruncatio
 	if err != nil {
 		return false, err
 	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
-
-	_, err = st.RaiseAction(ctx, eventRefsTruncated, subject,
-		fmt.Sprintf("narrow the ref filter for %s", t.Query.Repo), why)
-	return reported, err
+	return reported, tx.Commit()
 }
 
 // firstPollOf reports which of the repositories about to be read have never
@@ -332,22 +326,36 @@ func firstPollOf(ctx context.Context, st *store.Store, queries []github.RefQuery
 // waiting for v1.5.0, v1.6.0 and v2.0.0 all ask GitHub the same thing, and
 // asking once is the difference between a query per item and a query per
 // repository.
-func refQueries(waits []store.RefWait) []github.RefQuery {
-	seen := map[github.RefQuery]bool{}
+func refQueries(ctx context.Context, st *store.Store, waits []store.RefWait) ([]github.RefQuery, error) {
+	type key struct{ repo, prefix, contains string }
+
+	seen := map[key]bool{}
 	var queries []github.RefQuery
 	for _, w := range waits {
-		q := github.RefQuery{
-			Repo:     w.RepoID,
-			Prefix:   store.RefPath(w.Kind, ""),
-			Contains: w.PollPrefix(),
-		}
-		if seen[q] {
+		k := key{w.RepoID, store.RefPath(w.Kind, ""), w.PollPrefix()}
+		if seen[k] {
 			continue
 		}
-		seen[q] = true
-		queries = append(queries, q)
+		seen[k] = true
+
+		// What this repository and kind already hold, so the read can stop as
+		// soon as it meets it. One query per poll rather than one per ref: a
+		// set of a few hundred names is cheap to hold and is what turns a
+		// five-page re-read into a single request.
+		known, err := st.RefNames(ctx, w.RepoID, w.Kind)
+		if err != nil {
+			return nil, err
+		}
+		queries = append(queries, github.RefQuery{
+			Repo:     k.repo,
+			Prefix:   k.prefix,
+			Contains: k.contains,
+			Known: func(name string) bool {
+				return known[name]
+			},
+		})
 	}
-	return queries
+	return queries, nil
 }
 
 // applyRef records one observed ref, reporting whether it had not been seen

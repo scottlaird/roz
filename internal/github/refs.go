@@ -16,17 +16,19 @@ const RefPageSize = 100
 
 // RefMaxPages bounds how far a single read will follow a repository's refs.
 //
-// Tags come back newest-commit-first, so a forward-looking wait is answered by
-// the first page: the release being waited for is new. Pages exist for the
-// repositories where that is not enough — cli/cli has 200 tags — and the bound
-// exists because some repositories are unreasonable. aws/aws-sdk-go-v2 carries
-// 82,000, one per service release, and no number of pages is the right way to
-// read those.
+// It applies to the first read of a repository, which is the only one that
+// walks history. After that a read stops as soon as it recognises a ref it
+// already has, so a repository with eight hundred tags and one new one costs a
+// single request — see RefQuery.Known.
 //
-// Hitting the bound is reported rather than absorbed. A filter that matches
-// more refs than this cannot be trusted to contain the one being waited for,
-// and a wait that can never close is exactly the silent wrongness this refuses
-// everywhere else.
+// The bound exists because history can be arbitrarily long and some of it is
+// not worth reading: aws/aws-sdk-go-v2 carries 82,000 tags, one per service
+// release, and GitHub times out serving deep pages of a connection that size.
+//
+// Reaching it is reported, because it means history was not read to the end,
+// and a wait for a ref that already exists might be looking for one of the
+// ones that were never read. Refs created from then on are unaffected: they
+// arrive at the top.
 const RefMaxPages = 5
 
 // RefQuery asks for the refs under one prefix in one repository.
@@ -39,6 +41,14 @@ type RefQuery struct {
 	Repo     string // owner/name
 	Prefix   string
 	Contains string
+
+	// Known reports whether a ref has already been recorded, and is what
+	// makes a poll incremental. Tags come back newest-first, so a page
+	// carrying one already seen means the read has caught up with what it had
+	// and everything below is older still.
+	//
+	// Nil on a first read, when nothing is known and the whole bound is used.
+	Known func(name string) bool
 }
 
 // Ref is one branch or tag as GitHub reports it.
@@ -103,6 +113,10 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 		read := make(map[int]int, len(batch))
 		var matched map[int]int
 
+		// caughtUp holds the queries that stopped because they recognised
+		// something, as distinct from the ones that ran out of pages.
+		caughtUp := map[int]bool{}
+
 		for page := 0; page < RefMaxPages && len(cursors) > 0; page++ {
 			query, aliases := buildRefQuery(batch, cursors)
 
@@ -118,6 +132,13 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 						read[i] += n
 					}
 					cursors = pageResult.next
+					// A page carrying something already recorded means this
+					// read has met what the last one left. Everything below is
+					// older, so there is nothing further worth asking for.
+					for i := range pageResult.recognised {
+						caughtUp[i] = true
+						delete(cursors, i)
+					}
 					continue
 				}
 			}
@@ -149,8 +170,12 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 		}
 
 		// Anything still holding a cursor had more to give than the bound
-		// allowed.
+		// allowed. A query that caught up is not among them: it stopped
+		// because it was finished, not because it ran out of room.
 		for i := range cursors {
+			if caughtUp[i] {
+				continue
+			}
 			result.Truncated = append(result.Truncated, RefTruncation{
 				Query: batch[i], Matched: matched[i], Read: read[i],
 			})
@@ -167,6 +192,8 @@ type refPage struct {
 	read map[int]int
 	// matched is what GitHub says the filter matches in total.
 	matched map[int]int
+	// recognised holds the queries whose page carried a ref already recorded.
+	recognised map[int]bool
 }
 
 // aliasedQuery ties a GraphQL alias back to what asked for it.
@@ -243,9 +270,10 @@ type wireRefs struct {
 
 func decodeRefsInto(body []byte, aliases map[string]aliasedQuery, result *RefResult) (refPage, error) {
 	page := refPage{
-		next:    map[int]string{},
-		read:    map[int]int{},
-		matched: map[int]int{},
+		next:       map[int]string{},
+		read:       map[int]int{},
+		matched:    map[int]int{},
+		recognised: map[int]bool{},
 	}
 
 	var response graphQLResponse
@@ -291,6 +319,9 @@ func decodeRefsInto(body []byte, aliases map[string]aliasedQuery, result *RefRes
 			// worth recording.
 			if node.Name == "" || node.Target.OID == "" {
 				continue
+			}
+			if q.Known != nil && q.Known(node.Name) {
+				page.recognised[aq.index] = true
 			}
 			result.Refs = append(result.Refs, Ref{
 				Repo:      q.Repo,

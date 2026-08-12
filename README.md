@@ -1159,6 +1159,11 @@ A repository's first poll sees its whole tag history at once. None of that
 *appeared* in any sense a person means, so it is counted rather than listed;
 after that, a tag turning up is one line and is news.
 
+Only the first read of a repository walks its history. After that a poll stops
+as soon as it recognises a ref it already has — tags come back newest-first, so
+meeting a known one means the read has caught up and everything below is older
+still. A repository with eight hundred tags and nothing new costs one request.
+
 Refs are read in pages, to a bound. **Tags** come back newest-commit-first, so a
 forward-looking wait is answered by the first page. **Branches** have no commit
 date to order by — GitHub offers only alphabetical or tag-commit-date — so they
@@ -1178,14 +1183,18 @@ connection that size.
 ```console
 $ roz sync github
 aws/aws-sdk-go-v2 tag: 500 recorded on the first poll
-aws/aws-sdk-go-v2: matched 82234 refs, read 500 — narrow the filter
+aws/aws-sdk-go-v2: read the newest 500 of 82234 refs; older ones were not reached
 polled 0, 0 changed, 2 ref queries
 ```
 
-The remedy is a narrower path prefix, not more pages: among 82,000 component
-tags a top-level release is not findable at any page count. Saying so is the
-point — a wait whose ref is never fetched would otherwise sit there forever
-with nothing to explain it.
+That is a statement about history, not a complaint about the expression. Refs
+created from then on arrive at the top of the feed and are seen, so a wait for
+something that has not happened yet — nearly every wait — is unaffected. What
+is not covered is a wait for a ref that *already exists* and is older than the
+first read reached.
+
+A repository simply having a long history is not a problem to fix, so nothing
+is put in the queue about it.
 
 Both the bound and the branch ordering are deliberate for now and worth
 revisiting; [#129](https://github.com/scottlaird/roz/issues/129) records what

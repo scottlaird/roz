@@ -81,8 +81,8 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		fmt.Fprintf(out, "%s: %d recorded on the first poll\n", key, result.Backfilled[key])
 	}
 	for _, t := range result.Truncated {
-		fmt.Fprintf(out, "%s: matched %d refs, read %d — narrow the filter\n",
-			t.Query.Repo, t.Matched, t.Read)
+		fmt.Fprintf(out, "%s: read the newest %d of %d refs; older ones were not reached\n",
+			t.Query.Repo, t.Read, t.Matched)
 	}
 	for _, ref := range result.NewRefs {
 		fmt.Fprintf(out, "%s %s %s appeared\n", ref.RepoID, ref.Kind, ref.Name)

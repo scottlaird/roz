@@ -345,6 +345,30 @@ func (s *Store) HasRefs(ctx context.Context, repo, kind string) (bool, error) {
 	return found == 1, nil
 }
 
+// RefNames returns the names already recorded for a repository and kind.
+//
+// What lets a poll stop as soon as it recognises something. Read once per poll
+// rather than asked per ref: a few hundred names is a small set to hold, and
+// the alternative is a query for every ref on every page.
+func (s *Store) RefNames(ctx context.Context, repo, kind string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT name FROM git_ref WHERE repo_id = ? AND kind = ?", repo, kind)
+	if err != nil {
+		return nil, fmt.Errorf("reading the refs known for %s: %w", repo, err)
+	}
+	defer rows.Close()
+
+	names := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("reading the refs known for %s: %w", repo, err)
+		}
+		names[name] = true
+	}
+	return names, rows.Err()
+}
+
 // LoadGitRef reads a ref by identifier.
 func (t *Tx) LoadGitRef(ctx context.Context, id string) (*GitRef, error) {
 	var r GitRef

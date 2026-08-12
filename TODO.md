@@ -470,16 +470,25 @@ bites; not worth one before.
   monorepo returns its most recent tags across every component — which is why
   polling targets are the one thing that may yet belong on the repository,
   tracked as [#128](https://github.com/scottlaird/roz/issues/128).
-- **Refs are read newest first, paged to a bound, and a filter too broad to
-  read through is reported.** Tags come back newest-commit-first, so a
+- **Only a repository's first read walks its history; later polls stop at what
+  they recognise.** Tags come back newest-first, so a page carrying a ref
+  already recorded means the read has met what the last one left and everything
+  below is older still. A repository with eight hundred tags and nothing new
+  costs one request rather than five, and the boundary is the set of names
+  already stored — read once per poll rather than asked per ref.
+- **Reaching the bound is a statement about history, not a complaint about the
+  expression.** An earlier version said "narrow the path prefix" and raised an
+  action; that is wrong whenever the prefix is already exact, which it usually
+  is — a repository simply having a long history is not a filter problem, and a
+  queue item advising a fix that does not apply is worse than no item. What it
+  now says is what it means: refs created from now on will be seen, and a wait
+  for one that already exists and is older than the first read may not be.
+- **Refs are read newest first, paged to a bound, and reaching that bound is
+  reported.** Tags come back newest-commit-first, so a
   forward-looking wait is answered by the first page; paging exists for the
   repositories where one page is not the whole history. The bound exists
   because some are unreasonable — `aws/aws-sdk-go-v2` has 82,000 tags and
-  GitHub answers page four of that connection about two times in three — and
-  no page count makes a top-level release findable among 82,000 component
-  ones. So the shortfall is reported and raises an action, since the remedy is
-  a narrower prefix and the alternative is a wait whose ref is never fetched,
-  sitting in the queue with nothing to explain it.
+  GitHub answers page four of that connection about two times in three.
 - **Branches are read alphabetically, so a branch wait rests on its filter.**
   GitHub orders refs by name or by tag commit date and nothing else, and a
   branch has no commit date — so alphabetical it is, which is unrelated to what

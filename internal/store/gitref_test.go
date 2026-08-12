@@ -484,3 +484,76 @@ func TestSetRefWaitReplaces(t *testing.T) {
 		t.Errorf("spec = %q, want %q", got, want)
 	}
 }
+
+// TestABranchNamedLikeAConstraint is the trap the union reading exists for.
+//
+// facebook/react has a branch called `releases/19.2.x`. Written as a wait,
+// that matcher parses as the constraint 19.2.* — and the branch's own name,
+// "19.2.x", is not a version, so a constraint-only reading would never match
+// the very ref it was written to name.
+func TestABranchNamedLikeAConstraint(t *testing.T) {
+	names := []string{"releases/19.2.x", "release/19.1.1", "release-1.5", "main"}
+
+	for _, name := range names {
+		prefix, matcher, err := ParseRefSpec(name)
+		if err != nil {
+			t.Fatalf("ParseRefSpec(%q) returned error: %v", name, err)
+		}
+		w := RefWait{
+			RepoID: "acme/api", Kind: RefBranch,
+			PathPrefix: prefix, Matcher: matcher,
+		}
+		if !w.Matches(NewGitRef("acme/api", RefBranch, name, "sha")) {
+			t.Errorf("a wait written as %q does not match the branch it names", name)
+		}
+	}
+}
+
+// TestTheUnionAddsNoFalseMatches: a constraint-shaped matcher must not start
+// matching refs literally, and the arms must stay disjoint where they should.
+func TestTheUnionAddsNoFalseMatches(t *testing.T) {
+	w := RefWait{RepoID: "acme/api", Kind: RefTag, Matcher: ">=1.2"}
+
+	// The constraint still governs versions: nothing below it matches.
+	for _, name := range []string{"1.1.0", "v1.1.9", "v1.1.9-rc1"} {
+		if w.Matches(NewGitRef("acme/api", RefTag, name, "sha")) {
+			t.Errorf(">=1.2 matched %q", name)
+		}
+	}
+	// A ref literally named ">=1.2" would match, through the literal arm.
+	// That is the union behaving as specified rather than a hole: no such ref
+	// exists in practice, and "the ref you named" is the intended reading.
+	if !w.Matches(NewGitRef("acme/api", RefTag, "v1.2.0", "sha")) {
+		t.Error(">=1.2 stopped matching a version it covers")
+	}
+
+	// A name-shaped matcher stays literal: release-1.5 does not become a
+	// constraint, so release-1.6 is not covered.
+	lit := RefWait{RepoID: "acme/api", Kind: RefBranch, Matcher: "release-1.5"}
+	if lit.Matches(NewGitRef("acme/api", RefBranch, "release-1.6", "sha")) {
+		t.Error("a literal matcher matched a different branch")
+	}
+}
+
+// TestPollPrefixNarrowsANameShapedMatcher: branches have no commit date to
+// order by, so they are read alphabetically and a bounded read reaches only so
+// far. facebook/react has 945 branches whose release ones sort past that, so
+// the filter has to carry the literal head or the ref is never fetched.
+func TestPollPrefixNarrowsANameShapedMatcher(t *testing.T) {
+	tests := []struct {
+		prefix, matcher, want string
+	}{
+		{"", "release-1.5", "release-1.5"},
+		{"", "release-*", "release-"},
+		{"releases", "19.2.x", "releases/"},
+		{"", ">=1.5", ""},
+		{"api", ">=3.6", "api/"},
+		{"team", "release-*", "team/release-"},
+	}
+	for _, tt := range tests {
+		got := RefWait{PathPrefix: tt.prefix, Matcher: tt.matcher}.PollPrefix()
+		if got != tt.want {
+			t.Errorf("PollPrefix(%q, %q) = %q, want %q", tt.prefix, tt.matcher, got, tt.want)
+		}
+	}
+}

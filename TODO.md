@@ -480,6 +480,22 @@ bites; not worth one before.
   ones. So the shortfall is reported and raises an action, since the remedy is
   a narrower prefix and the alternative is a wait whose ref is never fetched,
   sitting in the queue with nothing to explain it.
+- **Branches are read alphabetically, so a branch wait rests on its filter.**
+  GitHub orders refs by name or by tag commit date and nothing else, and a
+  branch has no commit date — so alphabetical it is, which is unrelated to what
+  anybody waits for. `facebook/react` has 945 branches whose release ones sort
+  past any bounded read. What makes it work is that the poll filter carries the
+  literal head of a name-shaped expression as well as the path prefix, turning
+  945 into three. A constraint contributes no filter, since `>=1.2` is not a
+  substring of any name. Recorded as thin in
+  [#129](https://github.com/scottlaird/roz/issues/129).
+- **A matcher matches either as a constraint or as a name, whichever hits.**
+  `releases/19.2.x` is a real branch and also parses as the constraint 19.2.*,
+  and the branch's own name is not a version — so a constraint-only reading
+  would never match the ref it was written to name. The union adds no false
+  matches: a constraint-shaped matcher is not a name any ref has, and a
+  name-shaped one does not parse, so the arms overlap only where a name is also
+  a version.
 - **A ref page that fails stops that batch rather than the sync.** A connection
   large enough to need paging is large enough for GitHub to time out serving
   it, and one unreadable repository must not take the pull request poll down

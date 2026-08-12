@@ -184,13 +184,25 @@ func (w RefWait) Matches(ref *GitRef) bool {
 		return false
 	}
 
-	constraint, isConstraint := w.Constraint()
-	if !isConstraint {
-		// A literal name or glob, for a ref no version scheme describes: the
-		// release-1.5 branch being cut.
-		return globMatch(w.Matcher, name)
+	// Either reading satisfies the wait, which matters more than it sounds.
+	// A branch may be named `releases/19.2.x`, and that matcher parses as a
+	// constraint meaning 19.2.* — while the branch's own name, "19.2.x", is
+	// not a version, so the constraint reading alone would never match the
+	// very ref it was written to name.
+	//
+	// The union cannot introduce a false match. A constraint-shaped matcher —
+	// `>=1.2`, `^1.2` — is not a name any ref has, so the literal arm never
+	// fires for one; and a name-shaped matcher does not parse, so the
+	// constraint arm never fires for it. They overlap only where a name is
+	// also a version, which is the case this exists to get right.
+	if globMatch(w.Matcher, name) {
+		return true
 	}
 
+	constraint, ok := w.Constraint()
+	if !ok {
+		return false
+	}
 	version, err := semver.NewVersion(name)
 	if err != nil {
 		// Not a version, so a version constraint has nothing to say about it.
@@ -210,19 +222,38 @@ func (w RefWait) Describe() string {
 
 // PollPrefix is what GitHub is asked to filter on.
 //
-// The path prefix, which narrows a monorepo's thousands of tags to the one
-// component in question. An optimisation and never a filter: whatever comes
-// back is matched again here.
+// The path prefix, plus the literal head of a name-shaped matcher. An
+// optimisation and never a filter: whatever comes back is matched again here,
+// so this may only ever be *narrower* than the truth by nothing at all.
 //
-// A top-level wait yields "", so a busy monorepo returns its most recent tags
-// across every component and the top-level ones may not be among them. That is
-// a real limit, and the reason polling targets belong on the repository —
-// scottlaird/roz#128 — rather than being squeezed out of a wait.
+// The literal head is what makes a branch wait work at all in a busy
+// repository. Branches have no commit date to order by, so they are read
+// alphabetically, and `facebook/react` carries 945 of them: its release
+// branches sort past anything a bounded read reaches. Asking GitHub for
+// `release-` instead turns that into three.
+//
+// A constraint contributes nothing here — `>=1.2` is not a substring of any
+// ref name — so a wait with a constraint and no path prefix yields "", which
+// is the top-level-monorepo case reported as truncated rather than narrowed.
+// That is the reason polling targets belong on the repository,
+// scottlaird/roz#128, rather than being squeezed out of a wait.
 func (w RefWait) PollPrefix() string {
-	if w.PathPrefix == "" {
-		return ""
+	prefix := ""
+	if w.PathPrefix != "" {
+		prefix = w.PathPrefix + "/"
 	}
-	return w.PathPrefix + "/"
+	if _, isConstraint := w.Constraint(); isConstraint {
+		return prefix
+	}
+	return prefix + literalHead(w.Matcher)
+}
+
+// literalHead is the leading part of a glob that contains no wildcard.
+func literalHead(pattern string) string {
+	if i := strings.IndexAny(pattern, "*?"); i >= 0 {
+		return pattern[:i]
+	}
+	return pattern
 }
 
 // splitRefPath divides a ref name into its directory and its last segment.

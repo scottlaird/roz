@@ -1139,10 +1139,21 @@ A repository's first poll sees its whole tag history at once. None of that
 *appeared* in any sense a person means, so it is counted rather than listed;
 after that, a tag turning up is one line and is news.
 
-Tags are read newest first and paged only so far, because some repositories are
-unreasonable: `aws/aws-sdk-go-v2` carries 82,000 tags, one per service release,
-and GitHub times out serving deep pages of a connection that size. A filter
-matching more than can be read says so, and puts an item in the queue:
+Refs are read in pages, to a bound. **Tags** come back newest-commit-first, so a
+forward-looking wait is answered by the first page. **Branches** have no commit
+date to order by — GitHub offers only alphabetical or tag-commit-date — so they
+are read alphabetically, which has nothing to do with recency, and what makes a
+branch wait work is the filter rather than the order. `facebook/react` has 945
+branches whose release ones sort well past any bounded read; asking GitHub for
+`releases/` narrows that to three.
+
+So the filter carries the path prefix and the literal head of a name-shaped
+expression. A constraint contributes nothing to it — `>=1.2` is not a substring
+of any ref name — which is why a top-level wait against a monorepo has nothing
+to narrow on. That case is reported rather than left to fail quietly, since
+some repositories are unreasonable: `aws/aws-sdk-go-v2` carries 82,000 tags,
+one per service release, and GitHub times out serving deep pages of a
+connection that size.
 
 ```console
 $ roz sync github
@@ -1155,6 +1166,10 @@ The remedy is a narrower path prefix, not more pages: among 82,000 component
 tags a top-level release is not findable at any page count. Saying so is the
 point — a wait whose ref is never fetched would otherwise sit there forever
 with nothing to explain it.
+
+Both the bound and the branch ordering are deliberate for now and worth
+revisiting; [#129](https://github.com/scottlaird/roz/issues/129) records what
+is thin about them.
 
 ```console
 $ roz sync github

@@ -595,3 +595,161 @@ func TestOverdueIsCheckedWithNothingTracked(t *testing.T) {
 		t.Errorf("overdue = %d with nothing tracked, want 1", result.OverdueCount())
 	}
 }
+
+// queued is an observation of a pull request sitting in the merge queue.
+func queued(key string) github.PullRequest {
+	pr := observed(key)
+	pr.IsDraft = false
+	pr.InMergeQueue = true
+	pr.State = "OPEN"
+	pr.MergeStateStatus = "CLEAN"
+	pr.ReviewDecision = "APPROVED"
+	return pr
+}
+
+// syncWith runs one pass against a fixed answer.
+func syncWith(t *testing.T, st *store.Store, prs ...github.PullRequest) Result {
+	t.Helper()
+	client := &fakeFetcher{result: github.Result{PullRequests: prs}}
+	result, err := Sync(context.Background(), st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	return result
+}
+
+// TestEjectionIsReported: a pull request thrown out of the merge queue looks
+// exactly like one that was never in it, and nothing is waiting on anyone.
+func TestEjectionIsReported(t *testing.T) {
+	st, key := newStore(t)
+	syncWith(t, st, queued(key))
+
+	left := queued(key)
+	left.InMergeQueue = false // still OPEN
+
+	result := syncWith(t, st, left)
+	if result.EjectedCount() != 1 {
+		t.Fatalf("ejected = %d, want 1", result.EjectedCount())
+	}
+	if result.Ejected[0].Action == nil {
+		t.Fatal("nothing was put in the queue for the ejection")
+	}
+
+	events, err := st.Events(context.Background(), store.EventQuery{
+		Severity: store.SeverityException,
+	})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != store.EventLeftMergeQueue {
+		t.Errorf("exceptions = %v, want one %s", events, store.EventLeftMergeQueue)
+	}
+}
+
+// TestAMergeIsNotAnEjection is the caveat that matters most. The common
+// true → false transition is a pull request landing, and keying on the
+// transition alone would raise an exception on every one that does.
+func TestAMergeIsNotAnEjection(t *testing.T) {
+	st, key := newStore(t)
+	syncWith(t, st, queued(key))
+
+	merged := queued(key)
+	merged.InMergeQueue = false
+	merged.State = "MERGED"
+
+	result := syncWith(t, st, merged)
+	if result.EjectedCount() != 0 {
+		t.Errorf("a successful merge was reported as an ejection: %v", result.Ejected)
+	}
+
+	events, err := st.Events(context.Background(), store.EventQuery{
+		Severity: store.SeverityException,
+	})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("a merge raised %d exceptions, want none", len(events))
+	}
+}
+
+// TestEjectionAddsOneActionForRepeatedShuffles: a queue that reshuffles can
+// eject and re-add within a minute, and an item per shuffle is noise.
+func TestEjectionAddsOneActionForRepeatedShuffles(t *testing.T) {
+	st, key := newStore(t)
+	left := queued(key)
+	left.InMergeQueue = false
+
+	syncWith(t, st, queued(key))
+	first := syncWith(t, st, left)
+	syncWith(t, st, queued(key)) // re-queued
+	second := syncWith(t, st, left)
+
+	if first.Ejected[0].Action == nil {
+		t.Fatal("the first ejection created no action")
+	}
+	if second.EjectedCount() != 1 {
+		t.Fatalf("the second ejection was not reported: %v", second.Ejected)
+	}
+	// Reported again, because it happened again — but the queue already holds
+	// the thing to do about it.
+	if second.Ejected[0].Action != nil {
+		t.Errorf("the second ejection added %s, want the open one to cover it",
+			second.Ejected[0].Action.ID)
+	}
+}
+
+// TestEjectionDefersToAPipelineStep: an ordinary tracked pull request already
+// has a merge step, and the ejection is news rather than a new task.
+func TestEjectionDefersToAPipelineStep(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+	syncWith(t, st, queued(key))
+
+	// A merge action already covering this pull request.
+	a := store.NewAction("merge it", "merge")
+	if err := st.AllocateAction(ctx, a); err != nil {
+		t.Fatalf("AllocateAction() returned error: %v", err)
+	}
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.Insert(ctx, a); err != nil {
+		t.Fatalf("Insert() returned error: %v", err)
+	}
+	if err := tx.LinkPR(ctx, a, key, store.RoleSubject); err != nil {
+		t.Fatalf("LinkPR() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	left := queued(key)
+	left.InMergeQueue = false
+	result := syncWith(t, st, left)
+
+	if result.EjectedCount() != 1 {
+		t.Fatalf("the ejection was not reported: %v", result.Ejected)
+	}
+	if result.Ejected[0].Action != nil {
+		t.Errorf("added %s alongside the existing merge step", result.Ejected[0].Action.ID)
+	}
+}
+
+// TestNeverQueuedIsNotAnEjection: absence is not a fact, so a pull request
+// whose in_merge_queue was never true has not left anything.
+func TestNeverQueuedIsNotAnEjection(t *testing.T) {
+	st, key := newStore(t)
+
+	notQueued := observed(key)
+	notQueued.InMergeQueue = false
+
+	if result := syncWith(t, st, notQueued); result.EjectedCount() != 0 {
+		t.Errorf("a pull request that was never queued was reported: %v", result.Ejected)
+	}
+	// And again, in case the first pass was doing the work.
+	if result := syncWith(t, st, notQueued); result.EjectedCount() != 0 {
+		t.Errorf("a second quiet poll reported an ejection: %v", result.Ejected)
+	}
+}

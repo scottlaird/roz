@@ -46,6 +46,10 @@ type Result struct {
 	// Settled lists the actions closed because what was observed satisfied
 	// their predicate, with whatever each closure cascaded into.
 	Settled []store.Settled
+	// Ejected lists the pull requests that left the merge queue without
+	// merging. An exception is logged for each, and an action created unless
+	// something open already covered merging it.
+	Ejected []store.Ejected
 
 	// RateLimit is what GitHub last said about the budget, so a caller
 	// polling on a loop can pace itself.
@@ -57,6 +61,9 @@ func (r Result) OverdueCount() int { return len(r.Overdue) }
 
 // SettledCount is how many actions closed on their own.
 func (r Result) SettledCount() int { return len(r.Settled) }
+
+// EjectedCount is how many pull requests fell out of a merge queue.
+func (r Result) EjectedCount() int { return len(r.Ejected) }
 
 // ChangedCount is how many pull requests moved.
 func (r Result) ChangedCount() int { return len(r.Changed) }
@@ -95,12 +102,22 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 	result.RateLimit = fetched.RateLimit
 
 	for _, observed := range fetched.PullRequests {
-		changes, err := applyOne(ctx, st, observed)
+		changes, ejected, err := applyOne(ctx, st, observed)
 		if err != nil {
 			return Result{}, err
 		}
 		if len(changes) > 0 {
 			result.Changed[observed.Key] = changes
+		}
+		if ejected {
+			// Reported outside the transaction that observed it, because
+			// creating an action allocates an identifier, and that is its own
+			// unit of work.
+			report, err := st.ReportEjection(ctx, observed.Key)
+			if err != nil {
+				return Result{}, err
+			}
+			result.Ejected = append(result.Ejected, *report)
 		}
 	}
 
@@ -141,34 +158,41 @@ func checkOverdue(ctx context.Context, st *store.Store, result *Result) error {
 	return nil
 }
 
-func applyOne(ctx context.Context, st *store.Store, observed github.PullRequest) ([]store.Change, error) {
+// applyOne writes one observation, and reports whether it was the moment the
+// pull request fell out of a merge queue.
+func applyOne(ctx context.Context, st *store.Store, observed github.PullRequest) ([]store.Change, bool, error) {
 	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer tx.Rollback()
 
 	before, err := tx.LoadPR(ctx, observed.Key)
 	if err != nil {
-		return nil, fmt.Errorf("loading %s: %w", observed.Key, err)
+		return nil, false, fmt.Errorf("loading %s: %w", observed.Key, err)
 	}
 
 	after, err := merge(before, observed)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", observed.Key, err)
+		return nil, false, fmt.Errorf("%s: %w", observed.Key, err)
 	}
 
 	changes, err := tx.Update(ctx, before, after)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+
+	// Read from the two records rather than from the diff: what matters is
+	// which way the value moved and what the state is now, and a list of
+	// changed columns says neither.
+	ejected := store.EjectedFromMergeQueue(before, after)
 
 	// The checks are rows rather than a column, so they are written beside
 	// the update rather than diffed with it — in the same transaction, so a
 	// failure leaves neither half applied. ApplyChecks decides for itself
 	// which transitions are worth logging; most are not.
 	if err := tx.ApplyChecks(ctx, observed.Key, observed.Checks); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// When reviewers could first have seen it is a fact about the pull
@@ -176,15 +200,15 @@ func applyOne(ctx context.Context, st *store.Store, observed github.PullRequest)
 	// thing that ever writes action.waiting_since, which the sketch describes
 	// as "derivable from review requests" and nothing had derived.
 	if err := tx.ObserveWaitingSince(ctx, observed.Key, observed.FirstReviewRequestedAt); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Commit even when no column moved: a check may have, and that is a
 	// change to the pull request whether or not the rollup noticed.
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return changes, nil
+	return changes, ejected, nil
 }
 
 // merge produces the record GitHub says should exist.

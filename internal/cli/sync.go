@@ -78,6 +78,7 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		fmt.Fprintf(out, "%s could not be read: %s\n", key, result.Missing[key])
 	}
 	reportSettled(out, result.Settled)
+	reportEjected(out, result.Ejected)
 	reportOverdue(out, result.Overdue)
 
 	if !quiet {
@@ -88,12 +89,30 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		if result.SettledCount() > 0 {
 			fmt.Fprintf(out, ", %d closed", result.SettledCount())
 		}
+		if result.EjectedCount() > 0 {
+			fmt.Fprintf(out, ", %d ejected", result.EjectedCount())
+		}
 		if result.OverdueCount() > 0 {
 			fmt.Fprintf(out, ", %d overdue", result.OverdueCount())
 		}
 		fmt.Fprintln(out)
 	}
 	return nil
+}
+
+// reportEjected prints what fell out of a merge queue, and what was put in the
+// queue about it.
+//
+// Worth a line of its own because the pull request looks fine: approved,
+// clean, every check green, and going nowhere. Nothing else on the page or in
+// the log would say so.
+func reportEjected(out io.Writer, all []store.Ejected) {
+	for _, ejected := range all {
+		fmt.Fprintf(out, "%s left the merge queue without merging\n", ejected.PR)
+		if ejected.Action != nil {
+			fmt.Fprintf(out, "  %s added to the queue\n", ejected.Action.ID)
+		}
+	}
 }
 
 // reportSettled prints what closed itself, and what that freed.

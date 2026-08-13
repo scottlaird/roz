@@ -382,6 +382,19 @@ CREATE TABLE pr (
   tracked_because    TEXT
                        CHECK (tracked_because IS NULL OR
                               tracked_because IN ('authored','reviewing','watching')),
+  -- who this needed, worked out from the files it touches against the
+  -- repository's CODEOWNERS. An observation with a time: ownership changes
+  -- underneath a long-lived pull request, so the log carries when each answer
+  -- was true. The set of owners, not the mapping of every path to its owner --
+  -- a large change names half an organisation, and "who owns line 40 of the
+  -- generated mock" is a live read away rather than a column of noise. NULL
+  -- Empty is ambiguous alone -- owned by nobody, or never worked out -- and
+  -- owners_head is what tells them apart.
+  required_owners    TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(required_owners)),
+  -- the head it was worked out against, which is what makes re-deriving
+  -- skippable: the files a pull request touches change only when it does. Not
+  -- last_synced_at, which moves on every poll. See 0024.
+  owners_head        TEXT,
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;

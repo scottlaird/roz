@@ -72,6 +72,21 @@ type PR struct {
 	AnnouncedAt      sql.NullString `db:"announced_at" kind:"observed"`
 	AnnouncedChannel sql.NullString `db:"announced_channel" kind:"observed"`
 
+	// RequiredOwners is who this pull request needs, worked out from the files
+	// it touches against the repository's CODEOWNERS. Empty is ambiguous on
+	// its own — owned by nobody, or never worked out — and OwnersHead is what
+	// tells those apart.
+	//
+	// Observed: which teams a change needs is a fact about the repository's
+	// rules and the change's paths, not a judgement. Which of them is actually
+	// being waited for is the judgement, and that is a separate authored thing
+	// — see scottlaird/roz#84.
+	RequiredOwners string `db:"required_owners" kind:"observed" format:"json"`
+	// OwnersHead is the head RequiredOwners was worked out against, so a poll
+	// can tell whether it still holds. The files a pull request touches change
+	// only when the pull request does.
+	OwnersHead sql.NullString `db:"owners_head" kind:"observed"`
+
 	// Frozen is a generated column: either of the two above being set. The
 	// database computes it, so it is never written.
 	Frozen bool `db:"frozen" kind:"derived"`
@@ -188,12 +203,13 @@ func ParsePRKey(key string) (repo string, number int64, err error) {
 // are not observations, so tracking is still something a human may do.
 func NewPR(repo string, number int64) *PR {
 	return &PR{
-		ID:            PRKey(repo, number),
-		Repo:          repo,
-		Number:        number,
-		ReviewerTeams: "[]",
-		Approvals:     "[]",
-		Raw:           "{}",
+		ID:             PRKey(repo, number),
+		Repo:           repo,
+		Number:         number,
+		ReviewerTeams:  "[]",
+		Approvals:      "[]",
+		RequiredOwners: "[]",
+		Raw:            "{}",
 	}
 }
 

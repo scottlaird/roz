@@ -52,6 +52,9 @@ type Result struct {
 	// something open already covered merging it.
 	Ejected []store.Ejected
 
+	// Owners lists the pull requests whose required reviewers changed, worked
+	// out from the files they touch against the repository's CODEOWNERS.
+	Owners []Owners
 	// Resolved lists the release gates given a concrete version this poll.
 	// A gate instantiates without one, since working it out needs the
 	// repository's tags read first.
@@ -159,6 +162,14 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 	for key, why := range fetched.Missing {
 		result.Missing[key] = why
 		if err := reportMissing(ctx, st, key, why); err != nil {
+			return Result{}, err
+		}
+	}
+
+	// After the state poll, so a head that moved this minute is derived
+	// against rather than against the one before it.
+	if reader, ok := client.(ChangeReader); ok {
+		if err := syncOwners(ctx, st, reader, &result); err != nil {
 			return Result{}, err
 		}
 	}

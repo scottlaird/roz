@@ -992,6 +992,47 @@ by an edge, because a snooze is a decision about time. There is no project
 equivalent of `hide-behind`, since folding something out of a queue is a
 judgement about a queue and the project table is not one.
 
+## Who a pull request needs
+
+A `wait_review` action can say a pull request is waiting for review. Saying
+*who* it waits for is what tells you whether to chase it, so sync works that
+out: the files the change touches, matched against the CODEOWNERS on the branch
+it targets.
+
+```console
+$ roz sync github
+linuxcnc-ethercat/linuxcnc-ethercat#510 needs @grandixximo
+polled 1, 1 changed
+```
+
+That is a repository which does **not** enforce CODEOWNERS through branch
+protection, so GitHub requested nobody and `reviewDecision` is null — while the
+file still describes who ought to look. Deriving answers a question GitHub does
+not answer at all for those, which is most of the reason it earns its place.
+Where a repository *does* enforce it, GitHub's own `reviewRequests` is the
+better source and is still what the page shows first.
+
+It is an **observation with a time**, not a fact about the repository.
+Ownership is per-directory and CODEOWNERS changes underneath a long-lived pull
+request, so the log carries when each answer was true:
+
+```console
+$ roz watch --once -n 2
+… required_owners: "[]" → "[\"@grandixximo\"]"
+… owners_head: "" → "3b409ca4b0892c496d1af6e91c28f25add3a5cf0"
+```
+
+`owners_head` is what makes this affordable. The read is a paginated file list
+plus a CODEOWNERS fetch, per pull request — far more than the batched state
+query — so it runs only where the head has moved since the last answer. Which
+files a change touches cannot change while the change does not. A push that
+moves the head without changing who is needed records the new head and reports
+nothing: it was checked, not changed.
+
+The set of owners is stored, not the mapping of every path to its owner. A
+large pull request names half an organisation, and "who owns line 40 of the
+generated mock" is a live read away — see below.
+
 ## Who has to approve this
 
 CODEOWNERS says who owns which paths. What it does not say — and what a list

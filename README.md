@@ -698,6 +698,11 @@ gated: undraft → wait_ref(>=minor+2) → merge
 `v2.97.0` the instantiated step waits for `>=2.99.0` — and a series works as it
 does for a wait, so `wait_ref(api/>=minor+2)` counts within `api/` alone.
 
+`major` and `patch` count the same way — `>=major+1` is the next major,
+`>=patch+1` the next point release. The whole form is described under
+[Waiting for the next release, without naming it](#waiting-for-the-next-release-without-naming-it),
+where an action can be given one by hand.
+
 A version named outright is refused, because it would be the same gate for
 every pull request forever:
 
@@ -1569,6 +1574,71 @@ roz invents. Ask for one explicitly when that is the point:
 ```console
 $ roz action add --title "Test against the next RC" --verb wait_ref \
     --ref-repo cli/cli --ref '>=2.98.0-0'
+```
+
+### Waiting for the next release, without naming it
+
+Most of the time what you mean is *"the next one"*, and looking up which number
+that will be is work the repository can do for you. A version can be counted
+from wherever it has got to:
+
+```console
+$ roz action add --title "Ship the migration in the next minor" --verb wait_ref \
+    --ref-repo cli/cli --ref '>=minor+1'
+NA2
+NA2 waits for cli/cli tag >=2.98.0 (>=minor+1)
+```
+
+The version it came out as is said back, because roz worked it out rather than
+you: `>=minor+1` is how it was written, `>=2.98.0` is what it means today.
+
+**All three components count**, and the offset is how many on. With the
+repository at `v2.97.1`:
+
+| written | waits for | reads as |
+| --- | --- | --- |
+| `>=major+1` | `>=3.0.0` | the next major |
+| `>=minor+1` | `>=2.98.0` | the next minor |
+| `>=minor+2` | `>=2.99.0` | two minor lines on, the usual "not the release being cut now" |
+| `>=patch+1` | `>=2.97.2` | the next point release |
+
+Everything below the bumped component is zeroed, so `minor+2` against `v2.97.1`
+is `2.99.0` rather than `2.99.1` — a release is the whole of its line, and the
+patch you happened to be on says nothing about where the next line starts. The
+result is `>=` rather than `=`, so a line that opens at `2.99.1` because
+`2.99.0` was pulled still satisfies it.
+
+**The version is worked out once and then fixed.** Re-deriving it on each poll
+would move its own goalposts: every release that shipped would push the target
+out by one and the gate would never open. It is worked out from the highest
+release already tagged in the series, counting pre-releases as not having
+happened.
+
+That means it needs the repository's releases to have been read, which the
+first sync after you write it does — asking for a gate is itself what makes
+roz start reading those tags:
+
+```console
+$ roz action wait-ref --action NA3 --ref-repo acme/api --ref '>=major+1'
+NA3 waits for acme/api tag >=major+1, once its releases have been read
+$ roz sync github
+acme/api tag: 47 recorded on the first poll
+NA3 waits for >=4.0.0 (>=major+1)
+```
+
+The same expressions are what a pipeline step takes, where relative is the only
+form allowed — see [Defining a pipeline](#defining-a-pipeline). Here both work,
+because a person writing one action does know which release they mean often
+enough for `>=2.98` to be worth having.
+
+**A rule that parses as neither is refused.** `>=minr+1` is not a version
+constraint and not a gate, and reading it as a literal tag name — which is what
+an unrecognised expression otherwise means — produces an action that waits for
+ever for a tag nothing is called:
+
+```console
+$ roz action add --title "Wait" --verb wait_ref --ref-repo cli/cli --ref '>=minr+1'
+Error: "minr" is not a version component: use major, minor, patch
 ```
 
 ### Several release series in one repository

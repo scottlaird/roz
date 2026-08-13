@@ -99,6 +99,41 @@ func validComponent(c string) bool {
 	return false
 }
 
+// versionRuleOpeners are the characters a version rule starts with.
+//
+// Not a vocabulary anybody chose: they are semver's operators, and two of
+// them — ^ and ~ — git refuses in a ref name outright.
+const versionRuleOpeners = "><=^~"
+
+// LooksLikeVersionRule reports whether a matcher was meant as a rule about
+// versions rather than as the name of a ref.
+//
+// A matcher's two readings are otherwise told apart by whether it parses,
+// which is right for everything well-formed and wrong for a typo. `>=minr+1`
+// is neither a constraint nor a gate, so the parse-or-literal rule reads it as
+// a name and waits for a tag called `>=minr+1` — for ever, since nothing is
+// called that. This is what lets the mistake be refused instead.
+//
+// The shape is the signal. A rule opens with an operator, or with the name of
+// the component it counts; a ref whose name opens either way does not exist,
+// and the well-formed expressions have all parsed by the time this is asked.
+func LooksLikeVersionRule(matcher string) bool {
+	if matcher == "" {
+		return false
+	}
+	if strings.ContainsRune(versionRuleOpeners, rune(matcher[0])) {
+		return true
+	}
+	// The operator left off: `minor+2` is how the rule reads aloud, and is
+	// what somebody writes who has seen one in a pipeline and not the `>=`.
+	for _, component := range RefComponents {
+		if strings.HasPrefix(matcher, component+"+") {
+			return true
+		}
+	}
+	return false
+}
+
 // String renders the spec back to how it was written.
 func (r RelativeRef) String() string {
 	spec := fmt.Sprintf("%s%s+%d", relativeOperator, r.Component, r.Offset)
@@ -188,12 +223,21 @@ func (p PendingRef) Series() string {
 
 // AddPendingRef records that an action is waiting for a release whose number
 // is not known yet.
+//
+// Any wait already on the action goes. An action waits for one thing, and a
+// gate written over a wait means the wait was wrong — leaving it would let the
+// old one fire while the gate was still being worked out, closing the action
+// on a release nobody is waiting for any more.
 func (t *Tx) AddPendingRef(ctx context.Context, p PendingRef) error {
 	if err := ValidateRefKind(p.Kind); err != nil {
 		return err
 	}
 	if _, err := ParseRelativeRef(p.Spec); err != nil {
 		return err
+	}
+	if _, err := t.tx.ExecContext(ctx,
+		"DELETE FROM action_ref_wait WHERE action_id = ?", p.ActionID); err != nil {
+		return fmt.Errorf("clearing what %s used to wait for: %w", p.ActionID, err)
 	}
 	_, err := t.tx.ExecContext(ctx, `
 		INSERT INTO action_ref_pending (action_id, repo_id, kind, spec, created_at)
@@ -203,6 +247,18 @@ func (t *Tx) AddPendingRef(ctx context.Context, p PendingRef) error {
 		p.ActionID, p.RepoID, p.Kind, p.Spec, t.at)
 	if err != nil {
 		return fmt.Errorf("recording what %s will wait for: %w", p.ActionID, err)
+	}
+	return nil
+}
+
+// clearPendingRef drops an action's unresolved gate, if it has one.
+//
+// Idempotent, and the two places that call it both mean the same thing by it:
+// this action's version is settled now, by whatever route.
+func (t *Tx) clearPendingRef(ctx context.Context, actionID string) error {
+	if _, err := t.tx.ExecContext(ctx,
+		"DELETE FROM action_ref_pending WHERE action_id = ?", actionID); err != nil {
+		return fmt.Errorf("clearing the release gate for %s: %w", actionID, err)
 	}
 	return nil
 }
@@ -270,12 +326,15 @@ func (s *Store) ResolvePendingRef(ctx context.Context, p PendingRef) (*Resolved,
 	}
 	wait.ActionID, wait.RepoID, wait.Kind = p.ActionID, p.RepoID, p.Kind
 
+	// SetRefWait clears the gate as part of writing the wait, which is the
+	// same statement this used to make on its own. Said again here because
+	// resolving *is* the gate disappearing, and a reader should not have to
+	// know that the other call does it.
 	if err := tx.SetRefWait(ctx, wait); err != nil {
 		return nil, err
 	}
-	if _, err := tx.tx.ExecContext(ctx,
-		"DELETE FROM action_ref_pending WHERE action_id = ?", p.ActionID); err != nil {
-		return nil, fmt.Errorf("clearing the resolved gate for %s: %w", p.ActionID, err)
+	if err := tx.clearPendingRef(ctx, p.ActionID); err != nil {
+		return nil, err
 	}
 
 	action, err := tx.LoadAction(ctx, p.ActionID)

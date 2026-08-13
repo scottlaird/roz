@@ -451,8 +451,15 @@ func collectRefs(rows *sql.Rows, fields []field) ([]*GitRef, error) {
 // Replaces rather than adds: the table is keyed on the action because one
 // action waits for one thing, and correcting a mistyped pattern should not
 // need the old row deleted first.
+//
+// An unresolved gate on the same action goes too, for that same reason across
+// the two tables: a wait written by hand is the answer, and leaving the gate
+// would let it resolve later and quietly overwrite what was just said.
 func (t *Tx) SetRefWait(ctx context.Context, w RefWait) error {
 	if err := w.Validate(); err != nil {
+		return err
+	}
+	if err := t.clearPendingRef(ctx, w.ActionID); err != nil {
 		return err
 	}
 

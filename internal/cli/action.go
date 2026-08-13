@@ -132,11 +132,11 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	wait, err := refWaitFrom(cmd, "")
+	intent, err := refIntentFrom(cmd, "")
 	if err != nil {
 		return err
 	}
-	if err := checkActionReferences(ctx, st, actor, a, prID, wait); err != nil {
+	if err := checkActionReferences(ctx, st, actor, a, prID, intent); err != nil {
 		return err
 	}
 
@@ -162,9 +162,9 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
-	if wait != nil {
-		wait.ActionID = a.ID
-		if err := tx.SetRefWait(ctx, *wait); err != nil {
+	if intent != nil {
+		intent.setActionID(a.ID)
+		if err := intent.record(ctx, tx); err != nil {
 			return err
 		}
 	}
@@ -173,9 +173,21 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), a.ID)
-	if prID == "" && wait == nil {
+	if prID == "" && intent == nil {
 		return nil
 	}
+	// A gate has no version until the repository's releases have been read,
+	// and settling one that has not resolved would be asking whether an action
+	// is waiting for something nobody has worked out yet.
+	//
+	// Reported after the identifier, the way a settled action already is: what
+	// a gate came out as is not visible anywhere else, and working it out is
+	// roz's decision rather than something the caller wrote.
+	resolved, err := resolveGateNow(ctx, st, intent)
+	if err != nil {
+		return err
+	}
+	reportGate(cmd, intent, resolved)
 	// An action created against a pull request that already satisfies its
 	// predicate is the same staleness `link-pr` had: born ready, and closing
 	// only at the next poll.
@@ -184,7 +196,7 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 
 // checkActionReferences confirms the verb and project exist, in a
 // transaction that is finished with before anything else runs.
-func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action, prID string, wait *store.RefWait) error {
+func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action, prID string, intent *refIntent) error {
 	tx, err := st.Begin(ctx, actor)
 	if err != nil {
 		return err
@@ -198,12 +210,12 @@ func checkActionReferences(ctx context.Context, st *store.Store, actor store.Act
 	if err := checkPredicateHasSubject(v, prID != "", "pass --"+flagPR); err != nil {
 		return err
 	}
-	if err := checkPredicateHasRefWait(v, wait != nil, "pass --"+flagRefRepo+" and --"+flagRef); err != nil {
+	if err := checkPredicateHasRefWait(v, intent != nil, "pass --"+flagRefRepo+" and --"+flagRef); err != nil {
 		return err
 	}
-	if wait != nil {
-		if _, err := tx.LoadGitHubRepo(ctx, wait.RepoID); err != nil {
-			return notFoundOr(err, wait.RepoID)
+	if intent != nil {
+		if _, err := tx.LoadGitHubRepo(ctx, intent.repoID()); err != nil {
+			return notFoundOr(err, intent.repoID())
 		}
 	}
 	if prID != "" {

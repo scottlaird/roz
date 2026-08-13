@@ -9,6 +9,10 @@ import (
 )
 
 // addAction creates one action and returns its id.
+//
+// The first line, not the whole output: the identifier comes first and any
+// news follows it — an action born ready closes on the spot and says so, and a
+// release gate reports what it resolved to.
 func addAction(t *testing.T, db string, extra ...string) string {
 	t.Helper()
 	args := append([]string{"action", "add", "--db", db}, extra...)
@@ -16,7 +20,8 @@ func addAction(t *testing.T, db string, extra ...string) string {
 	if err != nil {
 		t.Fatalf("action add returned error: %v", err)
 	}
-	return strings.TrimSpace(out)
+	id, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	return id
 }
 
 func TestActionAddAndList(t *testing.T) {

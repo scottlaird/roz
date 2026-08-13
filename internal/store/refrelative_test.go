@@ -49,6 +49,45 @@ func TestParseRelativeRef(t *testing.T) {
 	}
 }
 
+// TestLooksLikeVersionRule is what tells a mistyped rule from a ref's name.
+//
+// Reading whatever does not parse as a name is right for `release-1.5` and
+// badly wrong for `>=minr+1`, which would become a wait for a tag nothing is
+// ever called.
+func TestLooksLikeVersionRule(t *testing.T) {
+	rules := []string{
+		">=minr+1",    // the component misspelt
+		">=1.2.",      // a constraint half-typed
+		"minor+1",     // the operator left off
+		"patch+2",     //
+		"^1.2.",       //
+		"~",           //
+		"=1.0.0.0",    //
+		"<=quarter+1", //
+	}
+	for _, matcher := range rules {
+		if !LooksLikeVersionRule(matcher) {
+			t.Errorf("LooksLikeVersionRule(%q) = false, want true", matcher)
+		}
+	}
+
+	names := []string{
+		"release-1.5", // the case the union exists for
+		"releases/*",  //
+		"v1.5.0",      //
+		"19.2.x",      //
+		"main",        //
+		"minor",       // a branch may be called this; only `minor+` is the rule
+		"majordomo",   //
+		"",            //
+	}
+	for _, matcher := range names {
+		if LooksLikeVersionRule(matcher) {
+			t.Errorf("LooksLikeVersionRule(%q) = true, want false", matcher)
+		}
+	}
+}
+
 // TestARelativeGateIsNotAConstraint is what keeps the two forms apart: a step
 // spec is read as a version constraint if it is one, and as a gate otherwise,
 // so which it is never depends on context.

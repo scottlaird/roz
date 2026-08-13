@@ -148,9 +148,10 @@ func TestAnEmptyValueIsAFact(t *testing.T) {
 	}
 }
 
-// TestSyncedAtMovesWithoutOtherChanges: "nothing has changed since Tuesday"
-// and "nobody has looked since Tuesday" are different questions.
-func TestSyncedAtMovesWithoutOtherChanges(t *testing.T) {
+// TestAStatedTimeIsRecordedWhateverElseChanged: an import saying an issue was
+// read on Tuesday is asserting when somebody looked, which is a fact about the
+// reading rather than a report that nothing has happened since.
+func TestAStatedTimeIsRecordedWhateverElseChanged(t *testing.T) {
 	st := newStore(t)
 	linkJira(t, st, "Split the nodepool", "CDSS-1744")
 
@@ -169,6 +170,54 @@ func TestSyncedAtMovesWithoutOtherChanges(t *testing.T) {
 	if got := loadIssue(t, st, "CDSS-1744").SyncedAt.String; got == first {
 		t.Error("synced_at did not move when nothing else changed")
 	}
+}
+
+// TestAReadingThatFoundNothingIsNotWritten: a poll every fifteen seconds would
+// otherwise write a row and log an event per issue per cycle, and bury every
+// real transition under a heartbeat.
+func TestAReadingThatFoundNothingIsNotWritten(t *testing.T) {
+	st := newStore(t)
+	linkJira(t, st, "Split the nodepool", "CDSS-1744")
+
+	observeJira(t, st, TrackerObservation{
+		Key:    "CDSS-1744",
+		Status: sql.NullString{String: "To Do", Valid: true},
+	})
+	before := loadIssue(t, st, "CDSS-1744")
+	quiet := countEvents(t, st)
+
+	result := observeJira(t, st, TrackerObservation{
+		Key:    "CDSS-1744",
+		Status: sql.NullString{String: "To Do", Valid: true},
+	})
+	if changes := result.Applied[0].Changes; len(changes) != 0 {
+		t.Errorf("a reading that found nothing reported %v", changes)
+	}
+	if got := loadIssue(t, st, "CDSS-1744").SyncedAt.String; got != before.SyncedAt.String {
+		t.Errorf("synced_at = %q, want it left at %q", got, before.SyncedAt.String)
+	}
+	if got := countEvents(t, st); got != quiet {
+		t.Errorf("logged %d events, want none", got-quiet)
+	}
+
+	// It still moves when the reading found something.
+	observeJira(t, st, TrackerObservation{
+		Key:    "CDSS-1744",
+		Status: sql.NullString{String: "In Progress", Valid: true},
+	})
+	if got := loadIssue(t, st, "CDSS-1744").SyncedAt.String; got == before.SyncedAt.String {
+		t.Error("synced_at did not move when the status did")
+	}
+}
+
+func countEvents(t *testing.T, st *Store) int {
+	t.Helper()
+
+	events, err := st.Events(context.Background(), EventQuery{})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	return len(events)
 }
 
 // TestAnIssueNothingTracksIsStillRecorded: an issue is a record in its own

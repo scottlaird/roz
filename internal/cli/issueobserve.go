@@ -26,7 +26,9 @@ func newIssueObserveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "observe [issue-key]",
 		Short: "Record by hand what a tracker says about an issue",
-		Long: "Stands in for tracker sync, which does not exist yet for any tracker.\n\n" +
+		Long: "Stands in for tracker sync, which exists for GitHub and no other\n" +
+			"tracker: `roz sync github` reads the issues projects track, and a Jira\n" +
+			"one gets here or not at all.\n\n" +
 			"Keyed on the issue rather than on the project, because that is what an\n" +
 			"integration would have: a Jira issue does not know it is ROZ106. Every\n" +
 			"project carrying the key is updated, and a key no project carries is\n" +
@@ -42,7 +44,11 @@ func newIssueObserveCmd() *cobra.Command {
 			"given as empty is a fact — an unassigned issue — and clears the column.\n\n" +
 			"This writes observed columns, which a person is normally not allowed to\n" +
 			"do. It is logged as sync:<tracker>-manual so the log never claims a\n" +
-			"tracker reported something that was typed in.",
+			"tracker reported something that was typed in.\n\n" +
+			"An observation that finds nothing changed writes nothing, so that a\n" +
+			"poll cannot bury real transitions under a heartbeat. Pass --at to\n" +
+			"record when the tracker was read regardless: a stated time is a fact\n" +
+			"being asserted rather than a reading that found nothing.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: runIssueObserve,
 	}
@@ -59,7 +65,7 @@ func addObserveFlags(cmd *cobra.Command) {
 	f.String(flagSprint, "", "the sprint it is in")
 	_ = f.MarkDeprecated(flagSprint, "use --iteration, which covers a milestone too")
 	f.String(flagAssignee, "", "who it is assigned to; empty means unassigned")
-	f.String(flagAt, "", "when the tracker was read, as a date or timestamp; defaults to now")
+	f.String(flagAt, "", "when the tracker was read, as a date or timestamp; recorded even if nothing else changed")
 	f.String(flagFeed, "", "read observations as JSON from a file, or - for stdin")
 }
 

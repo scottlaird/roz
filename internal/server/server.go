@@ -57,6 +57,18 @@ type Server struct {
 	// asked for port 0 finds out what it got.
 	ready    chan struct{}
 	listenOn net.Addr
+
+	// streams is cancelled when the server begins shutting down, which is how
+	// a long-lived response learns to end.
+	//
+	// Shutdown waits for requests in flight and does not cancel their
+	// contexts, so a handler that only watches its own request context will
+	// sit there until the grace period runs out. An event stream is exactly
+	// that: it is meant to last as long as the page is open.
+	//
+	// Assigned before the listener is served, so no handler can observe it
+	// unset.
+	streams context.Context
 }
 
 // New returns a server.
@@ -95,6 +107,16 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/", s.handle)
 	mux.HandleFunc("/events", s.handleEvents)
 	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+
+	// Told to stop before Shutdown starts waiting, so an event stream ends of
+	// its own accord rather than being waited out. Without this, interrupting
+	// the server with a page open takes the whole grace period and then fails
+	// with "context deadline exceeded" — the shutdown reporting as an error
+	// what was really just a browser doing what it was told.
+	streams, endStreams := context.WithCancel(context.WithoutCancel(ctx))
+	defer endStreams()
+	s.streams = streams
+	httpServer.RegisterOnShutdown(endStreams)
 
 	failed := make(chan error, 1)
 	go func() {
@@ -205,9 +227,22 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	idle := time.NewTicker(keepalive)
 	defer idle.Stop()
 
+	// nil where a handler is exercised without Serve, which no shutdown can
+	// reach anyway: a nil channel blocks for ever, so the select simply never
+	// takes this arm.
+	var ending <-chan struct{}
+	if s.streams != nil {
+		ending = s.streams.Done()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-ending:
+			// The server is shutting down. The browser reconnects on its own
+			// when there is something to reconnect to, so there is nothing to
+			// say — and saying it would only race the socket closing.
 			return
 		case <-idle.C:
 			fmt.Fprint(w, ": still here\n\n")

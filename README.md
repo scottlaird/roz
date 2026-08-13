@@ -43,7 +43,7 @@ directory.
 | `roz project link-issue` / `unlink-issue` | Say which tracker issues a project tracks. More than one is allowed, from more than one tracker. |
 | **tracker issues** | |
 | `roz issue show` / `list` | Issues as last observed, and which projects track them. |
-| `roz issue observe` | Record by hand what a tracker says about an issue — summary, status, iteration, assignee. Stands in for tracker sync. |
+| `roz issue observe` | Record by hand what a tracker says about an issue — summary, status, iteration, assignee. GitHub issues are read by `roz sync`; for any other tracker this is how they get in. |
 | **actions** | |
 | `roz action add` | Allocate an action and print its id. `--pr` names the pull request it is about, which a predicate verb requires. |
 | `roz action show` | Print one action, with what blocks it, what it blocks, and its pull requests. `-o json` carries the same. |
@@ -233,8 +233,8 @@ Read-only, batched into one GraphQL query, and attributed to `sync:github` —
 which the store will not let write an authored column. Where GitHub reports
 nothing, the stored value is left alone: absence is not a fact.
 
-Sync also closes any action whose predicate the new observations satisfy; the
-walkthrough gets to that below.
+Sync also closes any action whose predicate the new observations satisfy, and
+reads the GitHub issues projects track; the walkthrough gets to both below.
 
 `roz syncer` runs the same thing on a loop, slowing down as the rate limit
 budget drops and backing off on a 429.
@@ -303,8 +303,8 @@ the log never claims an integration reported something typed in by hand.
 
 An issue is identified by its tracker and that tracker's own key, written
 together: `jira:CDSS-1744`, `github:owner/repo#123`. `--tracker` defaults to
-`jira`, which is the only tracker anything can read; a second one is a place
-in the schema and nothing more until something fills it:
+`jira`, which has no integration and so is observed by hand; GitHub issues are
+read by `roz sync`, below:
 
 ```console
 $ roz project link-issue --project ROZ1 --tracker github --issue scottlaird/roz#101
@@ -320,6 +320,54 @@ The id is composed rather than trusting two third parties' key formats never
 to collide. `iteration` is Jira's sprint and GitHub's milestone: the same
 field under two names, so it carries neither.
 
+A GitHub issue does not stay blank, because sync reads it:
+
+```console
+$ roz sync github
+scottlaird/roz#101 summary: "" → "Generalise the jira_* columns to a tracker and a key"
+scottlaird/roz#101 status: "" → "OPEN"
+polled 1, 0 changed, 1 issue polled
+```
+
+Every tracked issue is read on every poll, batched into the same kind of
+aliased GraphQL query the pull requests use, and written through the same path
+`roz issue observe` writes through — a poll and a person typing are the same
+kind of act, an observation about somebody else's tracker, and the only thing
+that differs is the actor recorded against it. Reading one again says nothing:
+`synced_at` moves every time and is not reported, so a syncer left running
+stays quiet until something actually changes.
+
+The status is GitHub's own word. `OPEN` and `CLOSED` are not translated into a
+vocabulary roz prefers, because the column holds what a tracker said and no
+tracker agrees with another about what its states are called.
+
+One thing is worth interrupting for. An issue that closes with actions still
+open against it means either the queue is stale or the ticket went early:
+
+```console
+$ roz sync github
+scottlaird/roz#105 status: "OPEN" → "CLOSED"
+scottlaird/roz#105 closed with NA1 still open
+polled 0, 0 changed, 3 issues polled
+```
+
+```console
+$ roz watch --once -n 1
+2026-08-13T03:44:02.080Z  exception  sync:github  issue_closed_with_open_actions  github:scottlaird/roz#105  scottlaird/roz#105 closed with NA1 still open
+```
+
+An exception rather than an action, because which of the two it should be
+depends on the project: whether an issue closing means the work is finished or
+means somebody was optimistic is not something roz can know.
+
+It fires on the transition, so an issue that stays closed does not say so
+again, and an issue that was already closed the first time roz read it says
+nothing at all — there is no telling whether that happened this morning or two
+years ago, and a project linked to a long-closed issue is an ordinary way to
+record where the work came from. An issue that GitHub will not resolve is
+reported the same way, once a day; the usual cause is a key naming a pull
+request, since GitHub numbers both from one sequence.
+
 Now the announcement is a fact, `send_for_review` is satisfied, and the next
 sync notices:
 
@@ -327,7 +375,7 @@ sync notices:
 $ roz sync github
 NA3 closed: scottlaird/roz#39 is send_for_review
   NA4 is now ready
-polled 1, 0 changed, 1 closed
+polled 1, 0 changed, 1 closed, 1 issue polled
 
 $ roz action list --open
 ID   STATE    VERB         PROJECT  SNOOZED UNTIL  TITLE

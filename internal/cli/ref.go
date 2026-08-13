@@ -324,8 +324,7 @@ func newRefListCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: runRefList,
 	}
-	addListOutputFlag(cmd)
-	addFieldsFlag(cmd, refColumns)
+	addListingFlags(cmd, refColumns)
 	return cmd
 }
 
@@ -346,13 +345,5 @@ func runRefList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	format, err := listOutputFrom(cmd)
-	if err != nil {
-		return err
-	}
-	fields, err := fieldsFrom(cmd)
-	if err != nil {
-		return err
-	}
-	return writeRecords(cmd.OutOrStdout(), format, refColumns, fields, refs)
+	return runListing(cmd, refColumns, refs, renderContext{})
 }

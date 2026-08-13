@@ -202,7 +202,7 @@ func sortFrom(cmd *cobra.Command) (string, error) {
 	}
 }
 
-// snoozeCell renders a snooze date for a table, saying so when it has arrived.
+// snoozeCell renders a snooze date, saying so when it has arrived.
 //
 // The queue now contains expired snoozes, so a bare date in that column would
 // leave the reader to notice the year themselves. "due" is the word the status
@@ -210,9 +210,24 @@ func sortFrom(cmd *cobra.Command) (string, error) {
 //
 // Compared against a timestamp rather than today's date, which is what the
 // query does — see store.TimeFormat.
+// Empty when there is no snooze, which is how a render function says there is
+// nothing here — see orAbsent, which spells that for whichever format is
+// asking.
 func snoozeCell(until sql.NullString, now string) string {
-	if until.Valid && until.String != "" && until.String < now {
+	if !until.Valid || until.String == "" {
+		return ""
+	}
+	if until.String < now {
 		return "due " + until.String
 	}
-	return nullText(until)
+	return until.String
+}
+
+// dateCell is a timestamp at the length a date is read, and empty when there
+// is none.
+func dateCell(v sql.NullString) string {
+	if !v.Valid || v.String == "" {
+		return ""
+	}
+	return shortDate(v.String)
 }

@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -668,17 +666,13 @@ func newActionListCmd() *cobra.Command {
 	f.String(flagVerb, "", "filter to one verb")
 	f.String(flagProject, "", "filter to one project")
 	addSortFlag(cmd)
-	addOutputFlag(cmd)
+	addListingFlags(cmd, actionColumns)
 	return cmd
 }
 
 func runActionList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	filter, err := actionFilterFrom(cmd)
 	if err != nil {
 		return err
@@ -693,23 +687,43 @@ func runActionList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(actions)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
 	// How late each one is, so an allowance on a verb whose actions stay in
 	// the queue means something visible. Those get a mark rather than a second
 	// item about themselves, and the column is where the mark lands.
+	//
+	// Read whatever the output is, now that the column can be asked for by
+	// name. One query, against the same rows that were being listed anyway.
 	late, err := st.LateActions(ctx)
 	if err != nil {
 		return err
 	}
-	return writeActionTable(cmd.OutOrStdout(), actions, late)
+	return runListing(cmd, actionColumns, actions, renderContext{late: late})
+}
+
+// actionColumns is what `action list` can show.
+//
+// LATE is the one column with nothing behind it in the record: how late an
+// action is comes from its verb's allowance and the clock, and lives in a map
+// beside the rows rather than in a column of action.
+var actionColumns = columnSet[*store.Action]{
+	blank: &store.Action{},
+	declared: []column[*store.Action]{
+		{name: "project_id", header: "PROJECT"},
+		{
+			name: "snooze_until", header: "SNOOZED UNTIL",
+			render: func(a *store.Action, ctx renderContext) string {
+				return snoozeCell(a.SnoozeUntil, ctx.now)
+			},
+		},
+		{
+			name: "late",
+			render: func(a *store.Action, ctx renderContext) string {
+				return lateCell(ctx.late, a.ID)
+			},
+		},
+	},
+	defaults: []string{"id", "state", "verb", "project_id", "snooze_until", "late", "title"},
+	empty:    "no actions",
 }
 
 func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
@@ -758,24 +772,8 @@ func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
 	}, nil
 }
 
-func writeActionTable(out io.Writer, actions []*store.Action, late map[string]int) error {
-	if len(actions) == 0 {
-		fmt.Fprintln(out, "no actions")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	now := time.Now().UTC().Format(store.TimeFormat)
-	fmt.Fprintln(w, "ID\tSTATE\tVERB\tPROJECT\tSNOOZED UNTIL\tLATE\tTITLE")
-	for _, a := range actions {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			a.ID, a.State, a.Verb, nullText(a.ProjectID),
-			snoozeCell(a.SnoozeUntil, now), lateCell(late, a.ID), a.Title)
-	}
-	return w.Flush()
-}
-
-// lateCell renders how far past its allowance an action is.
+// lateCell renders how far past its allowance an action is, and empty when it
+// is not late at all.
 //
 // Presence in the map is what says late, not the number: a deadline missed an
 // hour ago is nought days past it and still missed, and rendering that as "not
@@ -784,7 +782,7 @@ func lateCell(late map[string]int, id string) string {
 	days, ok := late[id]
 	switch {
 	case !ok:
-		return "-"
+		return ""
 	case days == 0:
 		return "today"
 	case days == 1:

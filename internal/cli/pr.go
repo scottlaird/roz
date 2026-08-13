@@ -4,9 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -316,17 +314,61 @@ func newPRListCmd() *cobra.Command {
 		"why it is tracked: "+strings.Join(store.TrackingReasons, ", ")+
 			" — most usefully what you are on the hook to review")
 	f.String(flagSince, "", "merged on or after this date or timestamp; selects merged ones")
-	addOutputFlag(cmd)
+	addListingFlags(cmd, prColumns)
 	return cmd
 }
+
+// prColumns is what `pr list` can show.
+//
+// Three columns appear only when something is using them, which is the rule
+// the hand-written table applied by hand: an exception is worth seeing and its
+// absence is not, and the ordinary case was every row reading "-" in a table
+// that is wide already.
+var prColumns = columnSet[*store.PR]{
+	blank: &store.PR{},
+	declared: []column[*store.PR]{
+		{name: "is_draft", header: "DRAFT"},
+		{name: "review_decision", header: "REVIEW"},
+		{name: "merge_state_status", header: "MERGE"},
+		{name: "checks_state", header: "CHECKS"},
+		{
+			name: "merged_at", header: "MERGED",
+			render: func(p *store.PR, _ renderContext) string { return dateCell(p.MergedAt) },
+			showIf: func(rows []*store.PR) bool { return anyPR(rows, prIsMerged) },
+		},
+		{
+			name:   "tracked_because",
+			header: "BECAUSE",
+			showIf: func(rows []*store.PR) bool { return anyPR(rows, prIsExplained) },
+		},
+		{
+			name:   "pipeline",
+			showIf: func(rows []*store.PR) bool { return anyPR(rows, prIsOverridden) },
+		},
+	},
+	defaults: []string{
+		"id", "state", "is_draft", "review_decision", "merge_state_status",
+		"checks_state", "frozen", "merged_at", "tracked_because", "pipeline", "title",
+	},
+	empty: "no tracked pull requests",
+}
+
+func anyPR(rows []*store.PR, has func(*store.PR) bool) bool {
+	for _, p := range rows {
+		if has(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func prIsMerged(p *store.PR) bool     { return p.MergedAt.Valid }
+func prIsExplained(p *store.PR) bool  { return p.TrackedBecause.Valid }
+func prIsOverridden(p *store.PR) bool { return p.Pipeline.Valid }
 
 func runPRList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	st, err := openStore(cmd)
 	if err != nil {
 		return err
@@ -342,15 +384,7 @@ func runPRList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(prs)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	return writePRTable(cmd.OutOrStdout(), prs)
+	return runListing(cmd, prColumns, prs, renderContext{})
 }
 
 func prFilterFrom(cmd *cobra.Command) (store.PRFilter, error) {
@@ -391,57 +425,6 @@ func prFilterFrom(cmd *cobra.Command) (store.PRFilter, error) {
 	return store.PRFilter{
 		Stacked: stacked, Frozen: frozen, State: state, Because: because, Since: since,
 	}, nil
-}
-
-func writePRTable(out io.Writer, prs []*store.PR) error {
-	if len(prs) == 0 {
-		fmt.Fprintln(out, "no tracked pull requests")
-		return nil
-	}
-
-	// Both of these columns appear only when something is using them. An
-	// exception is worth seeing and its absence is not, and the ordinary case
-	// is every row reading "-" in a table that is wide already. Anything
-	// parsing this should read -o json, which always carries them.
-	// The same rule brings in MERGED: a listing of open pull requests has
-	// nothing to say there, and one about a week is entirely about it.
-	var overridden, explained, merged bool
-	for _, p := range prs {
-		overridden = overridden || p.Pipeline.Valid
-		explained = explained || p.TrackedBecause.Valid
-		merged = merged || p.MergedAt.Valid
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	header := "ID\tSTATE\tDRAFT\tREVIEW\tMERGE\tCHECKS\tFROZEN"
-	if merged {
-		header += "\tMERGED"
-	}
-	if explained {
-		header += "\tBECAUSE"
-	}
-	if overridden {
-		header += "\tPIPELINE"
-	}
-	fmt.Fprintln(w, header+"\tTITLE")
-
-	for _, p := range prs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s",
-			p.ID, nullText(p.State), nullBoolText(p.IsDraft),
-			nullText(p.ReviewDecision), nullText(p.MergeStateStatus),
-			nullText(p.ChecksState), yesNo(p.Frozen))
-		if merged {
-			fmt.Fprintf(w, "\t%s", shortDate(nullText(p.MergedAt)))
-		}
-		if explained {
-			fmt.Fprintf(w, "\t%s", nullText(p.TrackedBecause))
-		}
-		if overridden {
-			fmt.Fprintf(w, "\t%s", nullText(p.Pipeline))
-		}
-		fmt.Fprintf(w, "\t%s\n", orDash(p.Title))
-	}
-	return w.Flush()
 }
 
 func nullBoolText(v sql.NullBool) string {

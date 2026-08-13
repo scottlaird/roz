@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -357,17 +355,30 @@ func newRepoListCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE:  runRepoList,
 	}
-	addOutputFlag(cmd)
+	addListingFlags(cmd, repoColumns)
 	return cmd
+}
+
+// repoColumns is what `repo list` can show.
+//
+// SHORT is in the default view for the reason WAIT is on `verb list`: it is a
+// setting, and one that cannot be read is one nobody can manage.
+var repoColumns = columnSet[*store.GitHubRepo]{
+	blank: &store.GitHubRepo{},
+	declared: []column[*store.GitHubRepo]{
+		{name: "short_name", header: "SHORT"},
+		{name: "announce_channel", header: "ANNOUNCE"},
+	},
+	defaults: []string{
+		"id", "short_name", "pipeline", "default_branch",
+		"announce_channel", "disposition",
+	},
+	empty: "no tracked repositories",
 }
 
 func runRepoList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	st, err := openStore(cmd)
 	if err != nil {
 		return err
@@ -379,33 +390,7 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(repos)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	return writeRepoTable(cmd.OutOrStdout(), repos)
-}
-
-func writeRepoTable(out io.Writer, repos []*store.GitHubRepo) error {
-	if len(repos) == 0 {
-		fmt.Fprintln(out, "no tracked repositories")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	// SHORT is here for the reason WAIT is on `verb list`: it is a setting,
-	// and one that cannot be read is one nobody can manage.
-	fmt.Fprintln(w, "ID\tSHORT\tPIPELINE\tDEFAULT BRANCH\tANNOUNCE\tDISPOSITION")
-	for _, r := range repos {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.ID, nullText(r.ShortName), nullText(r.Pipeline), nullText(r.DefaultBranch),
-			nullText(r.AnnounceChannel), orDash(r.Disposition))
-	}
-	return w.Flush()
+	return runListing(cmd, repoColumns, repos, renderContext{})
 }
 
 const flagPrefer = "prefer"

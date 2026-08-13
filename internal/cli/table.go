@@ -68,9 +68,14 @@ type column[T any] struct {
 //
 // now is stamped once for the whole table rather than read per cell, which is
 // what stops one row from calling a snooze due and the next from not, and is
-// what writeActionTable already did by hand.
+// what writeActionTable already did by hand. It is filled in by the renderer,
+// so a caller only supplies the rest.
 type renderContext struct {
 	now string
+	// late is how many days past its allowance each action is, keyed by
+	// identifier. Absence is what says not late, so the map is read for
+	// presence rather than for its number — see lateCell.
+	late map[string]int
 }
 
 // columnSet is everything one listing can show.
@@ -80,9 +85,13 @@ type renderContext struct {
 // read, so adding a column to an entity makes it available to --fields without
 // anything here being touched.
 type columnSet[T any] struct {
-	// blank is an empty record, which is how the columns are named when
-	// there are no rows to read them off.
+	// blank is an empty row, which is how the columns are named when there
+	// are no rows to read them off.
 	blank T
+	// record reaches the db-tagged record inside a row, for a listing whose
+	// rows carry something besides it — `project list --tree` pairs a project
+	// with its depth. Nil means the row is the record.
+	record func(T) any
 	// declared holds the derived columns and the overrides.
 	declared []column[T]
 	// defaults names the default view, in order. Everything else is
@@ -95,8 +104,16 @@ type columnSet[T any] struct {
 // all resolves the full vocabulary: every column of the record in struct
 // order, with any declaration overriding how one is shown, then the derived
 // columns that are not record columns at all.
+// recordOf reaches the db-tagged record inside a row.
+func (s columnSet[T]) recordOf(row T) any {
+	if s.record != nil {
+		return s.record(row)
+	}
+	return row
+}
+
 func (s columnSet[T]) all() ([]column[T], error) {
-	names, err := store.Columns(s.blank)
+	names, err := store.Columns(s.recordOf(s.blank))
 	if err != nil {
 		return nil, err
 	}
@@ -205,13 +222,18 @@ func (c column[T]) heading() string {
 // for the same reason: whatever the encoder put in, this lays out. A
 // format:"json" column arrives as the structure it holds, a NULL as null, and
 // nothing here has to know which columns those are.
-func writeRecords[T any](out io.Writer, format string, set columnSet[T], fields []string, rows []T) error {
+func writeRecords[T any](out io.Writer, format string, set columnSet[T],
+	fields []string, rows []T, ctx renderContext) error {
 	columns, err := set.selected(fields, rows)
 	if err != nil {
 		return err
 	}
 
-	encoded, err := store.MarshalRecords(rows)
+	records := make([]any, len(rows))
+	for i, row := range rows {
+		records[i] = set.recordOf(row)
+	}
+	encoded, err := store.MarshalRecords(records)
 	if err != nil {
 		return err
 	}
@@ -223,7 +245,9 @@ func writeRecords[T any](out io.Writer, format string, set columnSet[T], fields 
 		return fmt.Errorf("marshalled %d records into %d objects", len(rows), len(objects))
 	}
 
-	ctx := renderContext{now: time.Now().UTC().Format(store.TimeFormat)}
+	// Stamped here rather than by the caller, so every row of one table is
+	// asked the same question about what time it is.
+	ctx.now = time.Now().UTC().Format(store.TimeFormat)
 
 	switch format {
 	case outputJSON:
@@ -242,26 +266,60 @@ func writeRecords[T any](out io.Writer, format string, set columnSet[T], fields 
 	}
 }
 
+// cellStyle is how a value is spelled, which depends on who is reading it.
+type cellStyle struct {
+	// absent stands in for a null or an empty value. A table writes a dash so
+	// a reader can see there is nothing there; CSV writes nothing, so a
+	// reader does not take the dash for data.
+	absent string
+	// yesNo spells a boolean the way the hand-written tables did. It is a
+	// table's spelling and not a value: something parsing the output wants
+	// true and false.
+	yesNo bool
+}
+
+var (
+	// tableStyle is a listing, for a person to skim.
+	tableStyle = cellStyle{absent: "-", yesNo: true}
+	// dataStyle is CSV or JSON, for something else to read.
+	dataStyle = cellStyle{absent: ""}
+	// detailStyle is `show`, which is a person reading one record — and
+	// which has always spelled a boolean true rather than yes. Kept that way
+	// deliberately: converting the listings is not the moment to change what
+	// a different command prints.
+	detailStyle = cellStyle{absent: "-"}
+)
+
 // tableCell renders one column of one row for a reader: presentation, so a
 // declared render wins.
 func tableCell[T any](c column[T], object map[string]json.RawMessage, rec T, ctx renderContext) string {
 	if c.render != nil {
-		return c.render(rec, ctx)
+		return orAbsent(c.render(rec, ctx), tableStyle)
 	}
-	return renderCell(object[c.field], "-")
+	return renderCell(object[c.field], tableStyle)
+}
+
+// orAbsent spells a rendered nothing the way the format spells one.
+//
+// A render function returns an empty string for "there is nothing here" and
+// leaves how that reads to the format, so a not-late action is a dash in the
+// table and an empty field in the CSV. Rendering the dash itself would put a
+// mark meant for a reader into a column something else is going to parse.
+func orAbsent(rendered string, style cellStyle) string {
+	if rendered == "" {
+		return style.absent
+	}
+	return rendered
 }
 
 // dataCell renders one column of one row for something else to read, where
 // the record's own value is what is wanted and the table's presentation of it
 // is not.
-//
-// An absent value is empty rather than the table's dash: a dash is a mark for
-// a reader, and a spreadsheet would take it for data.
 func dataCell[T any](c column[T], object map[string]json.RawMessage, rec T, ctx renderContext) string {
 	if c.field != "" {
-		return renderCell(object[c.field], "")
+		return renderCell(object[c.field], dataStyle)
 	}
-	return c.render(rec, ctx)
+	return orAbsent(c.render(rec, ctx), dataStyle)
 }
 
 func writeTableRecords[T any](out io.Writer, empty string, columns []column[T],
@@ -355,30 +413,31 @@ func writeJSONRecords[T any](out io.Writer, columns []column[T],
 	return err
 }
 
-// renderCell renders one column's JSON for a human: absent as absent, strings
+// renderCell renders one column's JSON: absent as the style says, strings
 // unquoted, and arrays or objects left in their JSON form.
-//
-// absent is what stands in for a null or an empty value, which differs by
-// format: a table writes a dash so a reader can see there is nothing there,
-// and a CSV writes nothing so a reader does not take the dash for data.
-func renderCell(raw json.RawMessage, absent string) string {
+func renderCell(raw json.RawMessage, style cellStyle) string {
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return string(raw)
 	}
 	switch x := value.(type) {
 	case nil:
-		return absent
+		return style.absent
 	case string:
 		if x == "" {
-			return absent
+			return style.absent
 		}
 		return x
+	case bool:
+		if !style.yesNo {
+			return strconv.FormatBool(x)
+		}
+		return yesNo(x)
 	case float64:
 		return strconv.FormatFloat(x, 'f', -1, 64)
 	case []any:
 		if len(x) == 0 {
-			return absent
+			return style.absent
 		}
 		// A list of names reads as a list of names. This is what an action's
 		// blockers looked like when `show` built that row by hand, and
@@ -391,6 +450,27 @@ func renderCell(raw json.RawMessage, absent string) string {
 	default:
 		return string(raw)
 	}
+}
+
+// addListingFlags puts the two output flags on a listing that declares its
+// columns.
+func addListingFlags[T any](cmd *cobra.Command, set columnSet[T]) {
+	addListOutputFlag(cmd)
+	addFieldsFlag(cmd, set)
+}
+
+// runListing is the tail every list command shares once its columns are
+// declared: choose the format, choose the fields, render.
+func runListing[T any](cmd *cobra.Command, set columnSet[T], rows []T, ctx renderContext) error {
+	format, err := listOutputFrom(cmd)
+	if err != nil {
+		return err
+	}
+	fields, err := fieldsFrom(cmd)
+	if err != nil {
+		return err
+	}
+	return writeRecords(cmd.OutOrStdout(), format, set, fields, rows, ctx)
 }
 
 // Field selection.

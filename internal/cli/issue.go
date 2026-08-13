@@ -147,8 +147,33 @@ func newIssueListCmd() *cobra.Command {
 	f.String(flagTracker, "", "keep only one tracker's issues")
 	f.Bool(flagClosed, false, "keep only issues the tracker has said closed")
 	f.String(flagSince, "", "closed on or after this date or timestamp; implies --closed")
-	addOutputFlag(cmd)
+	addListingFlags(cmd, issueColumns)
 	return cmd
+}
+
+// issueColumns is what `issue list` can show.
+//
+// CLOSED stays out of the default view until something has one, which is the
+// rule the hand-written table applied by hand: a listing of live issues has
+// nothing to say there.
+var issueColumns = columnSet[*store.TrackerIssue]{
+	blank: &store.TrackerIssue{},
+	declared: []column[*store.TrackerIssue]{
+		{
+			name: "closed_at", header: "CLOSED",
+			render: func(i *store.TrackerIssue, _ renderContext) string { return dateCell(i.ClosedAt) },
+			showIf: func(rows []*store.TrackerIssue) bool {
+				for _, i := range rows {
+					if i.ClosedAt.Valid {
+						return true
+					}
+				}
+				return false
+			},
+		},
+	},
+	defaults: []string{"id", "status", "iteration", "assignee", "closed_at", "summary"},
+	empty:    "no issues",
 }
 
 // issueFilterFrom reads the listing's filters off the flags.
@@ -185,10 +210,6 @@ func issueFilterFrom(cmd *cobra.Command) (store.IssueFilter, error) {
 func runIssueList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	st, err := openStore(cmd)
 	if err != nil {
 		return err
@@ -204,43 +225,7 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(issues)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-
-	if len(issues) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "no issues")
-		return nil
-	}
-
-	// CLOSED appears only when something has one, the way pr list brings in
-	// MERGED: a listing of live issues has nothing to say there.
-	var anyClosed bool
-	for _, issue := range issues {
-		anyClosed = anyClosed || issue.ClosedAt.Valid
-	}
-
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	header := "ID\tSTATUS\tITERATION\tASSIGNEE"
-	if anyClosed {
-		header += "\tCLOSED"
-	}
-	fmt.Fprintln(w, header+"\tSUMMARY")
-	for _, issue := range issues {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s",
-			issue.ID, nullText(issue.Status), nullText(issue.Iteration),
-			nullText(issue.Assignee))
-		if anyClosed {
-			fmt.Fprintf(w, "\t%s", shortDate(nullText(issue.ClosedAt)))
-		}
-		fmt.Fprintf(w, "\t%s\n", orDash(issue.Summary))
-	}
-	return w.Flush()
+	return runListing(cmd, issueColumns, issues, renderContext{})
 }
 
 func newProjectLinkIssueCmd() *cobra.Command {

@@ -367,9 +367,11 @@ func runPipelineShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// stepsFrom reads --steps as a list of verbs, where empty means none rather
-// than one verb with an empty name.
-func stepsFrom(cmd *cobra.Command) ([]string, error) {
+// stepsFrom reads --steps as a list of steps, where empty means none rather
+// than one step with an empty name.
+//
+// A step is a verb, or a verb and what it waits for: `wait_ref(>=minor+2)`.
+func stepsFrom(cmd *cobra.Command) ([]store.PipelineStep, error) {
 	raw, err := cmd.Flags().GetString(flagSteps)
 	if err != nil {
 		return nil, err
@@ -377,32 +379,36 @@ func stepsFrom(cmd *cobra.Command) ([]string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
-	steps := strings.Split(raw, ",")
-	for i, step := range steps {
-		steps[i] = strings.TrimSpace(step)
-		if steps[i] == "" {
+	var steps []store.PipelineStep
+	for _, text := range store.SplitSteps(raw) {
+		if strings.TrimSpace(text) == "" {
 			return nil, fmt.Errorf("--%s has an empty step in %q", flagSteps, raw)
 		}
+		step, err := store.ParseStep(text)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, step)
 	}
 	return steps, nil
 }
 
 // stepsCell renders a chain for a table, where a blank cell would read as
 // missing data rather than as a deliberate absence of steps.
-func stepsCell(steps []string) string {
+func stepsCell(steps []store.PipelineStep) string {
 	if len(steps) == 0 {
 		return "-"
 	}
-	return strings.Join(steps, " → ")
+	return store.StepsText(steps)
 }
 
 // stepsText renders a chain, saying so when there is none rather than printing
 // an empty line.
-func stepsText(steps []string) string {
+func stepsText(steps []store.PipelineStep) string {
 	if len(steps) == 0 {
 		return "no steps; nothing follows"
 	}
-	return strings.Join(steps, " → ")
+	return store.StepsText(steps)
 }
 
 func loadPipeline(ctx context.Context, tx *store.Tx, name string) (*store.Pipeline, error) {

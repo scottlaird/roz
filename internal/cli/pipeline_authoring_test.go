@@ -210,3 +210,51 @@ func repoPipeline(t *testing.T, db, repo string) string {
 	}
 	return ""
 }
+
+// TestAReleaseGateStep: a wait_ref step is writable again now that it can say
+// what it waits for, and the refusals explain the shape.
+func TestAReleaseGateStep(t *testing.T) {
+	db := initDB(t)
+
+	out, err := runCLI(t, "pipeline", "add", "gated", "--db", db,
+		"--steps", "undraft,wait_ref(>=minor+2),merge")
+	if err != nil {
+		t.Fatalf("pipeline add returned error: %v", err)
+	}
+	if !strings.Contains(out, "wait_ref(>=minor+2)") {
+		t.Errorf("add printed %q, want the gate in the chain", out)
+	}
+
+	// An absolute version is refused: a pipeline is instantiated for every
+	// pull request, so a fixed version is the same gate forever.
+	_, err = runCLI(t, "pipeline", "add", "fixed", "--db", db, "--steps", "wait_ref(>=3.6)")
+	if err == nil {
+		t.Fatal("pipeline add accepted an absolute release gate")
+	}
+	if !strings.Contains(err.Error(), "same gate for every pull request") {
+		t.Errorf("error does not explain why: %v", err)
+	}
+	// And says what to write instead.
+	if !strings.Contains(err.Error(), ">=minor+2") {
+		t.Errorf("error does not suggest the relative form: %v", err)
+	}
+}
+
+// TestAReleaseGateKeepsItsSeries: a monorepo gate counts within one series,
+// and the suggestion when it is written absolutely keeps that series.
+func TestAReleaseGateKeepsItsSeries(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "pipeline", "add", "api", "--db", db,
+		"--steps", "wait_ref(api/>=minor+2)"); err != nil {
+		t.Fatalf("pipeline add returned error: %v", err)
+	}
+
+	_, err := runCLI(t, "pipeline", "add", "fixed", "--db", db, "--steps", "wait_ref(api/>=3.6)")
+	if err == nil {
+		t.Fatal("pipeline add accepted an absolute gate")
+	}
+	if !strings.Contains(err.Error(), "api/>=minor+2") {
+		t.Errorf("the suggestion drops the series: %v", err)
+	}
+}

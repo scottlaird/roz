@@ -188,6 +188,11 @@ CREATE TABLE pipeline_step (
   pipeline TEXT NOT NULL REFERENCES action_pipeline(name),
   position INTEGER NOT NULL,
   verb     TEXT NOT NULL REFERENCES actionverb(verb),
+  -- what this step waits for, where the verb needs telling: a release gate has
+  -- to say which release. Opaque here -- what a spec means is the verb's
+  -- business, the same limit actionverb draws around predicates. Last of the
+  -- columns because ADD COLUMN put it there. See 0023.
+  spec     TEXT,
   PRIMARY KEY (pipeline, position)
 ) STRICT;
 
@@ -515,6 +520,33 @@ CREATE TABLE action_ref_wait (
   created_at  TEXT NOT NULL
 ) STRICT;
 
+-- A ref wait whose version is not decided yet.
+--
+-- A release gate in a pipeline is written relative to wherever the repository
+-- has got to -- "block until two minors on from here" -- and the number that
+-- is relative to has to be read before it can be worked out. Resolving while
+-- closing an action would mean network I/O in the cascade, and closing is a
+-- database operation that should not fail because GitHub is slow.
+--
+-- So a step instantiates into here, and the next sync -- which polls this
+-- repository *because* of this row -- reads the tags, works out the bound,
+-- writes the real wait and deletes this. It resolves once and is then frozen:
+-- a bound re-derived every poll would move its own goalposts, pushed out by
+-- each release that shipped, and the gate would never open.
+--
+-- Two tables rather than a nullable column on action_ref_wait, because these
+-- are two states rather than one with a hole in it. The transition is one-way,
+-- and a predicate reading action_ref_wait cannot see a wait that means nothing
+-- yet. See 0023.
+CREATE TABLE action_ref_pending (
+  action_id  TEXT PRIMARY KEY REFERENCES action(id),
+  repo_id    TEXT NOT NULL REFERENCES github_repo(id),
+  kind       TEXT NOT NULL CHECK (kind IN ('branch','tag')),
+  -- the relative expression, as written on the step: [prefix/]component+n
+  spec       TEXT NOT NULL CHECK (spec <> ''),
+  created_at TEXT NOT NULL
+) STRICT;
+
 -- ── the page's own prose ─────────────────────────────────────────────
 
 -- Authored prose the page places, keyed by slot rather than attached to an
@@ -638,3 +670,6 @@ CREATE INDEX git_ref_repo ON git_ref(repo_id, kind);
 -- sync polls the refs something is actually waiting for, so this is what
 -- decides which repositories it asks about
 CREATE INDEX action_ref_wait_repo ON action_ref_wait(repo_id, kind);
+-- sync polls the repositories it has something to resolve for, as well as the
+-- ones something is already waiting on
+CREATE INDEX action_ref_pending_repo ON action_ref_pending(repo_id, kind);

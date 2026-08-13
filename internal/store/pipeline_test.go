@@ -25,7 +25,7 @@ func TestSeededPipelinesHaveTheirSteps(t *testing.T) {
 		t.Fatalf("ListPipelines() returned %d pipelines, want %d", len(pipelines), len(want))
 	}
 	for _, p := range pipelines {
-		if !equalStrings(p.Steps, want[p.Name]) {
+		if !equalStrings(stepVerbs(p.Steps), want[p.Name]) {
 			t.Errorf("%s steps = %v, want %v", p.Name, p.Steps, want[p.Name])
 		}
 	}
@@ -177,6 +177,128 @@ func TestPipelineJSONCarriesItsSteps(t *testing.T) {
 	for _, want := range []string{`"steps":["undraft","merge"]`, `"name":"direct"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("MarshalRecord() = %s, want it to contain %s", got, want)
+		}
+	}
+}
+
+// stepVerbs is the verbs of a chain, for tests that care about the order
+// rather than about what any step waits for.
+func stepVerbs(steps []PipelineStep) []string {
+	verbs := make([]string, len(steps))
+	for i, step := range steps {
+		verbs[i] = step.Verb
+	}
+	return verbs
+}
+
+// TestAReleaseGateIsAStep is what #127 asked for: a wait_ref step is writable
+// again, because it can now say what it waits for.
+func TestAReleaseGateIsAStep(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	ok := [][]PipelineStep{
+		{{Verb: "undraft"}, {Verb: "wait_ref", Spec: ">=minor+2"}, {Verb: "merge"}},
+		{{Verb: "wait_ref", Spec: "api/>=major+1"}},
+	}
+	for _, steps := range ok {
+		if err := tx.CheckPipelineSteps(ctx, steps); err != nil {
+			t.Errorf("CheckPipelineSteps(%v) returned error: %v", steps, err)
+		}
+	}
+
+	bad := []struct {
+		steps  []PipelineStep
+		reason string
+	}{
+		// The wedge #127 opened with: a gate with nothing to wait for is
+		// created, never closes, and blocks everything behind it.
+		{[]PipelineStep{{Verb: "wait_ref"}}, "with no spec"},
+		// A fixed version is the same gate for every pull request forever.
+		{[]PipelineStep{{Verb: "wait_ref", Spec: ">=3.6"}}, "naming a version"},
+		{[]PipelineStep{{Verb: "wait_ref", Spec: "api/>=3.6"}}, "naming a version in a series"},
+		// A verb with nothing to say about a spec should not be given one.
+		{[]PipelineStep{{Verb: "merge", Spec: ">=minor+2"}}, "on a verb that takes none"},
+		{[]PipelineStep{{Verb: "wait_ref", Spec: "minor+2"}}, "without the operator"},
+	}
+	for _, tt := range bad {
+		if err := tx.CheckPipelineSteps(ctx, tt.steps); err == nil {
+			t.Errorf("CheckPipelineSteps accepted a step %s", tt.reason)
+		}
+	}
+}
+
+func TestParseStep(t *testing.T) {
+	// canonical is how the step renders back, which is not always how it was
+	// typed: spacing inside the brackets is normalised away.
+	tests := []struct {
+		text, verb, spec, canonical string
+	}{
+		{"merge", "merge", "", "merge"},
+		{"wait_ref(>=minor+2)", "wait_ref", ">=minor+2", "wait_ref(>=minor+2)"},
+		{"wait_ref(api/>=minor+2)", "wait_ref", "api/>=minor+2", "wait_ref(api/>=minor+2)"},
+		{" merge ", "merge", "", "merge"},
+		{"wait_ref( >=minor+2 )", "wait_ref", ">=minor+2", "wait_ref(>=minor+2)"},
+	}
+	for _, tt := range tests {
+		got, err := ParseStep(tt.text)
+		if err != nil {
+			t.Errorf("ParseStep(%q) returned error: %v", tt.text, err)
+			continue
+		}
+		if got.Verb != tt.verb || got.Spec != tt.spec {
+			t.Errorf("ParseStep(%q) = %+v, want %s/%s", tt.text, got, tt.verb, tt.spec)
+		}
+		if round := got.String(); round != tt.canonical {
+			t.Errorf("String() = %q, want %q", round, tt.canonical)
+		}
+	}
+	for _, bad := range []string{
+		"(>=minor+2)",        // no verb
+		"wait_ref(",          // opened and never closed
+		"wait_ref(>=minor+2", //
+		"wait_ref)",          // closed and never opened
+		"wait_ref()",         // brackets saying nothing
+		"",
+	} {
+		if _, err := ParseStep(bad); err == nil {
+			t.Errorf("ParseStep(%q) was accepted", bad)
+		}
+	}
+}
+
+// TestSplitStepsRespectsBrackets is what the brackets buy beyond legibility: a
+// spec containing a comma is splittable, where a separator form could never
+// tell the two kinds of comma apart.
+func TestSplitStepsRespectsBrackets(t *testing.T) {
+	tests := []struct {
+		text string
+		want []string
+	}{
+		{"undraft,merge", []string{"undraft", "merge"}},
+		{"undraft,wait_ref(>=minor+2),merge", []string{"undraft", "wait_ref(>=minor+2)", "merge"}},
+		// Nothing writes one of these today; the brackets are what make it
+		// possible to later.
+		{"wait_ref(>=1.2, <2.0),merge", []string{"wait_ref(>=1.2, <2.0)", "merge"}},
+		{"merge", []string{"merge"}},
+	}
+	for _, tt := range tests {
+		got := SplitSteps(tt.text)
+		if len(got) != len(tt.want) {
+			t.Errorf("SplitSteps(%q) = %q, want %q", tt.text, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if strings.TrimSpace(got[i]) != tt.want[i] {
+				t.Errorf("SplitSteps(%q) = %q, want %q", tt.text, got, tt.want)
+				break
+			}
 		}
 	}
 }

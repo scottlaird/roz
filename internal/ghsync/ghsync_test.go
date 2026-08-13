@@ -1166,3 +1166,61 @@ func (f *pagingFetcher) Refs(_ context.Context, queries []github.RefQuery) (gith
 	}
 	return f.next(f.lastKnown), nil
 }
+
+// TestAPendingGateMakesSyncReadTheRepository is the chicken-and-egg the issue
+// identified: nothing is waiting on the repository until the gate resolves,
+// and the gate cannot resolve until the tags are read. The gate itself is what
+// asks for them.
+func TestAPendingGateMakesSyncReadTheRepository(t *testing.T) {
+	ctx := context.Background()
+	st := newBareStore(t)
+
+	a := store.NewAction("wait for a ref >=minor+2 in owner/repo", "wait_ref")
+	if err := st.AllocateAction(ctx, a); err != nil {
+		t.Fatalf("AllocateAction() returned error: %v", err)
+	}
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.Insert(ctx, a); err != nil {
+		t.Fatalf("inserting the action: %v", err)
+	}
+	if err := tx.AddPendingRef(ctx, store.PendingRef{
+		ActionID: a.ID, RepoID: "owner/repo", Kind: store.RefTag, Spec: ">=minor+2",
+	}); err != nil {
+		t.Fatalf("AddPendingRef() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	client := &fakeFetcher{refs: github.RefResult{Refs: []github.Ref{
+		{Repo: "owner/repo", Prefix: "refs/tags/", Name: "v1.7.5", CommitSHA: "sha"},
+		{Repo: "owner/repo", Prefix: "refs/tags/", Name: "v1.6.0", CommitSHA: "sha"},
+	}}}
+
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(client.askedRefs) != 1 {
+		t.Fatalf("Sync() made %d ref reads for a pending gate, want 1", len(client.askedRefs))
+	}
+	if len(result.Resolved) != 1 {
+		t.Fatalf("Sync() resolved %d gates, want 1", len(result.Resolved))
+	}
+	if got := result.Resolved[0].Wait.Matcher; got != ">=1.9.0" {
+		t.Errorf("resolved to %q, want >=1.9.0", got)
+	}
+
+	// And it is a wait now, so the next poll asks about it for the ordinary
+	// reason rather than for the gate's.
+	waits, err := st.OpenRefWaits(ctx)
+	if err != nil {
+		t.Fatalf("OpenRefWaits() returned error: %v", err)
+	}
+	if len(waits) != 1 || waits[0].ActionID != a.ID {
+		t.Errorf("OpenRefWaits() = %+v, want the resolved wait", waits)
+	}
+}

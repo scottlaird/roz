@@ -25,6 +25,11 @@ type prose struct {
 	links    *markdown.Linker
 	markdown *markdown.Renderer
 	jiraBase string
+	// shorts maps a repository to what to call it, which is the opposite
+	// direction from the linker's map. Prose reads `roz#101` and has to work
+	// out which repository that is; a chip has the repository and has to work
+	// out what to write.
+	shorts map[string]string
 }
 
 func newProse(jiraBase string, jiraPrefixes []string, repos map[string]string,
@@ -37,11 +42,36 @@ func newProse(jiraBase string, jiraPrefixes []string, repos map[string]string,
 		Refs:         refs,
 		Titles:       titles,
 	})
+	shorts := make(map[string]string, len(repos))
+	for short, repo := range repos {
+		// Short names are unique, so this cannot lose one.
+		shorts[repo] = short
+	}
 	return &prose{
 		links:    links,
 		markdown: markdown.NewRenderer(links),
 		jiraBase: strings.TrimSuffix(jiraBase, "/"),
+		shorts:   shorts,
 	}
+}
+
+// short is what to call a repository key on the page: `roz#101` where the
+// repository has a short name, and the key unchanged where it has none.
+//
+// The full owner/name is what roz stores and what an API needs; it is not what
+// anybody says out loud, and on a page where every row belongs to one of three
+// repositories it is mostly a column of repeated prefixes. The short name is
+// the one a person already uses — that is what registering it says — and it is
+// unambiguous for the same reason: it is registered, and unique.
+func (p *prose) short(key string) string {
+	repo, number, found := strings.Cut(key, "#")
+	if !found {
+		return key
+	}
+	if name, ok := p.shorts[repo]; ok {
+		return name + "#" + number
+	}
+	return key
 }
 
 // titlesFrom builds the tooltip lookup: what roz knows about each thing a link
@@ -193,15 +223,24 @@ type noteView struct {
 }
 
 type prView struct {
-	ID     string
+	// Label is what the chip says: the short name where the repository has
+	// one, and the full owner/name where it has none. The key itself is not
+	// carried, because the link is the only thing on the page that needs it
+	// and it is already in the href.
+	Label  string
 	URL    string
+	Title  string
 	Status string
 	Bad    bool
 }
 
 type issueView struct {
-	Key    string
-	URL    string
+	Key   string
+	Label string
+	URL   string
+	// Title is the summary as last observed, for a tooltip. Empty where the
+	// tracker has never been read.
+	Title  string
 	Status string
 }
 
@@ -381,7 +420,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			Effort:   nullText(p.Effort),
 			Snooze:   nullText(p.SnoozeUntil),
 			Actions:  openPerProject[p.ID],
-			Issues:   issueViews(issuesByProject[p.ID], text.jiraBase),
+			Issues:   issueViews(issuesByProject[p.ID], text),
 			Expired:  expired(p.SnoozeUntil, stamp),
 		})
 	}
@@ -452,10 +491,10 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		Late:      lateLabel(late, a.ID),
 	}
 	for _, p := range prs[a.ID] {
-		view.PRs = append(view.PRs, prRow(p))
+		view.PRs = append(view.PRs, prRow(p, text))
 	}
 	if a.ProjectID.Valid {
-		view.Issues = issueViews(issues[a.ProjectID.String], text.jiraBase)
+		view.Issues = issueViews(issues[a.ProjectID.String], text)
 	}
 	return view
 }
@@ -465,8 +504,12 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 //
 // Merged and approved-and-clean are not problems; DIRTY and BEHIND are, and
 // so is a failing check. Everything else is ordinary waiting.
-func prRow(p store.ActionPR) prView {
-	view := prView{ID: p.ID, URL: nullText(p.URL)}
+func prRow(p store.ActionPR, text *prose) prView {
+	view := prView{
+		Label: text.short(p.ID),
+		URL:   nullText(p.URL),
+		Title: markdown.Tooltip(p.Title),
+	}
 	if view.URL == "-" {
 		view.URL = ""
 	}
@@ -513,21 +556,47 @@ func prRow(p store.ActionPR) prView {
 //
 // The link is built from the tracker's own key, not from the composed id: the
 // id carries a `jira:` prefix that means something here and nothing to Jira.
-// Only Jira has a configured base, so an issue from any other tracker renders
-// as text until something knows how to address it.
-func issueViews(issues []*store.TrackerIssue, base string) []issueView {
+// An issue from a tracker with no address — a Jira one with no configured base
+// — renders as text, because a link that goes nowhere is worse than none.
+func issueViews(issues []*store.TrackerIssue, text *prose) []issueView {
 	views := make([]issueView, 0, len(issues))
 	for _, issue := range issues {
-		view := issueView{Key: issue.Key, Status: nullText(issue.Status)}
+		view := issueView{
+			Label:  issue.Key,
+			Status: nullText(issue.Status),
+			// The summary as last observed, which is the whole reason for
+			// storing it: a key says which issue, a tooltip says which issue.
+			// Absent rather than blank where nothing has been observed.
+			Title: markdown.Tooltip(issue.Summary),
+		}
 		if view.Status == "-" {
 			view.Status = ""
 		}
-		if base != "" && issue.Tracker == store.TrackerJira {
-			view.URL = strings.TrimSuffix(base, "/") + "/" + issue.Key
+		switch issue.Tracker {
+		case store.TrackerJira:
+			if text.jiraBase != "" {
+				view.URL = text.jiraBase + "/" + issue.Key
+			}
+		case store.TrackerGitHub:
+			view.Label = text.short(issue.Key)
+			view.URL = issueURL(issue.Key)
 		}
 		views = append(views, view)
 	}
 	return views
+}
+
+// issueURL addresses a GitHub issue, from a key roz already knows the shape of.
+//
+// /issues/ rather than the /pull/ the prose linker emits: there a bare number
+// could be either and GitHub redirects between them, but here the row says
+// which it is, so the link may as well be right the first time.
+func issueURL(key string) string {
+	repo, number, found := strings.Cut(key, "#")
+	if !found || repo == "" || number == "" {
+		return ""
+	}
+	return "https://github.com/" + repo + "/issues/" + number
 }
 
 // projectLink renders the project an action advances as a link to its row.

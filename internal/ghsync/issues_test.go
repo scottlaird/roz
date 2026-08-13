@@ -309,3 +309,57 @@ func TestReadingAnIssueAgainIsNotNews(t *testing.T) {
 		t.Error("synced_at was not written")
 	}
 }
+
+// TestSyncRecordsWhenAnIssueClosed: closed_at is GitHub's own timestamp, for
+// the reason pr.merged_at is. Status says an issue is closed; only this says
+// when, and "what closed last week" needs the when.
+func TestSyncRecordsWhenAnIssueClosed(t *testing.T) {
+	ctx := context.Background()
+	st := newBareStore(t)
+	trackIssue(t, st, "owner/repo#7")
+
+	client := &issueFetcher{fakeFetcher: &fakeFetcher{}, issues: []github.Issue{{
+		Key: "owner/repo#7", Title: "Make it work", State: "CLOSED",
+		ClosedAt: "2026-08-07T14:30:00Z",
+	}}}
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if got := loadIssue(t, st, "owner/repo#7").ClosedAt.String; got != "2026-08-07T14:30:00Z" {
+		t.Errorf("closed_at = %q, want GitHub's timestamp", got)
+	}
+
+	// An open issue reports no closedAt. That silence must not clear one:
+	// GitHub sends nothing for an issue that is open, and reopening is what
+	// the status is for.
+	client.issues = []github.Issue{{
+		Key: "owner/repo#7", Title: "Make it work", State: "OPEN",
+	}}
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	issue := loadIssue(t, st, "owner/repo#7")
+	if got := issue.ClosedAt.String; got != "2026-08-07T14:30:00Z" {
+		t.Errorf("closed_at = %q after a poll that said nothing, want it kept", got)
+	}
+	if issue.Status.String != "OPEN" {
+		t.Errorf("status = %q, want the reopening to show there", issue.Status.String)
+	}
+}
+
+func loadIssue(t *testing.T, st *store.Store, key string) *store.TrackerIssue {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	issue, err := tx.LoadTrackerIssue(ctx, store.IssueID(store.TrackerGitHub, key))
+	if err != nil {
+		t.Fatalf("LoadTrackerIssue() returned error: %v", err)
+	}
+	return issue
+}

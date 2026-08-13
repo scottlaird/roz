@@ -68,6 +68,16 @@ type TrackerIssue struct {
 
 	CreatedAt string `db:"created_at" kind:"created"`
 	UpdatedAt string `db:"updated_at" kind:"auto"`
+
+	// ClosedAt is when the tracker says it closed, for the reason
+	// pr.merged_at exists: status says where an issue is now, and the log says
+	// when roz noticed, neither of which answers "what closed last week".
+	//
+	// NULL means not closed — or, for a tracker nothing reads, that nobody has
+	// said. Only GitHub supplies this on its own; a Jira issue has it only if
+	// `issue observe --closed-at` was given one, so its absence is not
+	// evidence the issue is open. Status is what answers that.
+	ClosedAt sql.NullString `db:"closed_at" kind:"observed"`
 }
 
 func (i *TrackerIssue) table() string       { return "tracker_issue" }
@@ -109,6 +119,10 @@ type TrackerObservation struct {
 	Status    sql.NullString
 	Iteration sql.NullString
 	Assignee  sql.NullString
+	// ClosedAt is when the tracker says the issue closed. Invalid means the
+	// tracker said nothing about it, which for an open issue and for a
+	// tracker that does not report closure are the same silence.
+	ClosedAt sql.NullString
 
 	// SyncedAt is when the tracker was read. Empty means the transaction's time.
 	SyncedAt string
@@ -261,6 +275,14 @@ func assign(issue *TrackerIssue, o TrackerObservation) {
 	if o.Assignee.Valid {
 		issue.Assignee = o.Assignee
 	}
+	// A closure is permanent, so an observation that says nothing about it
+	// never has to unset one. That is the same rule the other fields follow
+	// and it happens to be the right one here rather than merely uniform:
+	// GitHub sends no closedAt for an open issue, and reopening is what the
+	// status is for.
+	if o.ClosedAt.Valid {
+		issue.ClosedAt = o.ClosedAt
+	}
 }
 
 // LinkProjectIssue records that a project tracks an issue. Idempotent: linking
@@ -347,9 +369,53 @@ func (t *Tx) issueStrings(ctx context.Context, query string, arg string) ([]stri
 	return out, rows.Err()
 }
 
-// ListTrackerIssues returns every issue, in id order — which groups them by
-// tracker, since the tracker is the id's prefix.
-func (s *Store) ListTrackerIssues(ctx context.Context) ([]*TrackerIssue, error) {
+// IssueFilter selects a subset of the issues that have been observed. The
+// zero value selects everything.
+type IssueFilter struct {
+	// Tracker keeps one tracker's issues.
+	Tracker string
+	// Closed keeps issues the tracker has said closed.
+	//
+	// Read from closed_at rather than from status, which is the tracker's own
+	// vocabulary and unconstrained on purpose — 'Done', 'Closed', 'Resolved'
+	// and 'Won't Fix' are four trackers' words for one idea, and matching them
+	// would be roz deciding what somebody else's workflow means.
+	//
+	// The cost is that an issue closed on a tracker nothing reads does not
+	// appear until somebody records when. That is the honest shape: roz has
+	// not been told.
+	Closed bool
+	// Since keeps issues closed at or after a timestamp, and selects closed
+	// ones for the same reason PRFilter.Since selects merged ones.
+	Since string
+}
+
+// aboutClosures reports whether the filter is asking what finished, which is
+// what decides the order.
+func (f IssueFilter) aboutClosures() bool { return f.Closed || f.Since != "" }
+
+func (f IssueFilter) clauses() ([]string, []any) {
+	var where []string
+	var args []any
+
+	if f.Tracker != "" {
+		where = append(where, "tracker = ?")
+		args = append(args, f.Tracker)
+	}
+	if f.Closed {
+		where = append(where, "closed_at IS NOT NULL")
+	}
+	if f.Since != "" {
+		where = append(where, "closed_at >= ?")
+		args = append(args, f.Since)
+	}
+	return where, args
+}
+
+// ListTrackerIssues returns the issues matching the filter, in id order —
+// which groups them by tracker, since the tracker is the id's prefix — or
+// oldest closure first when the filter is about closures.
+func (s *Store) ListTrackerIssues(ctx context.Context, filter IssueFilter) ([]*TrackerIssue, error) {
 	fields, err := fieldsOf(&TrackerIssue{})
 	if err != nil {
 		return nil, err
@@ -359,8 +425,18 @@ func (s *Store) ListTrackerIssues(ctx context.Context) ([]*TrackerIssue, error) 
 		columns[i] = f.column
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM tracker_issue ORDER BY id", strings.Join(columns, ", "))
-	rows, err := s.db.QueryContext(ctx, query)
+	where, args := filter.clauses()
+	query := fmt.Sprintf("SELECT %s FROM tracker_issue", strings.Join(columns, ", "))
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	if filter.aboutClosures() {
+		query += " ORDER BY closed_at, id"
+	} else {
+		query += " ORDER BY id"
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing tracker issues: %w", err)
 	}

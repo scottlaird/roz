@@ -52,6 +52,11 @@ type PullRequest struct {
 	FirstReviewRequestedAt string
 	HumanCommentedAt       string
 
+	// MergedAt is GitHub's own timestamp, empty for anything not merged. It
+	// is what a week in review is ordered by — the poll that noticed is a
+	// different date, and the wrong one.
+	MergedAt string
+
 	// UnresolvedThreads counts review threads that are unresolved and not
 	// outdated. Outdated means the thread hangs off a commit that is no
 	// longer the head, which is GitHub's way of saying it has been overtaken
@@ -119,6 +124,7 @@ type wirePullRequest struct {
 
 	ReviewDecision   string     `json:"reviewDecision"`
 	MergeStateStatus string     `json:"mergeStateStatus"`
+	MergedAt         string     `json:"mergedAt"`
 	Author           *wireActor `json:"author"`
 
 	ReviewRequests struct {
@@ -204,6 +210,7 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 		InMergeQueue:     p.IsInMergeQueue,
 		ReviewDecision:   p.ReviewDecision,
 		MergeStateStatus: mergeState(p.MergeStateStatus),
+		MergedAt:         p.MergedAt,
 		ReviewerTeams:    reviewers(p),
 		Approvals:        approvals(p),
 	}

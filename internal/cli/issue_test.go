@@ -262,3 +262,74 @@ func TestJiraSummaryCanBeSet(t *testing.T) {
 		t.Errorf("summary = %#v, want it set by the feed", got)
 	}
 }
+
+// TestIssueListClosedAndSince is the end-of-week question, through the
+// command: what closed, and what closed since Thursday.
+func TestIssueListClosedAndSince(t *testing.T) {
+	db := initDB(t)
+
+	observe := func(key, status string, extra ...string) {
+		t.Helper()
+		args := append([]string{"issue", "observe", "--db", db, key,
+			"--summary", key, "--status", status}, extra...)
+		if _, err := runCLI(t, args...); err != nil {
+			t.Fatalf("issue observe returned error: %v", err)
+		}
+	}
+	observe("CDSS-1", "Done", "--closed-at", "2026-08-07")
+	observe("CDSS-2", "Done", "--closed-at", "2026-08-05")
+	observe("CDSS-3", "In Progress")
+
+	closed, err := runCLI(t, "issue", "list", "--db", db, "--closed")
+	if err != nil {
+		t.Fatalf("issue list --closed returned error: %v", err)
+	}
+	if strings.Contains(closed, "CDSS-3") {
+		t.Errorf("--closed listed an open issue:\n%s", closed)
+	}
+	// Oldest first, so the week reads in the order it happened.
+	if before, after := strings.Index(closed, "CDSS-2"), strings.Index(closed, "CDSS-1"); before > after {
+		t.Errorf("--closed is not in closing order:\n%s", closed)
+	}
+	if !strings.Contains(closed, "CLOSED") {
+		t.Errorf("--closed does not show when:\n%s", closed)
+	}
+
+	window, err := runCLI(t, "issue", "list", "--db", db, "--since", "2026-08-06")
+	if err != nil {
+		t.Fatalf("issue list --since returned error: %v", err)
+	}
+	if !strings.Contains(window, "CDSS-1") || strings.Contains(window, "CDSS-2") {
+		t.Errorf("--since did not cut the window at the date:\n%s", window)
+	}
+}
+
+// TestIssueListRefusesAVagueDate: a date that is not one would compare as text
+// and match nothing, which on a listing reads as an answer rather than as a
+// mistake.
+func TestIssueListRefusesAVagueDate(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "issue", "list", "--db", db, "--since", "last week"); err == nil {
+		t.Fatal("issue list accepted a vague date")
+	} else if !strings.Contains(err.Error(), "not a date or timestamp") {
+		t.Errorf("error does not say what is wrong: %v", err)
+	}
+}
+
+// TestObserveNeedsSomethingObserved keeps --closed-at inside the rule: it is
+// an observation like any other, so it satisfies the check on its own.
+func TestObserveNeedsSomethingObserved(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1"); err == nil {
+		t.Fatal("issue observe accepted an observation of nothing")
+	} else if !strings.Contains(err.Error(), flagClosedAt) {
+		t.Errorf("error does not offer --%s: %v", flagClosedAt, err)
+	}
+
+	if _, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1",
+		"--closed-at", "2026-08-07"); err != nil {
+		t.Fatalf("issue observe --closed-at alone returned error: %v", err)
+	}
+}

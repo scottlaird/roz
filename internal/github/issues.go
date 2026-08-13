@@ -18,7 +18,7 @@ import (
 // people on it is not one this has anything useful to say about, and the
 // column holds a name rather than a committee.
 const issueFields = `
-    number title state
+    number title state closedAt
     assignees(first: 5) { nodes { login } }
     milestone { title }`
 
@@ -30,6 +30,10 @@ type Issue struct {
 	Title     string
 	State     string
 	Milestone string
+	// ClosedAt is GitHub's own timestamp, empty while the issue is open. It
+	// is what a week in review is ordered by; the poll that noticed the
+	// closure is a different date.
+	ClosedAt string
 	// Assignees are logins, in the order GitHub gave them.
 	Assignees []string
 }
@@ -102,6 +106,7 @@ type wireIssue struct {
 		Number    int64  `json:"number"`
 		Title     string `json:"title"`
 		State     string `json:"state"`
+		ClosedAt  string `json:"closedAt"`
 		Assignees struct {
 			Nodes []struct {
 				Login string `json:"login"`
@@ -149,7 +154,10 @@ func decodeIssuesInto(body []byte, aliases map[string]string, result *IssueResul
 			continue
 		}
 
-		issue := Issue{Key: key, Title: w.Issue.Title, State: w.Issue.State}
+		issue := Issue{
+			Key: key, Title: w.Issue.Title, State: w.Issue.State,
+			ClosedAt: w.Issue.ClosedAt,
+		}
 		if w.Issue.Milestone != nil {
 			issue.Milestone = w.Issue.Milestone.Title
 		}

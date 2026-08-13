@@ -10,6 +10,11 @@ import (
 	"github.com/scottlaird/roz/internal/store"
 )
 
+// flagClosed selects issues the tracker has said closed. Its own name rather
+// than a --status value, because a tracker's status vocabulary is its own and
+// closed_at is the one thing every tracker means the same way.
+const flagClosed = "closed"
+
 func newIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "issue",
@@ -107,6 +112,7 @@ func runIssueShow(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(w, "status\t%s\n", nullText(issue.Status))
 	fmt.Fprintf(w, "iteration\t%s\n", nullText(issue.Iteration))
 	fmt.Fprintf(w, "assignee\t%s\n", nullText(issue.Assignee))
+	fmt.Fprintf(w, "closed_at\t%s\n", nullText(issue.ClosedAt))
 	fmt.Fprintf(w, "synced_at\t%s\n", nullText(issue.SyncedAt))
 	if len(projects) == 0 {
 		fmt.Fprintf(w, "tracked by\t-\n")
@@ -121,12 +127,59 @@ func newIssueListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Every issue that has been observed or linked",
-		Args:  cobra.NoArgs,
-		RunE:  runIssueList,
+		Long: "--closed and --since are the week in review: what finished, oldest\n" +
+			"first, so the list reads in the order the week happened.\n\n" +
+			"  roz issue list --since 2026-08-06\n\n" +
+			"--since implies --closed, because a closing time is what it reads.\n\n" +
+			"Both read closed_at rather than the status, which is the tracker's\n" +
+			"own word and unconstrained on purpose: 'Done', 'Closed' and\n" +
+			"'Resolved' are three trackers' names for one idea, and deciding\n" +
+			"which of them counts is not roz's to do.\n\n" +
+			"What that costs is issues on a tracker nothing reads. GitHub\n" +
+			"supplies the time on every sync; Jira has it only where\n" +
+			"`roz issue observe --closed-at` was given one, so an issue closed\n" +
+			"in Jira and never recorded as closed does not appear here. That is\n" +
+			"roz not having been told, rather than the issue being open.",
+		Args: cobra.NoArgs,
+		RunE: runIssueList,
 	}
-	cmd.Flags().String(flagTracker, "", "keep only one tracker's issues")
+	f := cmd.Flags()
+	f.String(flagTracker, "", "keep only one tracker's issues")
+	f.Bool(flagClosed, false, "keep only issues the tracker has said closed")
+	f.String(flagSince, "", "closed on or after this date or timestamp; implies --closed")
 	addOutputFlag(cmd)
 	return cmd
+}
+
+// issueFilterFrom reads the listing's filters off the flags.
+func issueFilterFrom(cmd *cobra.Command) (store.IssueFilter, error) {
+	f := cmd.Flags()
+
+	tracker, err := f.GetString(flagTracker)
+	if err != nil {
+		return store.IssueFilter{}, err
+	}
+	if tracker != "" {
+		if err := store.ValidateTracker(tracker); err != nil {
+			return store.IssueFilter{}, err
+		}
+	}
+	closed, err := f.GetBool(flagClosed)
+	if err != nil {
+		return store.IssueFilter{}, err
+	}
+	since, err := f.GetString(flagSince)
+	if err != nil {
+		return store.IssueFilter{}, err
+	}
+	if since != "" {
+		// A vague date would compare as text and quietly match nothing, which
+		// on a listing looks like an answer.
+		if since, err = validateTimestamp(flagSince, since); err != nil {
+			return store.IssueFilter{}, err
+		}
+	}
+	return store.IssueFilter{Tracker: tracker, Closed: closed, Since: since}, nil
 }
 
 func runIssueList(cmd *cobra.Command, _ []string) error {
@@ -142,28 +195,13 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	tracker, err := cmd.Flags().GetString(flagTracker)
+	filter, err := issueFilterFrom(cmd)
 	if err != nil {
 		return err
 	}
-	if tracker != "" {
-		if err := store.ValidateTracker(tracker); err != nil {
-			return err
-		}
-	}
-
-	issues, err := st.ListTrackerIssues(ctx)
+	issues, err := st.ListTrackerIssues(ctx, filter)
 	if err != nil {
 		return err
-	}
-	if tracker != "" {
-		kept := issues[:0]
-		for _, issue := range issues {
-			if issue.Tracker == tracker {
-				kept = append(kept, issue)
-			}
-		}
-		issues = kept
 	}
 
 	if format == outputJSON {
@@ -180,12 +218,27 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tSTATUS\tITERATION\tASSIGNEE\tSUMMARY")
+	// CLOSED appears only when something has one, the way pr list brings in
+	// MERGED: a listing of live issues has nothing to say there.
+	var anyClosed bool
 	for _, issue := range issues {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		anyClosed = anyClosed || issue.ClosedAt.Valid
+	}
+
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	header := "ID\tSTATUS\tITERATION\tASSIGNEE"
+	if anyClosed {
+		header += "\tCLOSED"
+	}
+	fmt.Fprintln(w, header+"\tSUMMARY")
+	for _, issue := range issues {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s",
 			issue.ID, nullText(issue.Status), nullText(issue.Iteration),
-			nullText(issue.Assignee), orDash(issue.Summary))
+			nullText(issue.Assignee))
+		if anyClosed {
+			fmt.Fprintf(w, "\t%s", shortDate(nullText(issue.ClosedAt)))
+		}
+		fmt.Fprintf(w, "\t%s\n", orDash(issue.Summary))
 	}
 	return w.Flush()
 }

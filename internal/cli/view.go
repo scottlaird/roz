@@ -275,7 +275,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	if err != nil {
 		return nil, err
 	}
-	allIssues, err := st.ListTrackerIssues(ctx)
+	allIssues, err := st.ListTrackerIssues(ctx, store.IssueFilter{})
 	if err != nil {
 		return nil, err
 	}

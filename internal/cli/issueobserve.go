@@ -20,6 +20,11 @@ const (
 	flagFeed      = "feed"
 	flagTracker   = "tracker"
 	flagKey       = "key"
+	// flagClosedAt is separate from --status because it is a different fact.
+	// A status is where the issue is; this is when it stopped moving, and it
+	// is what `issue list --since` reads. GitHub reports it on every sync;
+	// for a tracker nothing reads, this flag is the only way it arrives.
+	flagClosedAt = "closed-at"
 )
 
 func newIssueObserveCmd() *cobra.Command {
@@ -65,6 +70,7 @@ func addObserveFlags(cmd *cobra.Command) {
 	f.String(flagSprint, "", "the sprint it is in")
 	_ = f.MarkDeprecated(flagSprint, "use --iteration, which covers a milestone too")
 	f.String(flagAssignee, "", "who it is assigned to; empty means unassigned")
+	f.String(flagClosedAt, "", "when the tracker says it closed, as a date or timestamp")
 	f.String(flagAt, "", "when the tracker was read, as a date or timestamp; recorded even if nothing else changed")
 	f.String(flagFeed, "", "read observations as JSON from a file, or - for stdin")
 }
@@ -146,7 +152,20 @@ func issueObservations(cmd *cobra.Command, args []string, tracker string) ([]sto
 		}
 	}
 
+	closedAt, err := f.GetString(flagClosedAt)
+	if err != nil {
+		return nil, err
+	}
+	if closedAt != "" {
+		if closedAt, err = validateTimestamp(flagClosedAt, closedAt); err != nil {
+			return nil, err
+		}
+	}
+
 	observation := store.TrackerObservation{Tracker: tracker, Key: args[0], SyncedAt: at}
+	if f.Changed(flagClosedAt) {
+		observation.ClosedAt = sql.NullString{String: closedAt, Valid: true}
+	}
 	for _, field := range []struct {
 		flag   string
 		target *sql.NullString
@@ -168,9 +187,10 @@ func issueObservations(cmd *cobra.Command, args []string, tracker string) ([]sto
 	}
 
 	if !observation.Summary.Valid && !observation.Status.Valid &&
-		!observation.Iteration.Valid && !observation.Assignee.Valid {
-		return nil, fmt.Errorf("nothing observed: pass --summary, --%s, --%s or --%s",
-			flagStatus, flagIteration, flagAssignee)
+		!observation.Iteration.Valid && !observation.Assignee.Valid &&
+		!observation.ClosedAt.Valid {
+		return nil, fmt.Errorf("nothing observed: pass --summary, --%s, --%s, --%s or --%s",
+			flagStatus, flagIteration, flagAssignee, flagClosedAt)
 	}
 	return []store.TrackerObservation{observation}, nil
 }
@@ -192,6 +212,7 @@ type issueFeedEntry struct {
 	Iteration *string `json:"iteration"`
 	Sprint    *string `json:"sprint"`
 	Assignee  *string `json:"assignee"`
+	ClosedAt  *string `json:"closed_at"`
 	SyncedAt  string  `json:"synced_at"`
 }
 
@@ -240,6 +261,11 @@ func readIssueFeed(cmd *cobra.Command, path, tracker string) ([]store.TrackerObs
 				return nil, fmt.Errorf("%s: %w", entry.Key, err)
 			}
 		}
+		if entry.ClosedAt != nil && *entry.ClosedAt != "" {
+			if _, err := validateTimestamp("closed_at", *entry.ClosedAt); err != nil {
+				return nil, fmt.Errorf("%s: %w", entry.Key, err)
+			}
+		}
 		observations[i] = store.TrackerObservation{
 			Tracker:   entryTracker,
 			Key:       entry.Key,
@@ -247,6 +273,7 @@ func readIssueFeed(cmd *cobra.Command, path, tracker string) ([]store.TrackerObs
 			Status:    optional(entry.Status),
 			Iteration: optional(entry.iteration()),
 			Assignee:  optional(entry.Assignee),
+			ClosedAt:  optional(entry.ClosedAt),
 			SyncedAt:  entry.SyncedAt,
 		}
 	}

@@ -365,3 +365,118 @@ func TestTheSchemaRefusesAnUnknownReason(t *testing.T) {
 		t.Error("the schema accepted a reason outside the set")
 	}
 }
+
+// TestListPRsSince is the week in review: what merged, in the order it merged.
+//
+// Ordered by merged_at rather than by repository, because a week is read
+// chronologically and grouping it by repository answers a different question.
+func TestListPRsSince(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	// Deliberately out of merge order by identifier, so an accidental
+	// ORDER BY repo, number would still look right.
+	mergePR(t, st, trackPR(t, st, "owner/zeta", 1), "2026-08-05T09:00:00.000Z")
+	mergePR(t, st, trackPR(t, st, "owner/alpha", 9), "2026-08-07T09:00:00.000Z")
+	mergePR(t, st, trackPR(t, st, "owner/beta", 4), "2026-08-06T09:00:00.000Z")
+	// One that never merged, and one merged before merged_at was recorded.
+	trackPR(t, st, "owner/gamma", 2)
+	openPR := trackPR(t, st, "owner/delta", 3)
+	setState(t, st, openPR, PRStateMerged)
+
+	tests := []struct {
+		name   string
+		filter PRFilter
+		want   []string
+	}{
+		{
+			name:   "a window, oldest merge first",
+			filter: PRFilter{Since: "2026-08-06"},
+			want:   []string{"owner/beta#4", "owner/alpha#9"},
+		},
+		{
+			// Since reads merged_at, so it selects merged pull requests on its
+			// own — an open one has not finished, whatever else is asked.
+			name:   "an open pull request is never in a window",
+			filter: PRFilter{Since: "2000-01-01"},
+			want:   []string{"owner/zeta#1", "owner/beta#4", "owner/alpha#9"},
+		},
+		{
+			// A merge with no time goes last rather than first, which is
+			// where SQLite puts NULL on its own.
+			name:   "state alone takes the same order, undated last",
+			filter: PRFilter{State: PRStateMerged},
+			want: []string{
+				"owner/zeta#1", "owner/beta#4", "owner/alpha#9", "owner/delta#3",
+			},
+		},
+		{
+			name:   "no window keeps the repository order",
+			filter: PRFilter{},
+			want: []string{
+				"owner/alpha#9", "owner/beta#4", "owner/delta#3",
+				"owner/gamma#2", "owner/zeta#1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := st.ListPRs(ctx, tt.filter)
+			if err != nil {
+				t.Fatalf("ListPRs() returned error: %v", err)
+			}
+			ids := make([]string, len(got))
+			for i, p := range got {
+				ids[i] = p.ID
+			}
+			if !equalStrings(ids, tt.want) {
+				t.Errorf("ListPRs(%+v) = %v, want %v", tt.filter, ids, tt.want)
+			}
+		})
+	}
+}
+
+// mergePR records a merge the way sync would.
+func mergePR(t *testing.T, st *Store, p *PR, at string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := p.Clone()
+	after.State = sql.NullString{String: PRStateMerged, Valid: true}
+	after.MergedAt = sql.NullString{String: at, Valid: true}
+	if _, err := tx.Update(ctx, p, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+// setState moves a pull request without saying when, which is what a merge
+// recorded before merged_at existed looks like.
+func setState(t *testing.T, st *Store, p *PR, state string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := p.Clone()
+	after.State = sql.NullString{String: state, Valid: true}
+	if _, err := tx.Update(ctx, p, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}

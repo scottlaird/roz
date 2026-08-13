@@ -295,8 +295,18 @@ func newPRListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Tracked pull requests",
-		Args:  cobra.NoArgs,
-		RunE:  runPRList,
+		Long: "--since is the week in review: what merged, oldest first, so the\n" +
+			"list reads in the order the week happened.\n\n" +
+			"  roz pr list --since 2026-08-06\n\n" +
+			"It reads merged_at, so it selects merged pull requests — \"since\" is\n" +
+			"about when something finished, and an open one has not. --state\n" +
+			"MERGED alongside it is redundant rather than wrong, and on its own\n" +
+			"gives the same order over every merge ever tracked.\n\n" +
+			"merged_at is GitHub's own timestamp rather than when roz noticed.\n" +
+			"The two differ for a pull request tracked after it merged, which\n" +
+			"has no transition in the log at all.",
+		Args: cobra.NoArgs,
+		RunE: runPRList,
 	}
 	f := cmd.Flags()
 	f.Bool("stacked", false, "based on another tracked pull request")
@@ -305,6 +315,7 @@ func newPRListCmd() *cobra.Command {
 	f.String(flagBecause, "",
 		"why it is tracked: "+strings.Join(store.TrackingReasons, ", ")+
 			" — most usefully what you are on the hook to review")
+	f.String(flagSince, "", "merged on or after this date or timestamp; selects merged ones")
 	addOutputFlag(cmd)
 	return cmd
 }
@@ -366,7 +377,20 @@ func prFilterFrom(cmd *cobra.Command) (store.PRFilter, error) {
 			return store.PRFilter{}, err
 		}
 	}
-	return store.PRFilter{Stacked: stacked, Frozen: frozen, State: state, Because: because}, nil
+	since, err := f.GetString(flagSince)
+	if err != nil {
+		return store.PRFilter{}, err
+	}
+	if since != "" {
+		// A vague date would compare as text and quietly match nothing, which
+		// on a listing looks like an answer.
+		if since, err = validateTimestamp(flagSince, since); err != nil {
+			return store.PRFilter{}, err
+		}
+	}
+	return store.PRFilter{
+		Stacked: stacked, Frozen: frozen, State: state, Because: because, Since: since,
+	}, nil
 }
 
 func writePRTable(out io.Writer, prs []*store.PR) error {
@@ -379,14 +403,20 @@ func writePRTable(out io.Writer, prs []*store.PR) error {
 	// exception is worth seeing and its absence is not, and the ordinary case
 	// is every row reading "-" in a table that is wide already. Anything
 	// parsing this should read -o json, which always carries them.
-	var overridden, explained bool
+	// The same rule brings in MERGED: a listing of open pull requests has
+	// nothing to say there, and one about a week is entirely about it.
+	var overridden, explained, merged bool
 	for _, p := range prs {
 		overridden = overridden || p.Pipeline.Valid
 		explained = explained || p.TrackedBecause.Valid
+		merged = merged || p.MergedAt.Valid
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	header := "ID\tSTATE\tDRAFT\tREVIEW\tMERGE\tCHECKS\tFROZEN"
+	if merged {
+		header += "\tMERGED"
+	}
 	if explained {
 		header += "\tBECAUSE"
 	}
@@ -400,6 +430,9 @@ func writePRTable(out io.Writer, prs []*store.PR) error {
 			p.ID, nullText(p.State), nullBoolText(p.IsDraft),
 			nullText(p.ReviewDecision), nullText(p.MergeStateStatus),
 			nullText(p.ChecksState), yesNo(p.Frozen))
+		if merged {
+			fmt.Fprintf(w, "\t%s", shortDate(nullText(p.MergedAt)))
+		}
 		if explained {
 			fmt.Fprintf(w, "\t%s", nullText(p.TrackedBecause))
 		}

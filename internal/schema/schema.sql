@@ -404,6 +404,12 @@ CREATE TABLE pr (
   -- skippable: the files a pull request touches change only when it does. Not
   -- last_synced_at, which moves on every poll. See 0024.
   owners_head        TEXT,
+  -- when GitHub says it merged, which is not when roz noticed. The log holds
+  -- the second and it is the wrong answer for "what did I merge this week":
+  -- a pull request tracked after the fact transitions to MERGED at the poll
+  -- that caught up, or never, having been merged the first time it was read.
+  -- NULL means not merged. See 0027.
+  merged_at          TEXT,
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;
@@ -426,6 +432,10 @@ CREATE TABLE tracker_issue (
   synced_at  TEXT,                      -- when the tracker was last read for this issue
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  -- when the tracker says it closed, for the same reason pr.merged_at exists.
+  -- NULL means not closed, or -- for Jira, which nothing reads -- that nobody
+  -- has said; status is what answers whether it is open. See 0027.
+  closed_at  TEXT,
   UNIQUE (tracker, key),
   CHECK (id = tracker || ':' || key)
 ) STRICT;
@@ -716,3 +726,8 @@ CREATE INDEX action_ref_wait_repo ON action_ref_wait(repo_id, kind);
 -- sync polls the repositories it has something to resolve for, as well as the
 -- ones something is already waiting on
 CREATE INDEX action_ref_pending_repo ON action_ref_pending(repo_id, kind);
+-- the week in review: a window over what finished, ordered by when it did.
+-- Partial, because what has not finished is most of both tables and is never
+-- what either query is asking for.
+CREATE INDEX pr_merged_at ON pr(merged_at) WHERE merged_at IS NOT NULL;
+CREATE INDEX tracker_issue_closed_at ON tracker_issue(closed_at) WHERE closed_at IS NOT NULL;

@@ -1030,6 +1030,77 @@ This does not finish the `review` verb. Closing that on a predicate needs our
 GitHub login as well, and `config.owner` is deliberately a label rather than
 one.
 
+## The week in review
+
+The end of a week is two questions: what did I merge, and what finished. Both
+are windows over what is already recorded, ordered by when it happened.
+
+```console
+$ roz pr list --since 2026-08-06
+ID                  STATE   DRAFT  REVIEW  MERGE  CHECKS   FROZEN  MERGED      TITLE
+scottlaird/roz#161  MERGED  no     -       -      SUCCESS  yes     2026-08-06  Colour the queue
+scottlaird/roz#164  MERGED  no     -       -      SUCCESS  yes     2026-08-07  Quiet the issue polls
+$ roz issue list --since 2026-08-06
+ID              STATUS  ITERATION  ASSIGNEE  CLOSED      SUMMARY
+jira:CDSS-1744  Done    -          scott     2026-08-07  Split the nodepool
+```
+
+`MERGED` and `CLOSED` appear only when something in the listing has one, the
+same rule `BECAUSE` and `PIPELINE` follow: a listing of open work has nothing
+to say there.
+
+**Oldest first**, because a week is read in the order it happened. That is the
+one place these listings depart from their usual order — `pr list` normally
+groups by repository, which answers a different question and answers this one
+badly.
+
+`--since` reads the *finishing* time, so it selects merged pull requests and
+closed issues on its own. `--state MERGED` alongside it is redundant rather
+than wrong, and on its own gives the same order over every merge ever tracked.
+`--closed` is the issue equivalent: everything that has finished, with no
+window.
+
+### When it happened, not when roz noticed
+
+`merged_at` and `closed_at` are GitHub's own timestamps, stored rather than
+worked out from the log.
+
+The log looks like it should answer this — it records the transition to
+`MERGED`, with a time — and it is the wrong answer twice over. A pull request
+tracked *after* it merged has no transition at all: it was already merged the
+first time roz read it, so nothing moved. One that merged while roz was not
+running transitions at the poll that caught up, which dates it to whenever the
+laptop was next opened. Both land in the wrong week, and the second lands there
+silently.
+
+So the fact is taken from whoever owns it. GitHub reports `mergedAt` and
+`closedAt` on every poll, and roz stores what it is told.
+
+### What this cannot see
+
+An issue only appears in `--closed` once something has recorded *when* it
+closed. GitHub supplies that on every sync. Nothing reads Jira, so a Jira issue
+has it only where it was given one:
+
+```console
+$ roz issue observe CDSS-1744 --status Done --closed-at 2026-08-07
+```
+
+That is deliberately not inferred from the status. `Done`, `Closed`,
+`Resolved` and `Shipped` are four trackers' words for one idea and `Won't Fix`
+is a fifth that means something else, and picking which of them counts as
+finished would be roz deciding what somebody else's workflow means. The status
+column is unconstrained on purpose for exactly that reason.
+
+An issue closed in Jira and never recorded as closed is therefore missing from
+the week rather than misdated in it — roz has not been told, which is a better
+failure than a confident wrong answer.
+
+**Issues that had pull requests merged against them** are the third question a
+week wants, and roz cannot answer it: the association lives in the pull request
+body and nothing parses it. That is
+[#167](https://github.com/scottlaird/roz/issues/167).
+
 ## Projects inside projects
 
 Forty projects is a list. The handful of things they are actually about is what

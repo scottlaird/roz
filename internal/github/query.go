@@ -24,7 +24,7 @@ import (
 // of a real comment.
 const prFields = `
     number title url state isDraft baseRefName headRefOid isInMergeQueue
-    reviewDecision mergeStateStatus
+    reviewDecision mergeStateStatus mergedAt
     author { login }
     reviewRequests(first: 20) {
       nodes { requestedReviewer { __typename ... on Team { slug } ... on User { login } } }

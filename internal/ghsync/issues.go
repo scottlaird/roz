@@ -118,6 +118,7 @@ func observationOf(issue github.Issue) store.TrackerObservation {
 		Summary:   sql.NullString{String: issue.Title, Valid: issue.Title != ""},
 		Status:    sql.NullString{String: issue.State, Valid: issue.State != ""},
 		Iteration: sql.NullString{String: issue.Milestone, Valid: issue.Milestone != ""},
+		ClosedAt:  sql.NullString{String: issue.ClosedAt, Valid: issue.ClosedAt != ""},
 		// Every assignee, not the first. The column holds a name and usually
 		// gets one, but picking among several would be a guess about which
 		// mattered, and joining them is at least true.

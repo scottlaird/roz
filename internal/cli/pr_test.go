@@ -487,3 +487,16 @@ func TestClearingTheReason(t *testing.T) {
 		t.Errorf("clearing did not report the change:\n%s", out)
 	}
 }
+
+// TestPRListRefusesAVagueDate: the same rule --since follows everywhere. A
+// date that is not one compares as text and quietly matches nothing, which on
+// a listing looks like an answer.
+func TestPRListRefusesAVagueDate(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "pr", "list", "--db", db, "--since", "last week"); err == nil {
+		t.Fatal("pr list accepted a vague date")
+	} else if !strings.Contains(err.Error(), "not a date or timestamp") {
+		t.Errorf("error does not say what is wrong: %v", err)
+	}
+}

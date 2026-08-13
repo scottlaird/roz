@@ -437,3 +437,89 @@ func TestRefsWithNoKnownSetWalks(t *testing.T) {
 		t.Errorf("asked %d times with no known set, want %d", asked, RefMaxPages)
 	}
 }
+
+// TestSeriesIsAskedForAsARefPrefix is the difference between asking exactly
+// and asking approximately. GitHub's `query` is a substring match, so
+// "service/s3/" also matched 20 refs that are not under it; a ref prefix
+// returns the 301 that are, and nothing else.
+func TestSeriesIsAskedForAsARefPrefix(t *testing.T) {
+	query, _ := buildRefQueryFrom([]RefQuery{
+		{Repo: "aws/aws-sdk-go-v2", Prefix: "refs/tags/", Path: "service/s3"},
+	})
+
+	if !strings.Contains(query, `refPrefix: "refs/tags/service/s3/"`) {
+		t.Errorf("the series is not asked for as a ref prefix:\n%s", query)
+	}
+	// And not as a substring, which would be the approximate question.
+	if strings.Contains(query, `query: "service/s3/"`) {
+		t.Errorf("the series is still being asked for as a substring:\n%s", query)
+	}
+}
+
+// TestATopLevelQueryIsTheWholeNamespace: GitHub insists a ref prefix ends in a
+// slash, so there is no way to ask for "tags starting with v". A top-level
+// series is the whole namespace or nothing.
+func TestATopLevelQueryIsTheWholeNamespace(t *testing.T) {
+	query, _ := buildRefQueryFrom([]RefQuery{{Repo: "acme/api", Prefix: "refs/tags/"}})
+
+	if !strings.Contains(query, `refPrefix: "refs/tags/"`) {
+		t.Errorf("a top-level query is not the namespace:\n%s", query)
+	}
+}
+
+// TestASeriesIsPutBackOnTheName: GitHub strips the whole ref prefix, series
+// included, so `service/s3/v1.107.0` comes back as `v1.107.0`. A ref's name is
+// what it is called, not what was left after the question — and the stored
+// name is what every pattern matches against.
+func TestASeriesIsPutBackOnTheName(t *testing.T) {
+	body := `{"data": {"ref0": {"refs": {
+	  "totalCount": 301,
+	  "pageInfo": {"hasNextPage": false, "endCursor": ""},
+	  "nodes": [{"name": "v1.107.0", "target": {"oid": "aaa"}}]
+	}}}}`
+
+	result := RefResult{Missing: map[string]string{}}
+	aliases := map[string]aliasedQuery{"ref0": {query: RefQuery{
+		Repo: "aws/aws-sdk-go-v2", Prefix: "refs/tags/", Path: "service/s3",
+	}}}
+	if _, err := decodeRefsInto([]byte(body), aliases, &result); err != nil {
+		t.Fatalf("decodeRefsInto() returned error: %v", err)
+	}
+	if len(result.Refs) != 1 {
+		t.Fatalf("decoded %d refs, want 1", len(result.Refs))
+	}
+	if got, want := result.Refs[0].Name, "service/s3/v1.107.0"; got != want {
+		t.Errorf("name = %q, want %q", got, want)
+	}
+	// The namespace stays the namespace, so what kind of ref this is does not
+	// depend on how it was asked for.
+	if got := result.Refs[0].Prefix; got != "refs/tags/" {
+		t.Errorf("prefix = %q, want the namespace", got)
+	}
+}
+
+// TestKnownIsAskedAboutTheWholeName: the boundary that stops an incremental
+// read is the set of names already stored, which carry their series.
+func TestKnownIsAskedAboutTheWholeName(t *testing.T) {
+	var asked []string
+	body := `{"data": {"ref0": {"refs": {
+	  "totalCount": 2,
+	  "pageInfo": {"hasNextPage": false, "endCursor": ""},
+	  "nodes": [{"name": "v1.107.0", "target": {"oid": "aaa"}}]
+	}}}}`
+
+	result := RefResult{Missing: map[string]string{}}
+	aliases := map[string]aliasedQuery{"ref0": {query: RefQuery{
+		Repo: "aws/aws-sdk-go-v2", Prefix: "refs/tags/", Path: "service/s3",
+		Known: func(name string) bool {
+			asked = append(asked, name)
+			return false
+		},
+	}}}
+	if _, err := decodeRefsInto([]byte(body), aliases, &result); err != nil {
+		t.Fatalf("decodeRefsInto() returned error: %v", err)
+	}
+	if len(asked) != 1 || asked[0] != "service/s3/v1.107.0" {
+		t.Errorf("Known was asked about %q, want the stored name", asked)
+	}
+}

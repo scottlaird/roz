@@ -249,18 +249,23 @@ func TestAGlobWaitsForWhatHasNoVersion(t *testing.T) {
 	}
 }
 
-// TestPollPrefix: what GitHub is asked to filter on, which is the path and
-// nothing more.
-func TestPollPrefix(t *testing.T) {
-	tests := []struct{ prefix, want string }{
-		{"", ""},
-		{"api", "api/"},
-		{"service/s3", "service/s3/"},
+// TestPollFilter: the series is asked for as a ref prefix, so this is only the
+// leftover question of narrowing within one.
+func TestPollFilter(t *testing.T) {
+	tests := []struct{ prefix, matcher, want string }{
+		// A constraint is not a substring of any ref name.
+		{"", ">=1.0", ""},
+		{"api", ">=1.0", ""},
+		{"service/s3", ">=1.0", ""},
+		// A name-shaped matcher has a literal head worth narrowing on.
+		{"", "release-1.5", "release-1.5"},
+		{"", "release-*", "release-"},
+		{"team", "release-*", "release-"},
 	}
 	for _, tt := range tests {
-		got := RefWait{PathPrefix: tt.prefix, Matcher: ">=1.0"}.PollPrefix()
+		got := RefWait{PathPrefix: tt.prefix, Matcher: tt.matcher}.PollFilter()
 		if got != tt.want {
-			t.Errorf("PollPrefix(%q) = %q, want %q", tt.prefix, got, tt.want)
+			t.Errorf("PollFilter(%q, %q) = %q, want %q", tt.prefix, tt.matcher, got, tt.want)
 		}
 	}
 }
@@ -535,25 +540,18 @@ func TestTheUnionAddsNoFalseMatches(t *testing.T) {
 	}
 }
 
-// TestPollPrefixNarrowsANameShapedMatcher: branches have no commit date to
-// order by, so they are read alphabetically and a bounded read reaches only so
-// far. facebook/react has 945 branches whose release ones sort past that, so
-// the filter has to carry the literal head or the ref is never fetched.
-func TestPollPrefixNarrowsANameShapedMatcher(t *testing.T) {
-	tests := []struct {
-		prefix, matcher, want string
-	}{
-		{"", "release-1.5", "release-1.5"},
-		{"", "release-*", "release-"},
-		{"releases", "19.2.x", "releases/"},
-		{"", ">=1.5", ""},
-		{"api", ">=3.6", "api/"},
-		{"team", "release-*", "team/release-"},
+// TestABranchWaitNarrowsOnItsName: branches have no commit date to order by,
+// so they are read alphabetically and a bounded read reaches only so far.
+// facebook/react has 945 branches whose release ones sort past that, so
+// without the literal head the ref is never fetched at all.
+func TestABranchWaitNarrowsOnItsName(t *testing.T) {
+	w := RefWait{RepoID: "facebook/react", Kind: RefBranch, Matcher: "releases/19.2.x"}
+	// The series is a ref prefix, asked for exactly.
+	if got := w.PathPrefix; got != "" {
+		t.Errorf("PathPrefix = %q", got)
 	}
-	for _, tt := range tests {
-		got := RefWait{PathPrefix: tt.prefix, Matcher: tt.matcher}.PollPrefix()
-		if got != tt.want {
-			t.Errorf("PollPrefix(%q, %q) = %q, want %q", tt.prefix, tt.matcher, got, tt.want)
-		}
+	// And the name narrows within it.
+	if got := w.PollFilter(); got != "releases/19.2.x" {
+		t.Errorf("PollFilter() = %q, want the literal name", got)
 	}
 }

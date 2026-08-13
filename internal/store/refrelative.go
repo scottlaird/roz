@@ -176,14 +176,14 @@ type PendingRef struct {
 // Relative parses the spec back.
 func (p PendingRef) Relative() (RelativeRef, error) { return ParseRelativeRef(p.Spec) }
 
-// PollPrefix is what GitHub is asked to filter on, which is the series this
-// gate counts within.
-func (p PendingRef) PollPrefix() string {
+// Series is the path this gate counts within, which is what sync asks GitHub
+// for. Empty is the top-level one.
+func (p PendingRef) Series() string {
 	r, err := p.Relative()
-	if err != nil || r.PathPrefix == "" {
+	if err != nil {
 		return ""
 	}
-	return r.PathPrefix + "/"
+	return r.PathPrefix
 }
 
 // AddPendingRef records that an action is waiting for a release whose number

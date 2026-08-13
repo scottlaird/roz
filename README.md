@@ -1293,7 +1293,31 @@ ref name.
 A **top-level** series cannot be narrowed at all: GitHub insists a ref prefix
 end in a slash, so there is no way to ask for "tags starting with v", and a
 substring that short matches almost everything. A top-level wait against a
-monorepo therefore reads the whole namespace. That case is reported rather than left to fail quietly, since
+monorepo therefore reads the whole namespace.
+
+### Tags and branches are read differently
+
+Tags come back **newest-first**, so a wait for a release that has not happened
+yet is answered by the first page however long the history is. That is why a
+repository with 82,000 tags still costs one request per poll: the read stops as
+soon as it recognises a tag it already has, and everything below is older.
+
+Branches have no commit date to order by — GitHub offers alphabetical or
+tag-commit-date and nothing else — so they come back **alphabetically**, which
+has nothing to do with recency. A new branch sorts wherever its name falls, so
+a branch read cannot stop early: the first page would stay old and familiar for
+ever, hiding anything named late in the alphabet. Branch namespaces are
+normally small enough that this costs nothing — `aws/aws-sdk-go-v2` has 32
+branches against its 82,241 tags — and where one is not, the filter is what
+keeps it cheap.
+
+Practically: **scope a branch wait to a directory**, and the whole question
+goes away. `releases/19.2.x` asks GitHub for `refs/heads/releases/` and reads
+three branches in `facebook/react`, where the unscoped namespace holds 949.
+Release branches are not reliably namespaced in the wild — about a quarter of
+well-known projects use `release/`, the rest write `release-1.37`, `2.0.x` or
+`r2.15` — but that costs nothing here, because a wait naming a specific branch
+is its own filter either way. That case is reported rather than left to fail quietly, since
 some repositories are unreasonable: `aws/aws-sdk-go-v2` carries 82,000 tags,
 one per service release, and GitHub times out serving deep pages of a
 connection that size.

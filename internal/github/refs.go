@@ -148,9 +148,19 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 					}
 					cursors = pageResult.next
 					// A page carrying something already recorded means this
-					// read has met what the last one left. Everything below is
-					// older, so there is nothing further worth asking for.
+					// read has met what the last one left — but only where the
+					// newest come first. Everything below is then older, so
+					// there is nothing further worth asking for.
+					//
+					// Branches have no commit date to order by, so they come
+					// back alphabetically and a new one sorts wherever its name
+					// falls. Stopping on recognition there would mean a branch
+					// named late in the alphabet was never seen at all: the
+					// first page would be old and familiar for ever.
 					for i := range pageResult.recognised {
+						if !newestFirst(batch[i]) {
+							continue
+						}
 						caughtUp[i] = true
 						delete(cursors, i)
 					}
@@ -247,7 +257,7 @@ func buildRefQuery(queries []RefQuery, cursors map[int]string) (string, map[stri
 
 		owner, name, _ := strings.Cut(q.Repo, "/")
 		order := "{field: ALPHABETICAL, direction: ASC}"
-		if q.Prefix == "refs/tags/" {
+		if newestFirst(q) {
 			order = "{field: TAG_COMMIT_DATE, direction: DESC}"
 		}
 		refPrefix := q.Prefix + seriesPath(q.Path)
@@ -351,6 +361,15 @@ func decodeRefsInto(body []byte, aliases map[string]aliasedQuery, result *RefRes
 	}
 	return page, nil
 }
+
+// newestFirst reports whether this query comes back with the most recent ref
+// at the top.
+//
+// Only tags can: GitHub's RefOrderField offers ALPHABETICAL and
+// TAG_COMMIT_DATE, and a branch has no commit date. It decides both the
+// ordering asked for and whether a read may stop as soon as it recognises
+// something, because the second only follows from the first.
+func newestFirst(q RefQuery) bool { return q.Prefix == "refs/tags/" }
 
 // seriesPath renders a series for use as part of a ref prefix, which GitHub
 // insists ends in a slash. Empty stays empty: the namespace is already a

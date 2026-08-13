@@ -1079,6 +1079,60 @@ without it.
 `--team` overrides whatever is fetched, and `--approved` adds to whatever the
 pull request already reports rather than replacing it.
 
+## Who to ask
+
+`roz codeowners` says who *could* approve a change. Who to *ask* is a different
+question, and it was folklore — somebody knows that changes here go to this
+team first, and nothing wrote it down.
+
+```console
+$ roz repo prefer acme/api --prefer @org/platform,@org/storage
+acme/api prefers @org/platform → @org/storage
+
+$ roz codeowners --pr acme/api#812
+ask, in order
+  1. @org/platform   9 files  preferred, and covers outstanding files
+  2. @org/storage    3 files  preferred, and covers outstanding files
+```
+
+A preference, never an assertion. Each hint is **checked against what is
+actually outstanding** before it is used, so one that owns nothing in a
+particular change is skipped rather than asked:
+
+```console
+$ roz codeowners --pr linuxcnc-ethercat/linuxcnc-ethercat#510
+ask, in order
+  1. @grandixximo  65 files  covers outstanding files
+```
+
+`@scottlaird` is hinted there and does not appear, because that repository has
+two `*` rules and last-match-wins, so it owns nothing. That check is what stops
+a hint becoming a habit nobody revisits: the team that used to own this and has
+not for a year drops out of the answer on its own.
+
+**A hint need not appear in CODEOWNERS at all.** A team whose members all
+belong to an owning team is a usable ask, because the approval it produces
+satisfies the rule:
+
+```
+  1. @org/storage-oncall  4 files  preferred, and its members all belong to an
+                                   owner (@org/storage)
+```
+
+That is a question about membership rather than names, and it needs GitHub to
+answer. Where the membership read fails, routing carries on from CODEOWNERS
+alone and only this case is lost.
+
+A team that *partly* overlaps an owner is not routed to. "This might help,
+depending which member replies" is not something a plan should promise, and a
+partial overlap is exactly that. It is not wrong to ask them; it is wrong to
+say they will do.
+
+**Hints never override CODEOWNERS.** Ordering what is already required is safe;
+substituting for a required owner is not, so routing continues until the rules
+are satisfied whatever the hints said. Where nothing is hinted, the choice is
+the owner covering the most outstanding files.
+
 ## When a pull request falls out of the merge queue
 
 An ejected pull request is the quietest way for finished work to stall. It

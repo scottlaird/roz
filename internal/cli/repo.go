@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -33,6 +34,7 @@ func newRepoCmd() *cobra.Command {
 		newRepoShowCmd(),
 		newRepoSetCmd(),
 		newRepoListCmd(),
+		newRepoPreferCmd(),
 	)
 	return cmd
 }
@@ -404,4 +406,69 @@ func writeRepoTable(out io.Writer, repos []*store.GitHubRepo) error {
 			nullText(r.AnnounceChannel), orDash(r.Disposition))
 	}
 	return w.Flush()
+}
+
+const flagPrefer = "prefer"
+
+func newRepoPreferCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "prefer <repo>",
+		Short: "The owners to try first when routing a review",
+		Long: "`roz codeowners` can say who could approve a change. This is how a\n" +
+			"repository says who to *ask*, so the routing stops being folklore.\n\n" +
+			"  roz repo prefer acme/api --prefer @org/platform,@org/storage\n\n" +
+			"An ordered preference, checked rather than trusted: a hint that owns\n" +
+			"nothing in a particular change is skipped rather than asked, and one\n" +
+			"that owns everything makes the later tiers unnecessary. That check is\n" +
+			"what stops a hint becoming a habit nobody revisits.\n\n" +
+			"A hint need not appear in CODEOWNERS at all. A team whose members all\n" +
+			"belong to an owning team is usable, because the approval it produces\n" +
+			"satisfies the rule — which is a question about membership rather than\n" +
+			"names, and needs GitHub to answer.\n\n" +
+			"Hints never override CODEOWNERS. Ordering what is already required is\n" +
+			"safe; substituting for a required owner is not.\n\n" +
+			"--prefer \"\" clears them.",
+		Args: cobra.ExactArgs(1),
+		RunE: runRepoPrefer,
+	}
+	cmd.Flags().String(flagPrefer, "", "owners in order, comma-separated; empty clears them")
+	_ = cmd.MarkFlagRequired(flagPrefer)
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runRepoPrefer(cmd *cobra.Command, args []string) error {
+	raw, err := cmd.Flags().GetString(flagPrefer)
+	if err != nil {
+		return err
+	}
+
+	var hints []string
+	if strings.TrimSpace(raw) != "" {
+		for _, owner := range strings.Split(raw, ",") {
+			owner = strings.TrimSpace(owner)
+			if owner == "" {
+				return fmt.Errorf("--%s has an empty owner in %q", flagPrefer, raw)
+			}
+			hints = append(hints, owner)
+		}
+	}
+
+	return withActionTx(cmd, func(ctx context.Context, tx *store.Tx) error {
+		repo, err := tx.LoadGitHubRepo(ctx, args[0])
+		if err != nil {
+			return notFoundOr(err, args[0])
+		}
+		if err := tx.SetOwnerHints(ctx, repo, hints); err != nil {
+			return err
+		}
+
+		out := cmd.OutOrStdout()
+		if len(hints) == 0 {
+			fmt.Fprintf(out, "%s prefers nobody in particular\n", repo.ID)
+			return nil
+		}
+		fmt.Fprintf(out, "%s prefers %s\n", repo.ID, strings.Join(hints, " → "))
+		return nil
+	})
 }

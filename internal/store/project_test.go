@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -27,10 +30,7 @@ type loggedEvent struct {
 // pinned so timestamps are predictable.
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
-		t.Fatalf("Init() returned error: %v", err)
-	}
+	path := initFromTemplate(t)
 	db, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() returned error: %v", err)
@@ -685,4 +685,70 @@ func TestProjectIsOpen(t *testing.T) {
 			t.Errorf("%s should not be open", status)
 		}
 	}
+}
+
+var (
+	templateOnce sync.Once
+	templatePath string
+	templateErr  error
+)
+
+// initFromTemplate returns a path to a fresh initialised database, copied from
+// one migrated once for the whole test binary.
+//
+// Migrating is nearly the whole cost of these tests: replaying every migration
+// takes about two thirds of a second under -race, and with a few hundred tests
+// doing it that was the runtime — growing with every migration added, which is
+// how the suite walked into a ten minute timeout.
+//
+// A SQLite database is one file, so a copy of a migrated one is the same thing
+// as a migrated one. The migration path is still exercised for real by the
+// tests that are about migrating: TestSchemaMatchesMigrations and the rest
+// build their own databases from scratch.
+func initFromTemplate(t *testing.T) string {
+	t.Helper()
+
+	templateOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "roz-store-template")
+		if err != nil {
+			templateErr = err
+			return
+		}
+		path := filepath.Join(dir, "template.db")
+		if _, err := Init(path, testPrefixes()); err != nil {
+			templateErr = err
+			return
+		}
+		// In WAL mode the tail of what was committed lives in the sidecar, and
+		// only the main file is copied — so it is folded back in first.
+		db, err := Open(path)
+		if err != nil {
+			templateErr = err
+			return
+		}
+		defer db.Close()
+		if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			templateErr = err
+			return
+		}
+		templatePath = path
+	})
+	if templateErr != nil {
+		t.Fatalf("building the template database: %v", templateErr)
+	}
+
+	source, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatalf("reading the template database: %v", err)
+	}
+	// newDBPath nests inside a directory that does not exist, because Init
+	// creating its parent is deliberate and tested. A copy has to do the same.
+	path := newDBPath(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("making room for the test database: %v", err)
+	}
+	if err := os.WriteFile(path, source, 0o600); err != nil {
+		t.Fatalf("writing the test database: %v", err)
+	}
+	return path
 }

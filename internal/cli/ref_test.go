@@ -27,7 +27,10 @@ func observeRefs(t *testing.T, db, repo string, names ...string) {
 	defer tx.Rollback()
 
 	for _, name := range names {
-		if _, err := tx.ObserveRef(ctx, store.NewGitRef(repo, store.RefTag, name, "abc1234")); err != nil {
+		// A full-length commit, so anything that abbreviates one is actually
+		// abbreviating something.
+		sha := "abc1234def5678901234567890abcdef12345678"
+		if _, err := tx.ObserveRef(ctx, store.NewGitRef(repo, store.RefTag, name, sha)); err != nil {
 			t.Fatalf("observing %s: %v", name, err)
 		}
 	}

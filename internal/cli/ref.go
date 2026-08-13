@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -283,14 +282,50 @@ func newRefCmd() *cobra.Command {
 	return cmd
 }
 
+// refColumns is what `ref list` can show.
+//
+// Two columns are declared and the rest are the record's own. A commit is
+// shown at eight characters, which is how anybody reads one and is not
+// something the stored value should be trimmed to; and the identifier is
+// left out of the default view because it is the repository, the kind and
+// the name already shown beside it, spelled as one string.
+var refColumns = columnSet[*store.GitRef]{
+	blank: &store.GitRef{},
+	declared: []column[*store.GitRef]{
+		{name: "repo_id", header: "REPOSITORY"},
+		{
+			name: "commit_sha", header: "COMMIT",
+			render: func(r *store.GitRef, _ renderContext) string { return shortSHA(r.CommitSHA) },
+		},
+	},
+	defaults: []string{"repo_id", "kind", "name", "commit_sha", "first_seen"},
+	empty:    "no refs",
+}
+
+// shortSHA is a commit at reading length.
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
+}
+
 func newRefListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list [repo]",
 		Short: "The refs observed, optionally for one repository",
-		Args:  cobra.MaximumNArgs(1),
-		RunE:  runRefList,
+		Long: "--fields chooses the columns, and --fields all shows every one the\n" +
+			"record has rather than the handful worth a default view:\n\n" +
+			"  roz ref list --fields name,commit_sha\n" +
+			"  roz ref list --fields all\n\n" +
+			"-o csv writes the same selection for something else to read, with\n" +
+			"the column names as its header. -o json narrows to the same fields\n" +
+			"when --fields is given, and carries every column when it is not.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: runRefList,
 	}
-	addOutputFlag(cmd)
+	addListOutputFlag(cmd)
+	addFieldsFlag(cmd, refColumns)
 	return cmd
 }
 
@@ -311,27 +346,13 @@ func runRefList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	format, err := outputFrom(cmd)
+	format, err := listOutputFrom(cmd)
 	if err != nil {
 		return err
 	}
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(refs)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
+	fields, err := fieldsFrom(cmd)
+	if err != nil {
 		return err
 	}
-
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "REPOSITORY\tKIND\tNAME\tCOMMIT\tFIRST SEEN")
-	for _, r := range refs {
-		sha := r.CommitSHA
-		if len(sha) > 8 {
-			sha = sha[:8]
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.RepoID, r.Kind, r.Name, sha, shortDate(r.FirstSeen))
-	}
-	return w.Flush()
+	return writeRecords(cmd.OutOrStdout(), format, refColumns, fields, refs)
 }

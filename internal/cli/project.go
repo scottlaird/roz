@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -355,39 +354,10 @@ func writeDetail(out io.Writer, encoded []byte) error {
 	return w.Flush()
 }
 
-// detailValue renders one column's JSON for a human: absent as a dash,
-// strings unquoted, and arrays or objects left in their JSON form.
-func detailValue(raw json.RawMessage) string {
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return string(raw)
-	}
-	switch x := value.(type) {
-	case nil:
-		return "-"
-	case string:
-		if x == "" {
-			return "-"
-		}
-		return x
-	case float64:
-		return strconv.FormatFloat(x, 'f', -1, 64)
-	case []any:
-		if len(x) == 0 {
-			return "-"
-		}
-		// A list of names reads as a list of names. This is what an action's
-		// blockers looked like when `show` built that row by hand, and
-		// printing ["NA1","NA2"] instead would have been the relation
-		// declarations costing legibility to buy consistency.
-		if joined, ok := joinStrings(x); ok {
-			return joined
-		}
-		return string(raw)
-	default:
-		return string(raw)
-	}
-}
+// detailValue renders one column's JSON for a detail view, where an absent
+// value is a dash. A listing renders its cells the same way — see renderCell,
+// which this is now the one-argument case of.
+func detailValue(raw json.RawMessage) string { return renderCell(raw, "-") }
 
 // joinStrings renders a JSON array of strings as a comma-separated list,
 // reporting false for anything else — an array of objects has no obvious

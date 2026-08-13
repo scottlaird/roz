@@ -217,3 +217,23 @@ func TestChangeString(t *testing.T) {
 		t.Errorf("Change.String() = %q, want it to mention the column", got)
 	}
 }
+
+// TestColumns names a record's columns in struct order, which is what output
+// needs before it has any rows to read them off.
+//
+// Struct order and not alphabetical: identity first and the timestamps last is
+// how the entity is written, and how a table of it should read.
+func TestColumns(t *testing.T) {
+	got, err := Columns(&GitRef{})
+	if err != nil {
+		t.Fatalf("Columns() returned error: %v", err)
+	}
+	want := []string{"id", "repo_id", "name", "kind", "commit_sha", "first_seen", "observed_at"}
+	if !equalStrings(got, want) {
+		t.Errorf("Columns() = %v, want %v", got, want)
+	}
+
+	if _, err := Columns(GitRef{}); err == nil {
+		t.Error("Columns() accepted a value rather than a pointer to one")
+	}
+}

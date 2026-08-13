@@ -624,6 +624,44 @@ instantiation cannot supply — a `wait_ref` step would be created with nothing
 to wait for and would block everything behind it, which is
 [#127](https://github.com/scottlaird/roz/issues/127).
 
+**A step can say what it waits for**, which is what makes a release gate
+possible. A pipeline is written once and instantiated for every pull request,
+so the version has to be relative to wherever the repository has got to:
+
+```console
+$ roz pipeline add gated --steps "undraft,wait_ref(>=minor+2),merge"
+gated: undraft → wait_ref(>=minor+2) → merge
+```
+
+`>=minor+2` reads as "two minor releases on from here". With the repository at
+`v2.97.0` the instantiated step waits for `>=2.99.0` — and a series works as it
+does for a wait, so `wait_ref(api/>=minor+2)` counts within `api/` alone.
+
+A version named outright is refused, because it would be the same gate for
+every pull request forever:
+
+```console
+$ roz pipeline add fixed --steps "wait_ref(>=3.6)"
+Error: ">=3.6" names a version, which would be the same gate for every pull
+request; write it relative, e.g. >=minor+2
+```
+
+The gate resolves **once**, at the first sync after the chain instantiates, and
+is then fixed. It cannot resolve any earlier: what it counts from is a fact
+about the repository, and reading GitHub while closing an action would make
+closing fail whenever GitHub is slow. Resolving it again on each poll would be
+worse — every release that shipped would push the target out by one, and the
+gate would never open.
+
+```console
+$ roz sync github
+cli/cli tag: 200 recorded on the first poll
+NA3 waits for >=2.99.0 (>=minor+2)
+```
+
+The queue item is retitled to match, so it says what is being waited for rather
+than how it was worked out. A title you have since edited is left alone.
+
 **No steps is a legal chain**, and is what a repository whose pull requests you
 only review wants: closing the `review` action should produce nothing rather
 than an undraft-and-merge chain for somebody else's work.

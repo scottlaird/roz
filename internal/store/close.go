@@ -87,7 +87,11 @@ type closePlan struct {
 }
 
 type plannedStep struct {
-	verb  string
+	verb string
+	// spec is what the step waits for, where the verb needs telling. It
+	// becomes a pending gate rather than a wait: what it resolves to is a fact
+	// about the repository that has to be read first.
+	spec  string
 	title string
 }
 
@@ -200,20 +204,37 @@ func (p *closePlan) readPipeline(ctx context.Context, tx *Tx) error {
 	p.pipeline = pipeline.Name
 
 	for _, step := range pipeline.Steps {
-		verb, err := tx.LoadVerb(ctx, step)
+		verb, err := tx.LoadVerb(ctx, step.Verb)
 		if err != nil {
-			return fmt.Errorf("reading step %q of pipeline %s: %w", step, pipeline.Name, err)
+			return fmt.Errorf("reading step %q of pipeline %s: %w", step.Verb, pipeline.Name, err)
 		}
 		if satisfied(verb, pr) {
-			p.skipped = append(p.skipped, step)
+			p.skipped = append(p.skipped, step.Verb)
 			continue
 		}
 		p.steps = append(p.steps, plannedStep{
-			verb:  step,
-			title: fmt.Sprintf("%s %s", verb.Label, p.subject),
+			verb:  step.Verb,
+			spec:  step.Spec,
+			title: stepTitle(verb, step, p.subject),
 		})
 	}
 	return nil
+}
+
+// stepTitle names what the step is for.
+//
+// A step that waits for a release is not about the pull request, so titling it
+// "wait for a ref owner/repo#1" would name the wrong thing entirely. It is
+// about the repository and the release it is counting to.
+func stepTitle(verb *ActionVerb, step PipelineStep, subject string) string {
+	if step.Spec != "" {
+		repo, _, err := ParsePRKey(subject)
+		if err == nil {
+			return fmt.Sprintf("%s %s in %s", verb.Label, step.Spec, repo)
+		}
+		return fmt.Sprintf("%s %s", verb.Label, step.Spec)
+	}
+	return fmt.Sprintf("%s %s", verb.Label, subject)
 }
 
 // satisfied reports whether a step is already true of the pull request, and
@@ -262,7 +283,7 @@ func (s *Store) applyClose(ctx context.Context, actor Actor, plan *closePlan, st
 	}
 	result.Closed = a
 
-	result.Created, err = tx.instantiate(ctx, steps, plan.subject)
+	result.Created, err = tx.instantiate(ctx, steps, plan.steps, plan.subject)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +352,10 @@ func stateForReason(reason string) string {
 // Chaining them at creation is what makes the rest mechanical: closing a step
 // frees the next through the same unblocking every other action gets, so
 // there is no separate notion of "advancing a pipeline" to keep correct.
-func (t *Tx) instantiate(ctx context.Context, steps []*Action, subject string) ([]*Action, error) {
+func (t *Tx) instantiate(ctx context.Context, steps []*Action, planned []plannedStep,
+	subject string) ([]*Action, error) {
+
+	repo, _, repoErr := ParsePRKey(subject)
 	for i, a := range steps {
 		if err := t.Insert(ctx, a); err != nil {
 			return nil, err
@@ -341,6 +365,21 @@ func (t *Tx) instantiate(ctx context.Context, steps []*Action, subject string) (
 		}
 		if i > 0 {
 			if err := t.AddBlocker(ctx, steps[i-1], a); err != nil {
+				return nil, err
+			}
+		}
+
+		// A step that waits for a release becomes a gate rather than a wait.
+		// What it resolves to is a fact about the repository, and reading that
+		// here would mean a network call inside closing an action.
+		if spec := planned[i].spec; spec != "" {
+			if repoErr != nil {
+				return nil, fmt.Errorf("%s waits for %s, but %q names no repository",
+					a.ID, spec, subject)
+			}
+			if err := t.AddPendingRef(ctx, PendingRef{
+				ActionID: a.ID, RepoID: repo, Kind: RefTag, Spec: spec,
+			}); err != nil {
 				return nil, err
 			}
 		}

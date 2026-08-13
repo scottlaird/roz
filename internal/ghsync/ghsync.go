@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/scottlaird/roz/internal/github"
 	"github.com/scottlaird/roz/internal/store"
@@ -52,6 +53,10 @@ type Result struct {
 	// something open already covered merging it.
 	Ejected []store.Ejected
 
+	// Resolved lists the release gates given a concrete version this poll.
+	// A gate instantiates without one, since working it out needs the
+	// repository's tags read first.
+	Resolved []store.Resolved
 	// NewRefs lists the branches and tags that appeared since the last poll.
 	// A release being cut is news whether or not it satisfied anything.
 	//
@@ -192,6 +197,20 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 	if err != nil {
 		return err
 	}
+	// A gate with no version yet is also a reason to read a repository — the
+	// only reason, in fact, since nothing is waiting on it until it resolves.
+	// Without this the tags it counts from would never be fetched.
+	pending, err := st.PendingRefs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range pending {
+		waits = append(waits, store.RefWait{
+			RepoID: p.RepoID, Kind: p.Kind,
+			PathPrefix: strings.TrimSuffix(p.PollPrefix(), "/"),
+			Matcher:    ">=0.0.0",
+		})
+	}
 	queries, err := refQueries(ctx, st, waits)
 	if err != nil {
 		return err
@@ -244,6 +263,18 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 
 	// Reported to the caller only when it was reported to the log, so a
 	// syncer polling every few seconds does not restate it either.
+	// Resolved after the refs are recorded, so a gate written a moment ago is
+	// answered by this poll rather than the next one.
+	for _, p := range pending {
+		resolved, err := st.ResolvePendingRef(ctx, p)
+		if err != nil {
+			return err
+		}
+		if resolved != nil {
+			result.Resolved = append(result.Resolved, *resolved)
+		}
+	}
+
 	for _, t := range fetched.Truncated {
 		reported, err := reportTruncated(ctx, st, t)
 		if err != nil {

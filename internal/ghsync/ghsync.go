@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/scottlaird/roz/internal/github"
 	"github.com/scottlaird/roz/internal/store"
@@ -207,7 +206,7 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 	for _, p := range pending {
 		waits = append(waits, store.RefWait{
 			RepoID: p.RepoID, Kind: p.Kind,
-			PathPrefix: strings.TrimSuffix(p.PollPrefix(), "/"),
+			PathPrefix: p.Series(),
 			Matcher:    ">=0.0.0",
 		})
 	}
@@ -358,12 +357,12 @@ func firstPollOf(ctx context.Context, st *store.Store, queries []github.RefQuery
 // asking once is the difference between a query per item and a query per
 // repository.
 func refQueries(ctx context.Context, st *store.Store, waits []store.RefWait) ([]github.RefQuery, error) {
-	type key struct{ repo, prefix, contains string }
+	type key struct{ repo, prefix, path, contains string }
 
 	seen := map[key]bool{}
 	var queries []github.RefQuery
 	for _, w := range waits {
-		k := key{w.RepoID, store.RefPath(w.Kind, ""), w.PollPrefix()}
+		k := key{w.RepoID, store.RefPath(w.Kind, ""), w.PathPrefix, w.PollFilter()}
 		if seen[k] {
 			continue
 		}
@@ -380,6 +379,7 @@ func refQueries(ctx context.Context, st *store.Store, waits []store.RefWait) ([]
 		queries = append(queries, github.RefQuery{
 			Repo:     k.repo,
 			Prefix:   k.prefix,
+			Path:     k.path,
 			Contains: k.contains,
 			Known: func(name string) bool {
 				return known[name]

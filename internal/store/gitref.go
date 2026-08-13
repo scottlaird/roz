@@ -220,32 +220,27 @@ func (w RefWait) Describe() string {
 	return fmt.Sprintf("%s %s %s", w.RepoID, w.Kind, w.Spec())
 }
 
-// PollPrefix is what GitHub is asked to filter on.
+// PollFilter is the substring GitHub is asked to narrow on, beyond the series
+// itself.
 //
-// The path prefix, plus the literal head of a name-shaped matcher. An
-// optimisation and never a filter: whatever comes back is matched again here,
-// so this may only ever be *narrower* than the truth by nothing at all.
+// The series is a ref prefix and is asked for exactly; this is the leftover
+// question of narrowing *within* one, and only a name-shaped matcher has an
+// answer. A constraint contributes nothing — `>=1.2` is not a substring of any
+// ref name.
 //
-// The literal head is what makes a branch wait work at all in a busy
-// repository. Branches have no commit date to order by, so they are read
-// alphabetically, and `facebook/react` carries 945 of them: its release
-// branches sort past anything a bounded read reaches. Asking GitHub for
-// `release-` instead turns that into three.
+// It is what makes a branch wait work at all in a busy repository. Branches
+// have no commit date to order by, so they are read alphabetically, and
+// `facebook/react` carries 945 of them: its release branches sort past
+// anything a bounded read reaches. Asking GitHub for `release-` turns that
+// into three.
 //
-// A constraint contributes nothing here — `>=1.2` is not a substring of any
-// ref name — so a wait with a constraint and no path prefix yields "", which
-// is the top-level-monorepo case reported as truncated rather than narrowed.
-// That is the reason polling targets belong on the repository,
-// scottlaird/roz#128, rather than being squeezed out of a wait.
-func (w RefWait) PollPrefix() string {
-	prefix := ""
-	if w.PathPrefix != "" {
-		prefix = w.PathPrefix + "/"
-	}
+// An optimisation and never a filter: whatever comes back is matched again
+// here, so being too broad costs a larger response and nothing else.
+func (w RefWait) PollFilter() string {
 	if _, isConstraint := w.Constraint(); isConstraint {
-		return prefix
+		return ""
 	}
-	return prefix + literalHead(w.Matcher)
+	return literalHead(w.Matcher)
 }
 
 // literalHead is the leading part of a glob that contains no wildcard.

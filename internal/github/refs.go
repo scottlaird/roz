@@ -33,13 +33,22 @@ const RefMaxPages = 5
 
 // RefQuery asks for the refs under one prefix in one repository.
 //
-// Prefix is a full ref namespace, refs/tags/ or refs/heads/. Contains narrows
-// further and is an optimisation only: the caller matches its own pattern
-// against whatever comes back, so a Contains that is too broad costs a larger
-// response and nothing else.
+// Prefix is a ref namespace, refs/tags/ or refs/heads/. Path narrows it to one
+// series within that namespace — "service/s3" — and is a *prefix* match rather
+// than a substring one, so it returns exactly what is under it. GitHub insists
+// a ref prefix end in a slash, which is why a series can be asked for and a
+// bare `v` cannot.
+//
+// Contains is the substring filter, and is for a name-shaped matcher whose
+// literal head is worth narrowing on. It is an optimisation only: the caller
+// matches its own pattern against whatever comes back, so a Contains that is
+// too broad costs a larger response and nothing else.
 type RefQuery struct {
-	Repo     string // owner/name
-	Prefix   string
+	Repo   string // owner/name
+	Prefix string
+	// Path is the series, without a trailing slash. Empty is the whole
+	// namespace, which for a monorepo is everything anybody has ever tagged.
+	Path     string
 	Contains string
 
 	// Known reports whether a ref has already been recorded, and is what
@@ -53,9 +62,15 @@ type RefQuery struct {
 
 // Ref is one branch or tag as GitHub reports it.
 type Ref struct {
-	Repo   string
+	Repo string
+	// Prefix is the namespace, refs/tags/ or refs/heads/, and never the
+	// series: what kind of ref this is should not depend on how it was asked
+	// for.
 	Prefix string
-	// Name is the short form: GitHub returns refs under a prefix without it.
+	// Name is the short form, including its series: service/s3/v1.107.0.
+	// GitHub returns a name with the whole ref prefix stripped, so the series
+	// is put back here — a ref's name is what it is called, not what was left
+	// after the question.
 	Name      string
 	CommitSHA string
 }
@@ -235,6 +250,7 @@ func buildRefQuery(queries []RefQuery, cursors map[int]string) (string, map[stri
 		if q.Prefix == "refs/tags/" {
 			order = "{field: TAG_COMMIT_DATE, direction: DESC}"
 		}
+		refPrefix := q.Prefix + seriesPath(q.Path)
 		// totalCount only on the first page. It is read once, and asking a
 		// large connection to count itself on every page is work for nothing.
 		after, count := "", "    totalCount\n"
@@ -245,7 +261,7 @@ func buildRefQuery(queries []RefQuery, cursors map[int]string) (string, map[stri
 			"  %s: repository(owner: %q, name: %q) { refs(refPrefix: %q, query: %q, first: %d, orderBy: %s%s) {\n"+
 				"%s    pageInfo { hasNextPage endCursor }\n"+
 				"    nodes { name target { oid } }\n  } }\n",
-			alias, owner, name, q.Prefix, q.Contains, RefPageSize, order, after, count)
+			alias, owner, name, refPrefix, q.Contains, RefPageSize, order, after, count)
 	}
 	b.WriteString("}\n")
 
@@ -320,16 +336,28 @@ func decodeRefsInto(body []byte, aliases map[string]aliasedQuery, result *RefRes
 			if node.Name == "" || node.Target.OID == "" {
 				continue
 			}
-			if q.Known != nil && q.Known(node.Name) {
+			if q.Known != nil && q.Known(seriesPath(q.Path)+node.Name) {
 				page.recognised[aq.index] = true
 			}
 			result.Refs = append(result.Refs, Ref{
-				Repo:      q.Repo,
-				Prefix:    q.Prefix,
-				Name:      node.Name,
+				Repo:   q.Repo,
+				Prefix: q.Prefix,
+				// GitHub strips the whole ref prefix, series included, so the
+				// series goes back on: the name is what the ref is called.
+				Name:      seriesPath(q.Path) + node.Name,
 				CommitSHA: node.Target.OID,
 			})
 		}
 	}
 	return page, nil
+}
+
+// seriesPath renders a series for use as part of a ref prefix, which GitHub
+// insists ends in a slash. Empty stays empty: the namespace is already a
+// prefix in its own right.
+func seriesPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return path + "/"
 }

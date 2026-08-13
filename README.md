@@ -1282,10 +1282,18 @@ branch wait work is the filter rather than the order. `facebook/react` has 945
 branches whose release ones sort well past any bounded read; asking GitHub for
 `releases/` narrows that to three.
 
-So the filter carries the path prefix and the literal head of a name-shaped
-expression. A constraint contributes nothing to it — `>=1.2` is not a substring
-of any ref name — which is why a top-level wait against a monorepo has nothing
-to narrow on. That case is reported rather than left to fail quietly, since
+A series is asked for as a **ref prefix**, so it returns exactly what is under
+it. The substring filter GitHub also offers is approximate — asking it for
+`service/s3/` in `aws/aws-sdk-go-v2` returns 321 refs where a prefix returns
+the 301 that are actually there — and it is kept only for narrowing *within* a
+series, where a name-shaped expression has a literal head worth using. A
+constraint contributes nothing to it, since `>=1.2` is not a substring of any
+ref name.
+
+A **top-level** series cannot be narrowed at all: GitHub insists a ref prefix
+end in a slash, so there is no way to ask for "tags starting with v", and a
+substring that short matches almost everything. A top-level wait against a
+monorepo therefore reads the whole namespace. That case is reported rather than left to fail quietly, since
 some repositories are unreasonable: `aws/aws-sdk-go-v2` carries 82,000 tags,
 one per service release, and GitHub times out serving deep pages of a
 connection that size.

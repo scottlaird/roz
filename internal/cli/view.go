@@ -432,7 +432,7 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		Verb:      a.Verb,
 		State:     a.State,
 		RankClass: rank[a.Verb],
-		Project:   projectLink(a.ProjectID),
+		Project:   projectLink(a.ProjectID, text),
 		Age:       age(a, now),
 		Expired:   expired(a.SnoozeUntil, now),
 		Late:      lateLabel(late, a.ID),
@@ -514,12 +514,18 @@ func issueViews(issues []*store.TrackerIssue, base string) []issueView {
 //
 // Every project has one, whether or not it is in the table above, which is
 // what makes this unconditional: the anchor is wherever the project is.
-func projectLink(id sql.NullString) template.HTML {
+// projectLink renders the project an action advances.
+//
+// Through the linker rather than built here, so it gets what every other
+// reference gets: the title of what it points at, as a tooltip. Hand-building
+// the anchor meant this one link — the most-clicked on the page — was the only
+// identifier without one, because the tooltip lives in the linker and nothing
+// else knew to add it.
+func projectLink(id sql.NullString, text *prose) template.HTML {
 	if !id.Valid || id.String == "" {
 		return "-"
 	}
-	return template.HTML(`<a href="#` + template.HTMLEscapeString(id.String) + `">` +
-		template.HTMLEscapeString(id.String) + `</a>`)
+	return text.links.Text(id.String)
 }
 
 // age is the short chip on the right of a queue item: what state it is in and

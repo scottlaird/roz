@@ -690,7 +690,14 @@ func runActionList(cmd *cobra.Command, _ []string) error {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
 		return err
 	}
-	return writeActionTable(cmd.OutOrStdout(), actions)
+	// How late each one is, so an allowance on a verb whose actions stay in
+	// the queue means something visible. Those get a mark rather than a second
+	// item about themselves, and the column is where the mark lands.
+	late, err := st.LateActions(ctx)
+	if err != nil {
+		return err
+	}
+	return writeActionTable(cmd.OutOrStdout(), actions, late)
 }
 
 func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
@@ -739,7 +746,7 @@ func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
 	}, nil
 }
 
-func writeActionTable(out io.Writer, actions []*store.Action) error {
+func writeActionTable(out io.Writer, actions []*store.Action, late map[string]int) error {
 	if len(actions) == 0 {
 		fmt.Fprintln(out, "no actions")
 		return nil
@@ -747,13 +754,32 @@ func writeActionTable(out io.Writer, actions []*store.Action) error {
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	now := time.Now().UTC().Format(store.TimeFormat)
-	fmt.Fprintln(w, "ID\tSTATE\tVERB\tPROJECT\tSNOOZED UNTIL\tTITLE")
+	fmt.Fprintln(w, "ID\tSTATE\tVERB\tPROJECT\tSNOOZED UNTIL\tLATE\tTITLE")
 	for _, a := range actions {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			a.ID, a.State, a.Verb, nullText(a.ProjectID),
-			snoozeCell(a.SnoozeUntil, now), a.Title)
+			snoozeCell(a.SnoozeUntil, now), lateCell(late, a.ID), a.Title)
 	}
 	return w.Flush()
+}
+
+// lateCell renders how far past its allowance an action is.
+//
+// Presence in the map is what says late, not the number: a deadline missed an
+// hour ago is nought days past it and still missed, and rendering that as "not
+// late" would hide the first day of every one of these.
+func lateCell(late map[string]int, id string) string {
+	days, ok := late[id]
+	switch {
+	case !ok:
+		return "-"
+	case days == 0:
+		return "today"
+	case days == 1:
+		return "1 day"
+	default:
+		return fmt.Sprintf("%d days", days)
+	}
 }
 
 // The edges. Closing walks these: see close.go for the cascade.

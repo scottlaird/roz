@@ -177,6 +177,11 @@ type actionView struct {
 	PRs       []prView
 	Issues    []issueView
 	Expired   bool
+	// Late is how many days past its allowance this action is, empty when it
+	// is not. An action already in the queue is told about by marking it here
+	// rather than by raising a second item about itself, so without this the
+	// allowance on a verb like `merge` would say nothing anybody could see.
+	Late string
 }
 
 // noteView is one keyed prose block, rendered.
@@ -325,13 +330,17 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		})
 	}
 
+	late, err := st.LateActions(ctx)
+	if err != nil {
+		return content, err
+	}
 	for _, a := range queue {
 		content.Queue = append(content.Queue,
-			actionRow(a, rank, prsByAction, issuesByProject, text, stamp))
+			actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late))
 	}
 	for _, a := range waiting {
 		content.Waiting = append(content.Waiting,
-			actionRow(a, rank, prsByAction, issuesByProject, text, stamp))
+			actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late))
 	}
 
 	openPerProject := map[string]int{}
@@ -345,7 +354,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	for _, a := range remaining(everyAction, func(a *store.Action) string { return a.ID },
 		ids(queue), ids(waiting)) {
 		content.Elsewhere = append(content.Elsewhere,
-			actionRow(a, rank, prsByAction, issuesByProject, text, stamp))
+			actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late))
 	}
 
 	for _, p := range projects {
@@ -411,7 +420,8 @@ func projectIDs(projects []*store.Project) []string {
 }
 
 func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.ActionPR,
-	issues map[string][]*store.TrackerIssue, text *prose, now string) actionView {
+	issues map[string][]*store.TrackerIssue, text *prose, now string,
+	late map[string]int) actionView {
 
 	view := actionView{
 		ID: a.ID,
@@ -425,6 +435,7 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		Project:   projectLink(a.ProjectID),
 		Age:       age(a, now),
 		Expired:   expired(a.SnoozeUntil, now),
+		Late:      lateLabel(late, a.ID),
 	}
 	for _, p := range prs[a.ID] {
 		view.PRs = append(view.PRs, prRow(p))
@@ -563,4 +574,23 @@ func shortDate(stamp string) string {
 		return stamp[:10]
 	}
 	return stamp
+}
+
+// lateLabel renders how far past its allowance an action is, empty when it is
+// not late at all.
+//
+// Presence in the map is what says late, not the number: a deadline missed an
+// hour ago is nought days past it and still missed.
+func lateLabel(late map[string]int, id string) string {
+	days, ok := late[id]
+	switch {
+	case !ok:
+		return ""
+	case days == 0:
+		return "late"
+	case days == 1:
+		return "1 day late"
+	default:
+		return fmt.Sprintf("%d days late", days)
+	}
 }

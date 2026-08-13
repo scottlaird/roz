@@ -1060,6 +1060,24 @@ with no off switch is worse than none, because it teaches you to ignore the
 queue. The cost is that a condition recurring long after it was dealt with
 produces nothing new, and the log still has every firing.
 
+An overdue item gets a second one *only if the queue leaves it out*. A wait is
+excluded by design, so without a `decide` there would be nothing at all to see;
+anything else is already in the queue, and a second row about it would be two
+items for one job — the second not clearable by doing the first. The test is
+the rank class, not how the verb closes: `merge` closes on a predicate, carries
+an allowance of a day, and sits in the queue like anything else.
+
+Those are marked rather than duplicated, in the listing and on the page:
+
+```console
+$ roz action list
+ID   STATE  VERB   PROJECT  SNOOZED UNTIL  LATE     TITLE
+NA1  ready  merge  -        -              11 days  merge the thing
+```
+
+Being in that column is what says late; the number only says by how much. A
+deadline missed an hour ago is nought days past it and still missed.
+
 **Reported, never changed.** Nothing is closed, snoozed or reprioritised —
 what to do about a stuck wait is a judgement, and this only says one is
 wanted. **It is not a snooze:** a snooze hides something until a date, this

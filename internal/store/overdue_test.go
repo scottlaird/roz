@@ -585,3 +585,119 @@ func observeWaitingSince(t *testing.T, st *Store, a *Action, since string) {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 }
+
+// TestAnItemAlreadyInTheQueueIsNotDuplicated: raising a second action about
+// work somebody can already see is two rows for one job, and the second cannot
+// be cleared by doing the first.
+//
+// The test is the rank class rather than how the verb closes. `merge` closes
+// on a predicate and carries an allowance of one day, and it sits in the queue
+// like any other item — so it needed no twin either, which is why this was not
+// only a problem for human-closed verbs.
+func TestAnItemAlreadyInTheQueueIsNotDuplicated(t *testing.T) {
+	st := newStore(t)
+	a := waitingAction(t, st, "merge", "2026-08-01T00:00:00.000Z")
+
+	found := overdueNow(t, st, "2026-08-05T00:00:00.000Z")
+	if len(found) != 1 || found[0].Action.ID != a.ID {
+		t.Fatalf("overdue = %v, want [%s]", found, a.ID)
+	}
+	if !found[0].InQueue() {
+		t.Fatal("a merge was treated as invisible in the queue")
+	}
+	if found[0].Raised != nil {
+		t.Errorf("raised %s about an action already in the queue", found[0].Raised.ID)
+	}
+
+	// The exception is still logged: being late on work you owe is worth
+	// recording, it just does not need a second item about it.
+	events, err := st.Events(context.Background(), EventQuery{Severity: SeverityException})
+	if err != nil {
+		t.Fatalf("Events() returned error: %v", err)
+	}
+	if len(events) != 1 || events[0].SubjectID != a.ID {
+		t.Errorf("logged %d exceptions, want one against %s", len(events), a.ID)
+	}
+}
+
+// TestAWaitStillRaisesOne, because that is what the mechanism is for: a wait
+// is left out of the queue deliberately, so without a second item there is
+// nothing at all to see.
+func TestAWaitStillRaisesOne(t *testing.T) {
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	found := overdueNow(t, st, "2026-08-05T00:00:00.000Z")
+	if len(found) != 1 {
+		t.Fatalf("overdue = %v, want one", found)
+	}
+	if found[0].InQueue() {
+		t.Fatal("a wait was treated as visible in the queue")
+	}
+	if found[0].Raised == nil {
+		t.Fatalf("nothing was raised about %s, which the queue leaves out", a.ID)
+	}
+}
+
+// TestLateActionsReportsWhatIsStillLate: a listing shows a state, so unlike
+// the reporting pass this answers again every time it is asked.
+func TestLateActionsReportsWhatIsStillLate(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	a := waitingAction(t, st, "merge", "2026-08-01T00:00:00.000Z")
+
+	st.now = func() time.Time { return at(t, "2026-08-03T00:00:00.000Z") }
+	late, err := st.LateActions(ctx)
+	if err != nil {
+		t.Fatalf("LateActions() returned error: %v", err)
+	}
+	if _, ok := late[a.ID]; !ok {
+		t.Errorf("%s is a day past a one-day allowance and is not listed late", a.ID)
+	}
+
+	// Asked twice, it still says so — the reporting pass goes quiet after the
+	// first time and a listing must not.
+	overdueNow(t, st, "2026-08-03T00:00:00.000Z")
+	again, err := st.LateActions(ctx)
+	if err != nil {
+		t.Fatalf("LateActions() returned error: %v", err)
+	}
+	if _, ok := again[a.ID]; !ok {
+		t.Errorf("%s stopped being listed late once it had been reported", a.ID)
+	}
+	if got := again[a.ID]; got != 1 {
+		t.Errorf("late by %d days, want 1", got)
+	}
+}
+
+// TestADeadlineMissedByAnHourIsStillLate: whole days are how this is phrased,
+// not how it is decided. Rounding to zero and treating zero as "not late"
+// would hide the first day of every one of these.
+func TestADeadlineMissedByAnHourIsStillLate(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	// merge allows one day, so the deadline is 2026-08-02T00:00.
+	a := waitingAction(t, st, "merge", "2026-08-01T00:00:00.000Z")
+
+	st.now = func() time.Time { return at(t, "2026-08-01T23:00:00.000Z") }
+	late, err := st.LateActions(ctx)
+	if err != nil {
+		t.Fatalf("LateActions() returned error: %v", err)
+	}
+	if _, ok := late[a.ID]; ok {
+		t.Errorf("%s is late an hour before its deadline", a.ID)
+	}
+
+	st.now = func() time.Time { return at(t, "2026-08-02T01:00:00.000Z") }
+	late, err = st.LateActions(ctx)
+	if err != nil {
+		t.Fatalf("LateActions() returned error: %v", err)
+	}
+	days, ok := late[a.ID]
+	if !ok {
+		t.Fatalf("%s is an hour past its deadline and is not listed late", a.ID)
+	}
+	if days != 0 {
+		t.Errorf("late by %d days, want 0 — it is late, and not by a day yet", days)
+	}
+}

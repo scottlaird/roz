@@ -181,15 +181,16 @@ func (s *Store) ObserveTrackerIssues(ctx context.Context, actor Actor, observati
 // applyTrackerObservation writes one observation onto one issue, creating it if
 // this is the first time it has been seen.
 //
-// synced_at moves whether or not anything else did, which is the point of
-// having it: "nothing has changed since Tuesday" and "nobody has looked since
-// Tuesday" are different, and only this column tells them apart.
+// synced_at moves with the state rather than with the reading, which is the
+// same trade pr.last_synced_at makes and for the same reason: a poll every
+// fifteen seconds would otherwise write a row and log an event per issue per
+// cycle, and bury every real transition under a heartbeat. So it means "when
+// the stored state last changed".
+//
+// A caller that states a time is different, and keeps the older meaning: an
+// import saying an issue was read on Tuesday is asserting a fact about when
+// somebody looked, not reporting that nothing has happened since.
 func (t *Tx) applyTrackerObservation(ctx context.Context, o TrackerObservation) (*TrackerApplied, error) {
-	syncedAt := o.SyncedAt
-	if syncedAt == "" {
-		syncedAt = t.at
-	}
-
 	projects, err := t.ProjectsForIssue(ctx, o.ID())
 	if err != nil {
 		return nil, err
@@ -202,7 +203,8 @@ func (t *Tx) applyTrackerObservation(ctx context.Context, o TrackerObservation) 
 			return nil, err
 		}
 		issue := NewTrackerIssue(o.Tracker, o.Key)
-		assign(issue, o, syncedAt)
+		assign(issue, o)
+		issue.SyncedAt = sql.NullString{String: t.timeOf(o), Valid: true}
 		if err := t.Insert(ctx, issue); err != nil {
 			return nil, err
 		}
@@ -211,7 +213,19 @@ func (t *Tx) applyTrackerObservation(ctx context.Context, o TrackerObservation) 
 	}
 
 	after := before.Clone()
-	assign(after, o, syncedAt)
+	assign(after, o)
+
+	// Whether the reading is worth recording depends on whether it found
+	// anything, so the state has to be diffed before synced_at is touched —
+	// stamping it first would make every observation look like a change.
+	moved, err := diff(before, after)
+	if err != nil {
+		return nil, err
+	}
+	if len(moved) > 0 || o.SyncedAt != "" {
+		after.SyncedAt = sql.NullString{String: t.timeOf(o), Valid: true}
+	}
+
 	changes, err := t.Update(ctx, before, after)
 	if err != nil {
 		return nil, err
@@ -220,9 +234,21 @@ func (t *Tx) applyTrackerObservation(ctx context.Context, o TrackerObservation) 
 	return applied, nil
 }
 
+// timeOf is when an observation says it was made, defaulting to the
+// transaction's own time.
+func (t *Tx) timeOf(o TrackerObservation) string {
+	if o.SyncedAt != "" {
+		return o.SyncedAt
+	}
+	return t.at
+}
+
 // assign copies the fields the tracker actually mentioned. An invalid value is
 // not a claim, so it leaves what was there — absence is not a fact.
-func assign(issue *TrackerIssue, o TrackerObservation, syncedAt string) {
+//
+// synced_at is the caller's, since whether a reading counts as news is not
+// something this can see.
+func assign(issue *TrackerIssue, o TrackerObservation) {
 	if o.Summary.Valid {
 		issue.Summary = o.Summary.String
 	}
@@ -235,7 +261,6 @@ func assign(issue *TrackerIssue, o TrackerObservation, syncedAt string) {
 	if o.Assignee.Valid {
 		issue.Assignee = o.Assignee
 	}
-	issue.SyncedAt = sql.NullString{String: syncedAt, Valid: true}
 }
 
 // LinkProjectIssue records that a project tracks an issue. Idempotent: linking

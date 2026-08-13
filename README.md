@@ -333,9 +333,16 @@ Every tracked issue is read on every poll, batched into the same kind of
 aliased GraphQL query the pull requests use, and written through the same path
 `roz issue observe` writes through — a poll and a person typing are the same
 kind of act, an observation about somebody else's tracker, and the only thing
-that differs is the actor recorded against it. Reading one again says nothing:
-`synced_at` moves every time and is not reported, so a syncer left running
-stays quiet until something actually changes.
+that differs is the actor recorded against it. Reading one again says nothing
+at all: a reading that found no change writes nothing and logs nothing, so a
+syncer polling every fifteen seconds stays quiet until something moves.
+
+That makes `synced_at` mean *when the stored state last changed*, which is the
+same trade `pr.last_synced_at` makes and for the same reason — the alternative
+is a row written and an event logged per issue per cycle, burying every real
+transition under a heartbeat. A caller that states a time keeps the older
+meaning: `roz issue observe --at` records when somebody looked, because that
+is a fact being asserted rather than a poll finding nothing.
 
 The status is GitHub's own word. `OPEN` and `CLOSED` are not translated into a
 vocabulary roz prefers, because the column holds what a tracker said and no

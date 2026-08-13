@@ -482,8 +482,14 @@ func prRow(p store.ActionPR) prView {
 	if p.Frozen {
 		parts = append(parts, "frozen")
 	}
+	// Who GitHub was asked for, and who the files say is needed. They differ
+	// where a repository does not enforce CODEOWNERS: GitHub requests nobody
+	// while the file still describes who ought to look, which is exactly the
+	// case where saying so is worth something.
 	if teams := jsonList(p.ReviewerTeams); len(teams) > 0 {
 		parts = append(parts, "waiting on "+strings.Join(teams, ", "))
+	} else if owners := outstandingOwners(p.PR); len(owners) > 0 {
+		parts = append(parts, "needs "+strings.Join(owners, ", "))
 	}
 	view.Status = strings.Join(parts, " · ")
 	return view
@@ -593,4 +599,31 @@ func lateLabel(late map[string]int, id string) string {
 	default:
 		return fmt.Sprintf("%d days late", days)
 	}
+}
+
+// outstandingOwners is who a pull request still needs: the owners its files
+// require, less anyone whose approval already covers them.
+//
+// A rough subtraction rather than the real one. Reducing properly means
+// expanding an approver into the teams they belong to, which is a live read of
+// GitHub — see `roz codeowners`. This is the page, so it says the useful half
+// without a network call: an owner who has approved under their own name is
+// dropped, and one covered only through a team is not.
+func outstandingOwners(p *store.PR) []string {
+	required := jsonList(p.RequiredOwners)
+	if len(required) == 0 {
+		return nil
+	}
+	approved := map[string]bool{}
+	for _, login := range jsonList(p.Approvals) {
+		approved["@"+login] = true
+	}
+
+	out := make([]string, 0, len(required))
+	for _, owner := range required {
+		if !approved[owner] {
+			out = append(out, owner)
+		}
+	}
+	return out
 }

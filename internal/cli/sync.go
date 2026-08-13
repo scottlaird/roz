@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -79,6 +80,9 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	}
 	for _, key := range sortedKeys(result.Backfilled) {
 		fmt.Fprintf(out, "%s: %d recorded on the first poll\n", key, result.Backfilled[key])
+	}
+	for _, o := range result.Owners {
+		fmt.Fprintf(out, "%s needs %s\n", o.PR, ownersText(o.Required))
 	}
 	for _, r := range result.Resolved {
 		fmt.Fprintf(out, "%s waits for %s (%s)\n", r.ActionID, r.Wait.Spec(), r.Spec)
@@ -184,4 +188,13 @@ func reportOverdue(out io.Writer, overdue []store.Overdue) {
 			fmt.Fprintf(out, "  %s added to the queue\n", o.Raised.ID)
 		}
 	}
+}
+
+// ownersText renders who a pull request needs, saying so when the answer is
+// nobody rather than printing an empty list.
+func ownersText(owners []string) string {
+	if len(owners) == 0 {
+		return "nobody: no CODEOWNERS rule covers what it touches"
+	}
+	return strings.Join(owners, ", ")
 }

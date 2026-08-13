@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -357,7 +356,7 @@ func writeDetail(out io.Writer, encoded []byte) error {
 // detailValue renders one column's JSON for a detail view, where an absent
 // value is a dash. A listing renders its cells the same way — see renderCell,
 // which this is now the one-argument case of.
-func detailValue(raw json.RawMessage) string { return renderCell(raw, "-") }
+func detailValue(raw json.RawMessage) string { return renderCell(raw, detailStyle) }
 
 // joinStrings renders a JSON array of strings as a comma-separated list,
 // reporting false for anything else — an array of objects has no obvious
@@ -657,7 +656,7 @@ func newProjectListCmd() *cobra.Command {
 	f.Bool(flagTree, false,
 		"draw the hierarchy, indenting each project under the one it is part of")
 	addSortFlag(cmd)
-	addOutputFlag(cmd)
+	addListingFlags(cmd, projectColumns)
 	return cmd
 }
 
@@ -670,10 +669,6 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	filter, err := projectFilterFrom(cmd)
 	if err != nil {
 		return err
@@ -683,10 +678,6 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if format == outputJSON {
-		return writeProjectJSON(cmd.OutOrStdout(), projects)
-	}
-
 	tree, err := cmd.Flags().GetBool(flagTree)
 	if err != nil {
 		return err
@@ -694,7 +685,7 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	if !tree {
 		// Flat by default: most projects have no parent, and a hierarchy of
 		// one level is a list with extra ceremony.
-		return writeProjectTable(cmd.OutOrStdout(), projects)
+		return runListing(cmd, projectColumns, flatNodes(projects), renderContext{})
 	}
 
 	// A filtered list can name a parent it does not contain — showing only
@@ -704,18 +695,44 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	return writeProjectNodes(cmd.OutOrStdout(), store.Tree(connected))
+	return runListing(cmd, projectColumns, store.Tree(connected), renderContext{})
 }
 
-// writeProjectJSON emits an array, empty rather than null when there is
-// nothing, so a consumer can iterate without a nil check.
-func writeProjectJSON(out io.Writer, projects []*store.Project) error {
-	encoded, err := store.MarshalRecords(projects)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(out, string(encoded))
-	return err
+// projectColumns is what `project list` can show.
+//
+// Its rows are tree nodes rather than projects: a node is a project and how
+// deep it sits, and the depth is what the title is indented by. So the set
+// says where the record is, and everything but the title reads off it as
+// usual.
+//
+// The title carries the indentation rather than the identifier, because
+// indenting that would make the column unreadable down the page and unusable
+// to copy out of, which is most of what anybody does with it.
+var projectColumns = columnSet[store.TreeNode]{
+	blank:  store.TreeNode{Project: &store.Project{}},
+	record: func(n store.TreeNode) any { return n.Project },
+	declared: []column[store.TreeNode]{
+		{name: "priority", header: "PRI"},
+		{
+			name: "snooze_until", header: "SNOOZED UNTIL",
+			render: func(n store.TreeNode, ctx renderContext) string {
+				return snoozeCell(n.Project.SnoozeUntil, ctx.now)
+			},
+		},
+		{
+			name: "title",
+			render: func(n store.TreeNode, _ renderContext) string {
+				title := strings.Repeat("  ", n.Depth) + n.Project.Title
+				if n.Context {
+					// Shown to hold its children up, not because it is live.
+					title += "  (closed)"
+				}
+				return title
+			},
+		},
+	},
+	defaults: []string{"id", "status", "priority", "effort", "snooze_until", "title"},
+	empty:    "no projects",
 }
 
 func projectFilterFrom(cmd *cobra.Command) (store.ProjectFilter, error) {
@@ -742,10 +759,6 @@ func projectFilterFrom(cmd *cobra.Command) (store.ProjectFilter, error) {
 	}, nil
 }
 
-func writeProjectTable(out io.Writer, projects []*store.Project) error {
-	return writeProjectNodes(out, flatNodes(projects))
-}
-
 // flatNodes is the listing as it has always been: no depth, no context rows.
 func flatNodes(projects []*store.Project) []store.TreeNode {
 	nodes := make([]store.TreeNode, len(projects))
@@ -753,34 +766,6 @@ func flatNodes(projects []*store.Project) []store.TreeNode {
 		nodes[i] = store.TreeNode{Project: p}
 	}
 	return nodes
-}
-
-// writeProjectNodes prints the table, indenting the title by depth.
-//
-// The title rather than the identifier, so the identifier column stays a
-// column: indenting that would make it unreadable down the page and unusable
-// to copy out of, which is most of what anybody does with it.
-func writeProjectNodes(out io.Writer, nodes []store.TreeNode) error {
-	if len(nodes) == 0 {
-		fmt.Fprintln(out, "no projects")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	now := time.Now().UTC().Format(store.TimeFormat)
-	fmt.Fprintln(w, "ID\tSTATUS\tPRI\tEFFORT\tSNOOZED UNTIL\tTITLE")
-	for _, node := range nodes {
-		p := node.Project
-		title := strings.Repeat("  ", node.Depth) + p.Title
-		if node.Context {
-			// Shown to hold its children up, not because it is live.
-			title += "  (closed)"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			p.ID, p.Status, nullIntText(p.Priority), nullText(p.Effort),
-			snoozeCell(p.SnoozeUntil, now), title)
-	}
-	return w.Flush()
 }
 
 // nullText renders an absent value as a dash, which reads better in a table

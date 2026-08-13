@@ -3,10 +3,8 @@ package cli
 import (
 	"database/sql"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -33,17 +31,33 @@ func newVerbListCmd() *cobra.Command {
 		RunE:  runVerbList,
 	}
 	cmd.Flags().Bool("all", false, "include retired verbs")
-	addOutputFlag(cmd)
+	addListingFlags(cmd, verbColumns)
 	return cmd
+}
+
+// verbColumns is what `verb list` can show.
+//
+// WAIT is in the default view because it is the one column meant to be tuned,
+// and a setting you cannot read is a setting you cannot change with any
+// confidence. label and starts_pipeline are not, and are a --fields away.
+var verbColumns = columnSet[*store.ActionVerb]{
+	blank: &store.ActionVerb{},
+	declared: []column[*store.ActionVerb]{
+		{name: "predicate_key", header: "PREDICATE"},
+		{name: "rank_class", header: "RANK"},
+		{name: "requires_pr", header: "PR"},
+		{name: "wait_days", header: "WAIT"},
+	},
+	defaults: []string{
+		"verb", "closes", "predicate_key", "rank_class",
+		"requires_pr", "wait_days", "active", "description",
+	},
+	empty: "no verbs",
 }
 
 func runVerbList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	all, err := cmd.Flags().GetBool("all")
 	if err != nil {
 		return err
@@ -59,35 +73,7 @@ func runVerbList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(verbs)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	return writeVerbTable(cmd.OutOrStdout(), verbs)
-}
-
-func writeVerbTable(out io.Writer, verbs []*store.ActionVerb) error {
-	if len(verbs) == 0 {
-		fmt.Fprintln(out, "no verbs")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	// WAIT is here because it is the one column that is meant to be tuned,
-	// and a setting you cannot read is a setting you cannot change with any
-	// confidence.
-	fmt.Fprintln(w, "VERB\tCLOSES\tPREDICATE\tRANK\tPR\tWAIT\tACTIVE\tDESCRIPTION")
-	for _, v := range verbs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			v.Verb, v.Closes, nullText(v.PredicateKey), v.RankClass,
-			yesNo(v.RequiresPR), nullIntText(v.WaitDays),
-			yesNo(v.Active), v.Description)
-	}
-	return w.Flush()
+	return runListing(cmd, verbColumns, verbs, renderContext{})
 }
 
 const (

@@ -915,10 +915,17 @@ Choosing fewer columns therefore loses columns and never alters one.
 parses it does not silently lose a field because a table's default view has no
 room for it.
 
-`ref list` is the first listing converted. The rest still print their fixed
-tables, and [#169](https://github.com/scottlaird/roz/issues/169) is the
-rollout — along with `--sort` over the same columns, where `created`,
-`priority` and `staleness` stay reserved words because they are rankings
+**Every listing takes both**: `action`, `project`, `pr`, `issue`, `ref`,
+`repo`, `calendar`, `verb` and `pipeline`.
+
+A column that only matters sometimes stays out of the default view until it
+does — `pr list` grows a `MERGED` column when something in it has merged, and
+`BECAUSE` when something says why it is tracked. Asking for one by name shows
+it whatever is in it, because asking is the answer to whether it is relevant.
+
+`--sort` over the same columns is what is left, and is
+[#169](https://github.com/scottlaird/roz/issues/169). `created`, `priority`
+and `staleness` will stay reserved words there, because they are rankings
 rather than columns.
 
 ## For an agent

@@ -374,17 +374,24 @@ func newCalendarListCmd() *cobra.Command {
 	f.Bool("upcoming", false, "not yet over — what the weekly review looks at")
 	f.String("on", "", "covering one day, YYYY-MM-DD")
 	f.String(flagKind, "", "one of "+strings.Join(store.WindowKinds, ", "))
-	addOutputFlag(cmd)
+	addListingFlags(cmd, calendarColumns)
 	return cmd
+}
+
+// calendarColumns is what `calendar list` can show.
+var calendarColumns = columnSet[*store.CalendarWindow]{
+	blank: &store.CalendarWindow{},
+	declared: []column[*store.CalendarWindow]{
+		{name: "starts_on", header: "FROM"},
+		{name: "ends_on", header: "TO (INCL)"},
+	},
+	defaults: []string{"id", "kind", "starts_on", "ends_on", "capacity", "label"},
+	empty:    "no calendar entries",
 }
 
 func runCalendarList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	filter, err := calendarFilterFrom(cmd)
 	if err != nil {
 		return err
@@ -400,15 +407,7 @@ func runCalendarList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(entries)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	return writeCalendarTable(cmd.OutOrStdout(), entries)
+	return runListing(cmd, calendarColumns, entries, renderContext{})
 }
 
 func calendarFilterFrom(cmd *cobra.Command) (store.WindowFilter, error) {

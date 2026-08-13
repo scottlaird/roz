@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -36,17 +34,31 @@ func newPipelineListCmd() *cobra.Command {
 		RunE:  runPipelineList,
 	}
 	cmd.Flags().Bool("all", false, "include retired pipelines")
-	addOutputFlag(cmd)
+	addListingFlags(cmd, pipelineColumns)
 	return cmd
+}
+
+// pipelineColumns is what `pipeline list` can show.
+//
+// steps is not a column of action_pipeline — the steps live in their own
+// table and the loader fills them in — so it is declared with the name the
+// JSON encoder already gives them. That is what keeps `-o json` carrying the
+// steps as structure while the table renders the chain.
+var pipelineColumns = columnSet[*store.Pipeline]{
+	blank: &store.Pipeline{},
+	declared: []column[*store.Pipeline]{
+		{
+			name: "steps", field: "steps",
+			render: func(p *store.Pipeline, _ renderContext) string { return stepsCell(p.Steps) },
+		},
+	},
+	defaults: []string{"name", "label", "active", "steps"},
+	empty:    "no pipelines",
 }
 
 func runPipelineList(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
 	all, err := cmd.Flags().GetBool("all")
 	if err != nil {
 		return err
@@ -62,30 +74,7 @@ func runPipelineList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if format == outputJSON {
-		encoded, err := store.MarshalRecords(pipelines)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-	return writePipelineTable(cmd.OutOrStdout(), pipelines)
-}
-
-func writePipelineTable(out io.Writer, pipelines []*store.Pipeline) error {
-	if len(pipelines) == 0 {
-		fmt.Fprintln(out, "no pipelines")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tLABEL\tACTIVE\tSTEPS")
-	for _, p := range pipelines {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-			p.Name, p.Label, yesNo(p.Active), stepsCell(p.Steps))
-	}
-	return w.Flush()
+	return runListing(cmd, pipelineColumns, pipelines, renderContext{})
 }
 
 const (

@@ -227,7 +227,7 @@ func TestDerivedColumnIsTheValueItRenders(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := writeRecords(&out, outputJSON, set, []string{"shout"}, []*row{{Name: "quiet"}}); err != nil {
+	if err := writeRecords(&out, outputJSON, set, []string{"shout"}, []*row{{Name: "quiet"}}, renderContext{}); err != nil {
 		t.Fatalf("writeRecords() returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), `"shout":"QUIET"`) {
@@ -235,7 +235,7 @@ func TestDerivedColumnIsTheValueItRenders(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := writeRecords(&out, outputTable, set, nil, []*row{{Name: "quiet"}}); err != nil {
+	if err := writeRecords(&out, outputTable, set, nil, []*row{{Name: "quiet"}}, renderContext{}); err != nil {
 		t.Fatalf("writeRecords() returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), "SHOUT") || !strings.Contains(out.String(), "QUIET") {
@@ -267,7 +267,7 @@ func TestShowIfKeepsAColumnOutOfTheDefaultView(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := writeRecords(&out, outputTable, set, nil, []*row{{Name: "a"}}); err != nil {
+	if err := writeRecords(&out, outputTable, set, nil, []*row{{Name: "a"}}, renderContext{}); err != nil {
 		t.Fatalf("writeRecords() returned error: %v", err)
 	}
 	if strings.Contains(out.String(), "NOTE") {
@@ -275,7 +275,7 @@ func TestShowIfKeepsAColumnOutOfTheDefaultView(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := writeRecords(&out, outputTable, set, nil, []*row{{Name: "a", Note: "here"}}); err != nil {
+	if err := writeRecords(&out, outputTable, set, nil, []*row{{Name: "a", Note: "here"}}, renderContext{}); err != nil {
 		t.Fatalf("writeRecords() returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), "NOTE") {
@@ -284,10 +284,134 @@ func TestShowIfKeepsAColumnOutOfTheDefaultView(t *testing.T) {
 
 	// Asked for by name, it appears whatever is in it.
 	out.Reset()
-	if err := writeRecords(&out, outputTable, set, []string{"note"}, []*row{{Name: "a"}}); err != nil {
+	if err := writeRecords(&out, outputTable, set, []string{"note"}, []*row{{Name: "a"}}, renderContext{}); err != nil {
 		t.Fatalf("writeRecords() returned error: %v", err)
 	}
 	if !strings.Contains(out.String(), "NOTE") {
 		t.Errorf("a column asked for by name was hidden: %s", out.String())
+	}
+}
+
+// TestEveryListingDeclaresItsColumns is the rollout's own check: each
+// converted listing takes --fields and -o csv, and names a column it should
+// have. A listing that regressed to a fixed table fails here rather than the
+// next time somebody tries to select a column on it.
+func TestEveryListingDeclaresItsColumns(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "cli/cli")
+
+	for _, tc := range []struct {
+		listing []string
+		column  string
+	}{
+		{[]string{"action", "list"}, "late"},
+		{[]string{"project", "list"}, "priority"},
+		{[]string{"pr", "list"}, "merged_at"},
+		{[]string{"issue", "list"}, "closed_at"},
+		{[]string{"ref", "list"}, "commit_sha"},
+		{[]string{"repo", "list"}, "short_name"},
+		{[]string{"calendar", "list"}, "capacity"},
+		{[]string{"verb", "list"}, "wait_days"},
+		{[]string{"pipeline", "list"}, "steps"},
+	} {
+		t.Run(strings.Join(tc.listing, " "), func(t *testing.T) {
+			args := append(append([]string{}, tc.listing...), "--db", db, "--fields", tc.column)
+			if _, err := runCLI(t, args...); err != nil {
+				t.Errorf("--fields %s returned error: %v", tc.column, err)
+			}
+			args = append(append([]string{}, tc.listing...), "--db", db, "-o", "csv")
+			if _, err := runCLI(t, args...); err != nil {
+				t.Errorf("-o csv returned error: %v", err)
+			}
+			// And the vocabulary is named when something is not in it.
+			args = append(append([]string{}, tc.listing...), "--db", db, "--fields", "nope")
+			if _, err := runCLI(t, args...); err == nil {
+				t.Error("a column that does not exist was accepted")
+			}
+		})
+	}
+}
+
+// TestARenderedNothingIsSpeltByTheFormat: a derived cell returns empty for
+// "nothing here", and the format says how that reads. The table's dash is a
+// mark for a person, and putting it in a CSV column would be data.
+func TestARenderedNothingIsSpeltByTheFormat(t *testing.T) {
+	db := initDB(t)
+	addAction(t, db, "--title", "Write it", "--verb", "write")
+
+	table, err := runCLI(t, "action", "list", "--db", db, "--fields", "id,late")
+	if err != nil {
+		t.Fatalf("action list returned error: %v", err)
+	}
+	if !strings.Contains(table, "-") {
+		t.Errorf("the table does not mark an action that is not late:\n%s", table)
+	}
+
+	out, err := runCLI(t, "action", "list", "--db", db, "--fields", "id,late", "-o", "csv")
+	if err != nil {
+		t.Fatalf("action list -o csv returned error: %v", err)
+	}
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatalf("the output is not CSV: %v\n%s", err, out)
+	}
+	if rows[1][1] != "" {
+		t.Errorf("an action that is not late reads %q in CSV, want an empty field", rows[1][1])
+	}
+}
+
+// TestTheTreeIndentsOnlyThePicture: --tree is what rows there are, which
+// every format carries, and the indentation is how a table draws them.
+func TestTheTreeIndentsOnlyThePicture(t *testing.T) {
+	db := initDB(t)
+	parent := addProject(t, db, "Split the nodepool")
+	child := addProject(t, db, "Drain the old pool", "--parent", parent)
+
+	table, err := runCLI(t, "project", "list", "--db", db, "--tree")
+	if err != nil {
+		t.Fatalf("project list --tree returned error: %v", err)
+	}
+	if !strings.Contains(table, "  Drain the old pool") {
+		t.Errorf("the tree does not indent the child:\n%s", table)
+	}
+
+	out, err := runCLI(t, "project", "list", "--db", db, "--tree", "-o", "csv")
+	if err != nil {
+		t.Fatalf("project list --tree -o csv returned error: %v", err)
+	}
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	if err != nil {
+		t.Fatalf("the output is not CSV: %v\n%s", err, out)
+	}
+	for _, row := range rows[1:] {
+		if row[0] != child {
+			continue
+		}
+		if title := row[len(row)-1]; title != "Drain the old pool" {
+			t.Errorf("CSV carried the drawing rather than the title: %q", title)
+		}
+	}
+}
+
+// TestBooleansReadAsTheTableSpeltThem, and as a program expects everywhere
+// else. `show` is left alone: converting the listings is not the moment to
+// change what a different command prints.
+func TestBooleansReadAsTheTableSpeltThem(t *testing.T) {
+	db := initDB(t)
+
+	table, err := runCLI(t, "verb", "list", "--db", db, "--fields", "verb,active")
+	if err != nil {
+		t.Fatalf("verb list returned error: %v", err)
+	}
+	if !strings.Contains(table, "yes") {
+		t.Errorf("the table does not spell a boolean yes:\n%s", table)
+	}
+
+	out, err := runCLI(t, "verb", "list", "--db", db, "--fields", "verb,active", "-o", "csv")
+	if err != nil {
+		t.Fatalf("verb list -o csv returned error: %v", err)
+	}
+	if !strings.Contains(out, "true") {
+		t.Errorf("CSV does not carry a boolean as one:\n%s", out)
 	}
 }

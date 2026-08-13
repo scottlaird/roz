@@ -648,11 +648,17 @@ func TestPageLinksAnActionToItsProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
-	if !strings.Contains(page, `<a href="#`+project+`">`+project+`</a>`) {
+	if !strings.Contains(page, `href="#`+project+`"`) {
 		t.Errorf("the action's project is not a link:\n%s", page)
 	}
 	if !strings.Contains(page, `id="`+project+`"`) {
 		t.Errorf("the link has no anchor to land on:\n%s", page)
+	}
+	// And it says what it points at, like every other reference on the page.
+	// This one was built by hand and so was the only identifier without a
+	// tooltip — the most-clicked link there, and the least explained.
+	if !strings.Contains(page, `title="the project"`) {
+		t.Errorf("the project link has no tooltip:\n%s", page)
 	}
 }
 

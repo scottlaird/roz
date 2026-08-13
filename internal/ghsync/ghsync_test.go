@@ -1224,3 +1224,38 @@ func TestAPendingGateMakesSyncReadTheRepository(t *testing.T) {
 		t.Errorf("OpenRefWaits() = %+v, want the resolved wait", waits)
 	}
 }
+
+// TestSyncRecordsWhenAPullRequestMerged: merged_at is GitHub's timestamp, not
+// the poll's. The week in review is ordered by it, and a pull request tracked
+// after it merged has no transition in the log to order by instead.
+func TestSyncRecordsWhenAPullRequestMerged(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+
+	merged := observed(key)
+	merged.State = "MERGED"
+	merged.MergedAt = "2026-08-07T14:30:00Z"
+
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{merged}}}
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	pr := loadPR(t, st, key)
+	if got := pr.MergedAt.String; got != "2026-08-07T14:30:00Z" {
+		t.Errorf("merged_at = %q, want GitHub's timestamp", got)
+	}
+
+	// An open pull request reports no mergedAt, and that empty value must not
+	// unset one — a merge does not come undone.
+	reopened := observed(key)
+	reopened.State = "OPEN"
+	reopened.MergedAt = ""
+	client.result = github.Result{PullRequests: []github.PullRequest{reopened}}
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if got := loadPR(t, st, key).MergedAt.String; got != "2026-08-07T14:30:00Z" {
+		t.Errorf("merged_at = %q after a poll that said nothing, want it kept", got)
+	}
+}

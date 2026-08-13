@@ -47,6 +47,7 @@ const realResponse = `{
       "number": 7, "title": "merged one", "url": "u", "state": "MERGED",
       "isDraft": false, "baseRefName": "main", "headRefOid": "def456",
       "isInMergeQueue": false, "reviewDecision": null, "mergeStateStatus": "UNKNOWN",
+      "mergedAt": "2026-08-07T14:30:00Z",
       "author": {"login": "someone"},
       "reviewRequests": {"nodes": []},
       "latestOpinionatedReviews": {"nodes": []},
@@ -137,6 +138,27 @@ func TestUnknownMergeStateBecomesEmpty(t *testing.T) {
 	for _, pr := range result.PullRequests {
 		if pr.Number == 7 && pr.MergeStateStatus != "" {
 			t.Errorf("merged pull request kept mergeStateStatus %q, want it dropped", pr.MergeStateStatus)
+		}
+	}
+}
+
+// TestMergedAtIsRead: GitHub's own timestamp, which is what a week in review
+// is ordered by. An open pull request has none, and its absence is what says
+// "not merged" rather than anything roz decides.
+func TestMergedAtIsRead(t *testing.T) {
+	client := NewWithRunner(fixedRunner(realResponse))
+	result, _ := client.Fetch(context.Background(), []string{"cli/cli#14108", "owner/repo#7"})
+
+	for _, pr := range result.PullRequests {
+		switch pr.Number {
+		case 7:
+			if pr.MergedAt != "2026-08-07T14:30:00Z" {
+				t.Errorf("merged pull request has mergedAt %q", pr.MergedAt)
+			}
+		case 14108:
+			if pr.MergedAt != "" {
+				t.Errorf("open pull request has mergedAt %q, want none", pr.MergedAt)
+			}
 		}
 	}
 }

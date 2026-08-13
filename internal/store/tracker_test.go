@@ -449,3 +449,93 @@ func closeAction(t *testing.T, st *Store, a *Action) {
 		t.Fatalf("CloseAction() returned error: %v", err)
 	}
 }
+
+// TestListTrackerIssuesClosed is the other half of the week in review, and
+// reads closed_at rather than the status.
+//
+// The status is the tracker's own word — 'Done' here, 'CLOSED' from GitHub,
+// 'Resolved' elsewhere — and deciding which of those counts as finished would
+// be roz interpreting somebody else's workflow. A closing time means the same
+// thing everywhere.
+func TestListTrackerIssuesClosed(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	observeJira(t, st,
+		TrackerObservation{Key: "CDSS-1", Status: text("Done"),
+			ClosedAt: text("2026-08-07T09:00:00.000Z")},
+		TrackerObservation{Key: "CDSS-2", Status: text("Done"),
+			ClosedAt: text("2026-08-05T09:00:00.000Z")},
+		// Closed as far as its tracker is concerned, and nobody has said when.
+		// It is absent from every closure query, which is roz not having been
+		// told rather than the issue being open.
+		TrackerObservation{Key: "CDSS-3", Status: text("Done")},
+		TrackerObservation{Key: "CDSS-4", Status: text("In Progress")},
+	)
+
+	tests := []struct {
+		name   string
+		filter IssueFilter
+		want   []string
+	}{
+		{
+			name:   "closed, oldest first",
+			filter: IssueFilter{Closed: true},
+			want:   []string{"jira:CDSS-2", "jira:CDSS-1"},
+		},
+		{
+			name:   "a window",
+			filter: IssueFilter{Since: "2026-08-06"},
+			want:   []string{"jira:CDSS-1"},
+		},
+		{
+			name:   "everything keeps id order",
+			filter: IssueFilter{},
+			want:   []string{"jira:CDSS-1", "jira:CDSS-2", "jira:CDSS-3", "jira:CDSS-4"},
+		},
+		{
+			name:   "a tracker nothing was recorded for",
+			filter: IssueFilter{Tracker: TrackerGitHub, Closed: true},
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := st.ListTrackerIssues(ctx, tt.filter)
+			if err != nil {
+				t.Fatalf("ListTrackerIssues() returned error: %v", err)
+			}
+			ids := make([]string, len(got))
+			for i, issue := range got {
+				ids[i] = issue.ID
+			}
+			if !equalStrings(ids, tt.want) {
+				t.Errorf("ListTrackerIssues(%+v) = %v, want %v", tt.filter, ids, tt.want)
+			}
+		})
+	}
+}
+
+// TestAClosureIsNotUnsaidBySilence: an observation that says nothing about
+// closure leaves it alone, the way every other field works — and here it is
+// the right rule rather than merely the uniform one, since GitHub sends no
+// closedAt for an open issue and reopening shows in the status.
+func TestAClosureIsNotUnsaidBySilence(t *testing.T) {
+	st := newStore(t)
+
+	observeJira(t, st, TrackerObservation{
+		Key: "CDSS-1", Status: text("Done"), ClosedAt: text("2026-08-07T09:00:00.000Z"),
+	})
+	observeJira(t, st, TrackerObservation{Key: "CDSS-1", Status: text("In Progress")})
+
+	issue := loadIssue(t, st, "CDSS-1")
+	if got := issue.ClosedAt.String; got != "2026-08-07T09:00:00.000Z" {
+		t.Errorf("closed_at = %q after a silent observation, want it kept", got)
+	}
+	if issue.Status.String != "In Progress" {
+		t.Errorf("status = %q, want the reopening to show there", issue.Status.String)
+	}
+}
+
+func text(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }

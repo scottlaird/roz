@@ -87,6 +87,15 @@ type PR struct {
 	// only when the pull request does.
 	OwnersHead sql.NullString `db:"owners_head" kind:"observed"`
 
+	// MergedAt is when GitHub says it merged, not when roz saw that it had.
+	//
+	// The distinction is the whole point of storing it. State says where a
+	// pull request is now, and the log says when roz noticed it move — which
+	// for one tracked after the fact is the poll that caught up, or nothing at
+	// all if it was already merged the first time it was read. Neither answers
+	// "what did I merge last week". NULL means not merged.
+	MergedAt sql.NullString `db:"merged_at" kind:"observed"`
+
 	// Frozen is a generated column: either of the two above being set. The
 	// database computes it, so it is never written.
 	Frozen bool `db:"frozen" kind:"derived"`
@@ -244,10 +253,31 @@ type PRFilter struct {
 	// "what am I on the hook to review", which the row's existence could not
 	// answer.
 	Because string
+	// Since keeps pull requests merged at or after a timestamp.
+	//
+	// It reads merged_at, so it selects merged pull requests and nothing else
+	// — "since" is about when something finished, and an open pull request has
+	// not. Setting it alongside State is allowed and redundant rather than
+	// contradictory.
+	//
+	// Compared as text, which is correct because both sides are ISO-8601 UTC.
+	Since string
 }
 
-// ListPRs returns tracked pull requests matching the filter, ordered by
-// repository and then number.
+// mergeOrdered reports whether this filter is asking about merges, which is
+// what decides the order rows come back in.
+//
+// A listing of what merged wants the week in order; a listing of what is
+// tracked wants it grouped by repository. Neither order is right for the other
+// question, and which question is being asked is legible from the filter.
+func (f PRFilter) mergeOrdered() bool {
+	return f.Since != "" || f.State == PRStateMerged
+}
+
+// ListPRs returns tracked pull requests matching the filter.
+//
+// Ordered by repository and number, or oldest merge first when the filter is
+// about merges — which is how a week reads.
 func (s *Store) ListPRs(ctx context.Context, filter PRFilter) ([]*PR, error) {
 	fields, err := fieldsOfStruct(&PR{})
 	if err != nil {
@@ -263,7 +293,14 @@ func (s *Store) ListPRs(ctx context.Context, filter PRFilter) ([]*PR, error) {
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY repo, number"
+	if filter.mergeOrdered() {
+		// Anything merged without a time goes last rather than first, which is
+		// where SQLite puts NULL on its own. A pull request merged before
+		// merged_at existed is the case, and it is not news from any week.
+		query += " ORDER BY merged_at IS NULL, merged_at, repo, number"
+	} else {
+		query += " ORDER BY repo, number"
+	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -306,6 +343,10 @@ func (f PRFilter) clauses() ([]string, []any) {
 	if f.Because != "" {
 		where = append(where, "tracked_because = ?")
 		args = append(args, f.Because)
+	}
+	if f.Since != "" {
+		where = append(where, "merged_at >= ?")
+		args = append(args, f.Since)
 	}
 	return where, args
 }

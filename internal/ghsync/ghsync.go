@@ -562,6 +562,10 @@ func merge(before *store.PR, observed github.PullRequest) (*store.PR, error) {
 	after.ChecksState = keepIfEmpty(before.ChecksState, observed.ChecksState)
 	after.FirstReviewRequestedAt = keepIfEmpty(before.FirstReviewRequestedAt, observed.FirstReviewRequestedAt)
 	after.HumanCommentedAt = keepIfEmpty(before.HumanCommentedAt, observed.HumanCommentedAt)
+	// A merge is permanent, so the empty value GitHub sends for anything not
+	// merged never has to unset this. keepIfEmpty is exactly that rule, and
+	// the reason it is right here rather than merely convenient.
+	after.MergedAt = keepIfEmpty(before.MergedAt, observed.MergedAt)
 	// Zero is a real answer here — no unresolved threads — so unlike the
 	// text columns this is always written.
 	after.UnresolvedThreads = sql.NullInt64{Int64: int64(observed.UnresolvedThreads), Valid: true}

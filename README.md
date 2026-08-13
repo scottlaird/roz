@@ -70,7 +70,8 @@ directory.
 | `roz codeowners` | Who has to approve a set of changed files, and who is still worth asking. |
 | `roz verb set` | Change a verb's `wait_days` or `rank_class`. Settings, not definitions. |
 | `roz verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
-| `roz pipeline list` | The pipelines and their steps. |
+| `roz pipeline add` / `set` / `retire` | Define a chain, change its steps, take it out of use for new repositories. |
+| `roz pipeline show` / `list` | One pipeline and what uses it, or all of them. |
 | **the log** | |
 | `roz watch` | Follow the event log, or `--once` to print and exit. |
 | `roz note` | Append a note to a subject's history without changing it. |
@@ -604,6 +605,59 @@ is in the log.
 Each shows when it was last written. A note is authored and nothing revisits
 it, so its age is how much to trust it — the same risk `--why` and `--summary`
 already carry.
+
+## Defining a pipeline
+
+`roz repo set --pipeline` chooses one, so defining one is a command too — it
+was the last piece of configuration that meant writing to the database by hand,
+which also meant it never appeared in the log.
+
+```console
+$ roz pipeline add fast --label "straight to merge" --steps undraft,merge
+fast: undraft → merge
+```
+
+**Every step must close on its own.** A pipeline is what follows a person's
+work, so a step that waits on a person would stop the chain until somebody
+noticed; a `review` step is refused. So is one that needs something
+instantiation cannot supply — a `wait_ref` step would be created with nothing
+to wait for and would block everything behind it, which is
+[#127](https://github.com/scottlaird/roz/issues/127).
+
+**No steps is a legal chain**, and is what a repository whose pull requests you
+only review wants: closing the `review` action should produce nothing rather
+than an undraft-and-merge chain for somebody else's work.
+
+```console
+$ roz pipeline add reviewing --label "somebody else's" --steps ""
+reviewing: no steps; nothing follows
+```
+
+That is not the same as a repository with no pipeline set. Both instantiate
+nothing today; one is a decision and the other is a gap.
+
+**Where it lands is explicit**, because the lowest-numbered active pipeline is
+what a newly tracked repository takes. Adding one never moves that from under
+you, and `--order first` says out loud that it has:
+
+```console
+$ roz pipeline add house --steps undraft,merge --order first
+house: undraft → merge
+  newly tracked repositories will take it
+```
+
+Retiring is not deleting, the way it is for a verb. A repository still naming a
+retired pipeline keeps working — its chains instantiate exactly as before — and
+only new repositories stop taking it:
+
+```console
+$ roz pipeline retire fast
+fast is retired
+  owner/repo still names it, and keeps working
+```
+
+Editing a pipeline never touches a chain already running. Steps are copied into
+actions when a chain starts, so nothing reads the pipeline again afterwards.
 
 ## The page links to itself
 

@@ -81,6 +81,29 @@ func fieldsOf(r Record) ([]field, error) {
 	return fieldsOfStruct(r)
 }
 
+// Columns names the columns a record carries, in the order its struct
+// declares them.
+//
+// Exported because output has to be able to name what it can show. A listing
+// that offers to choose its fields needs that vocabulary before it has any
+// rows to read it off — an empty result still has to say which names it would
+// have accepted.
+//
+// Struct order rather than the alphabetical order MarshalRecord produces:
+// that is the order the entity is written in, so identity comes first and the
+// timestamps come last, which is also how it reads as a table.
+func Columns(r any) ([]string, error) {
+	fields, err := fieldsOfStruct(r)
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]string, len(fields))
+	for i, f := range fields {
+		columns[i] = f.column
+	}
+	return columns, nil
+}
+
 // fieldsOfStruct is fieldsOf without the Record constraint, so the reflection
 // rules can be tested against shapes that are not valid records.
 func fieldsOfStruct(r any) ([]field, error) {

@@ -74,6 +74,15 @@ const (
 	outputFlag  = "output"
 	outputTable = "table"
 	outputJSON  = "json"
+	// outputCSV is for the listing that is going somewhere else. It is a
+	// format under -o rather than a --csv flag for the reason json is: one
+	// place to ask the question, and room for the next answer.
+	//
+	// Listings only. A detail view is a column per line and already reads
+	// like two columns of CSV, which is not what anybody asking for CSV
+	// wants — so `show` does not offer it rather than offering something
+	// useless.
+	outputCSV = "csv"
 )
 
 // addOutputFlag registers -o on a command that reports.
@@ -97,6 +106,31 @@ func outputFrom(cmd *cobra.Command) (string, error) {
 	default:
 		return "", fmt.Errorf("--output %q is not recognised: use %s or %s",
 			value, outputTable, outputJSON)
+	}
+}
+
+// addListOutputFlag registers -o on a listing, which can also write CSV.
+//
+// Separate from addOutputFlag so that a format is offered only where it is
+// implemented: `show -o csv` would otherwise be accepted and quietly print a
+// table, which is worse than refusing it.
+func addListOutputFlag(cmd *cobra.Command) {
+	cmd.Flags().StringP(outputFlag, "o", outputTable,
+		"output format: table, json or csv")
+}
+
+// listOutputFrom is outputFrom with CSV allowed.
+func listOutputFrom(cmd *cobra.Command) (string, error) {
+	value, err := cmd.Flags().GetString(outputFlag)
+	if err != nil {
+		return "", err
+	}
+	switch value {
+	case outputTable, outputJSON, outputCSV:
+		return value, nil
+	default:
+		return "", fmt.Errorf("--output %q is not recognised: use %s, %s or %s",
+			value, outputTable, outputJSON, outputCSV)
 	}
 }
 

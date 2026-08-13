@@ -876,6 +876,51 @@ Refusing it here rather than stripping it at render time means you find out
 straight away, instead of wondering later why half a sentence is missing from
 the page.
 
+## Choosing what a listing shows
+
+A listing shows a default view, which is a deliberate subset. `--fields` names
+the columns instead, and `--fields all` shows every column the record has:
+
+```console
+$ roz ref list --fields name,commit_sha
+NAME     COMMIT
+v2.96.0  abc12345
+v2.97.0  def67890
+$ roz ref list --fields all
+ID                         REPOSITORY  NAME     KIND  COMMIT    FIRST SEEN                OBSERVED AT
+cli/cli@refs/tags/v2.96.0  cli/cli     v2.96.0  tag   abc12345  2026-08-01T00:00:00.000Z  2026-08-01T00:00:00.000Z
+```
+
+The columns are the record's own, read off the same struct tags the `SELECT`
+and the JSON encoder read — so a column added to an entity is available here
+without anything being told about it. A listing only declares what it shows by
+default and what it shows differently.
+
+`-o csv` writes the same selection for something else to read:
+
+```console
+$ roz ref list --fields name,commit_sha -o csv
+name,commit_sha
+v2.96.0,abc1234567890def1234567890abcdef12345678
+```
+
+**A table is for a reader and the other two are for a program**, which is the
+one place they differ. A table abbreviates a commit to eight characters
+because that is how anybody reads one; CSV and JSON carry the commit. The
+header follows the same split — `COMMIT` for a person, `commit_sha` for a
+column name something will match on.
+
+Choosing fewer columns therefore loses columns and never alters one.
+`-o json` keeps carrying everything until you ask it not to, so a caller that
+parses it does not silently lose a field because a table's default view has no
+room for it.
+
+`ref list` is the first listing converted. The rest still print their fixed
+tables, and [#169](https://github.com/scottlaird/roz/issues/169) is the
+rollout — along with `--sort` over the same columns, where `created`,
+`priority` and `staleness` stay reserved words because they are rankings
+rather than columns.
+
 ## For an agent
 
 `roz mcp` serves the same commands over the Model Context Protocol, on stdin

@@ -958,6 +958,57 @@ This does not finish the `review` verb. Closing that on a predicate needs our
 GitHub login as well, and `config.owner` is deliberately a label rather than
 one.
 
+## Projects inside projects
+
+Forty projects is a list. The handful of things they are actually about is what
+you wanted to read:
+
+```console
+$ roz project list --tree --sort priority
+ID    STATUS  PRI  EFFORT  SNOOZED UNTIL  TITLE
+SL1   active  1    -       -              Platform
+SL2   active  2    -       -                Storage
+SL3   active  1    -       -                  Sharding
+SL4   active  3    -       -              Docs
+```
+
+Set with `--parent` when a project is created or afterwards, and cleared with
+`--parent ""`.
+
+**Display only.** A parent does not block a child, closing a parent does not
+close its children, and nothing about priority or ranking reads it. Those are
+relationships roz already has — [one project waiting on
+another](#one-project-waiting-on-another) says one must finish before the next
+starts — and conflating "is part of" with "waits for" would make both mean
+less.
+
+The order inside the shape is still the order you asked for: `--sort priority`
+sorts each level, rather than being replaced by the hierarchy. **Flat is the
+default**, because most projects have no parent and a hierarchy of one level is
+a list with ceremony. The page draws the hierarchy always.
+
+A cycle is refused, and not only the obvious one — the schema can see a project
+that is its own parent, and nothing more, so the chain is walked before writing:
+
+```console
+$ roz project set SL1 --parent SL3
+Error: SL3 cannot be a parent of SL1: SL3 is already under it, through SL3 → SL2 → SL1
+```
+
+**A closed parent is still drawn when open work sits under it**, greyed on the
+page and marked in the listing, because hiding it would orphan its children —
+the opposite of what filtering to open work asked for:
+
+```console
+$ roz project list --tree --status active
+SL1   active  1    -  -  Platform
+SL2   done    2    -  -    Storage  (closed)
+SL3   active  1    -  -      Sharding
+```
+
+That needs no count of open descendants: a closed project whose children are
+all closed is not an ancestor of anything in the list, so nothing pulls it in.
+
 ## One project waiting on another
 
 `project.status` has accepted `blocked` since the start, and nothing recorded

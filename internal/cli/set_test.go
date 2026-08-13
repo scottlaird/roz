@@ -62,7 +62,11 @@ func TestSetEveryFieldFlag(t *testing.T) {
 func TestSetEveryFieldFlagIsApplied(t *testing.T) {
 	// snooze-until is excluded: the schema couples it to status, so it cannot
 	// move on its own. TestSetSnoozePairTogether covers it.
-	skip := map[string]bool{flagSnoozeUntil: true}
+	//
+	// parent is excluded because its value cannot be a constant: it has to be
+	// another project's identifier, which is allocated per test. TestProjectParent
+	// and the tests around it cover it.
+	skip := map[string]bool{flagSnoozeUntil: true, flagParent: true}
 
 	values := map[string]string{
 		flagTitle:        "t",

@@ -109,6 +109,13 @@
            border-bottom:1px solid var(--rule);white-space:nowrap}
   td{padding:7px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
   tbody tr:last-child td{border-bottom:none}
+  /* A hierarchy is display only: the indent says what a project is part of,
+     and nothing about it blocks or closes anything. */
+  tr.depth1 td:nth-child(2){padding-left:1.5rem}
+  tr.depth2 td:nth-child(2){padding-left:3rem}
+  tr.depth3 td:nth-child(2){padding-left:4.5rem}
+  /* Closed, and shown only to hold open children up. */
+  tr.context td{opacity:.55}
   tr.expired td{background:var(--bad-bg)}
   {{/* A project and its summary are one entity, so the rule between them goes
        and the pair is separated from the next project instead. */}}
@@ -201,7 +208,7 @@
         </tr></thead>
         <tbody>
           {{range .Projects}}
-          <tr id="{{.ID}}"{{if .Expired}} class="expired"{{end}}>
+          <tr id="{{.ID}}" class="depth{{.Depth}}{{if .Expired}} expired{{end}}{{if .Context}} context{{end}}">
             <td class="n">{{.ID}}</td>
             <td>{{.Title}}</td>
             <td>{{.Status}}</td>

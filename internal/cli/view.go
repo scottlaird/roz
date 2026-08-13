@@ -218,6 +218,10 @@ type projectView struct {
 	Actions  int
 	Issues   []issueView
 	Expired  bool
+	// Depth is how far under a parent this project sits, and Context marks one
+	// shown only to hold its children up — closed, above open work.
+	Depth   int
+	Context bool
 }
 
 // buildPage assembles everything the template needs.
@@ -357,8 +361,18 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late))
 	}
 
-	for _, p := range projects {
+	// Drawn as a hierarchy, with any closed parent above open work pulled back
+	// in so the shape has no gaps. The order within each level is the one the
+	// sort chose: a hierarchy is a way of reading the list, not a reranking.
+	connected, err := st.WithAncestors(ctx, projects)
+	if err != nil {
+		return content, err
+	}
+	for _, node := range store.Tree(connected) {
+		p := node.Project
 		content.Projects = append(content.Projects, projectView{
+			Depth:    node.Depth,
+			Context:  node.Context,
 			ID:       p.ID,
 			Title:    text.links.Text(p.Title),
 			Summary:  text.markdown.Render(p.Summary),

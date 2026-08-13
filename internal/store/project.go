@@ -50,6 +50,16 @@ type Project struct {
 
 	CreatedAt string `db:"created_at" kind:"created"`
 	UpdatedAt string `db:"updated_at" kind:"auto"`
+
+	// ParentID is the project this is part of, for reading rather than for
+	// scheduling: it does not block, does not close, and nothing about ranking
+	// consults it. Most projects have none.
+	ParentID sql.NullString `db:"parent_id"`
+
+	// contextOnly marks a project pulled into a listing to connect others
+	// rather than because it matched. Not a column: it is a fact about this
+	// listing, not about the project.
+	contextOnly bool
 }
 
 func (p *Project) table() string       { return "project" }
@@ -241,3 +251,91 @@ func (f ProjectFilter) clauses(now string) ([]string, []any) {
 	}
 	return where, args
 }
+
+// ErrParentCycle reports a parent that would make a project its own ancestor.
+type ErrParentCycle struct {
+	Child, Parent string
+	// Through is the chain from the proposed parent back to the child, so the
+	// error can say which link is the problem rather than only that there is
+	// one.
+	Through []string
+}
+
+func (e *ErrParentCycle) Error() string {
+	if len(e.Through) <= 1 {
+		return fmt.Sprintf("%s cannot be its own parent", e.Child)
+	}
+	return fmt.Sprintf("%s cannot be a parent of %s: %s is already under it, through %s",
+		e.Parent, e.Child, e.Parent, strings.Join(e.Through, " → "))
+}
+
+// SetParent records which project this one is part of, refusing a cycle.
+//
+// Walked rather than constrained, because a cycle is a property of the chain
+// and not of any one row: the schema can refuse a project that is its own
+// parent, and nothing more. This walks up from the proposed parent, and a
+// child found on the way is the cycle.
+//
+// The walk is bounded by the number of projects, so a chain already circular —
+// which nothing here can write, but a hand-edited database could — terminates
+// rather than spinning.
+func (t *Tx) SetParent(ctx context.Context, child *Project, parent string) error {
+	if err := t.CheckParent(ctx, child, parent); err != nil {
+		return err
+	}
+	after := child.Clone()
+	after.ParentID = sql.NullString{String: parent, Valid: parent != ""}
+	_, err := t.Update(ctx, child, after)
+	return err
+}
+
+// CheckParent reports whether a project could be made part of another.
+//
+// Separate from writing it, so a command setting several columns at once can
+// validate this one and then write them together.
+func (t *Tx) CheckParent(ctx context.Context, child *Project, parent string) error {
+	if parent == "" {
+		return nil
+	}
+	if parent == child.ID {
+		return &ErrParentCycle{Child: child.ID, Parent: parent}
+	}
+
+	chain, err := t.ancestry(ctx, parent)
+	if err != nil {
+		return err
+	}
+	for i, id := range chain {
+		if id == child.ID {
+			return &ErrParentCycle{Child: child.ID, Parent: parent, Through: chain[:i+1]}
+		}
+	}
+	return nil
+}
+
+// ancestry returns a project and everything above it, nearest first.
+func (t *Tx) ancestry(ctx context.Context, id string) ([]string, error) {
+	var chain []string
+	seen := map[string]bool{}
+
+	for id != "" && !seen[id] {
+		seen[id] = true
+		chain = append(chain, id)
+
+		var parent sql.NullString
+		err := t.tx.QueryRowContext(ctx,
+			"SELECT parent_id FROM project WHERE id = ?", id).Scan(&parent)
+		if err == sql.ErrNoRows {
+			return chain, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading what %s is part of: %w", id, err)
+		}
+		id = parent.String
+	}
+	return chain, nil
+}
+
+// IsContext reports whether this project is in a listing only to connect the
+// ones that were asked for — a closed parent above open work.
+func (p *Project) IsContext() bool { return p.contextOnly }

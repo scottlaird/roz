@@ -3,9 +3,13 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // runCLI executes the command tree with args and returns everything it wrote.
@@ -23,13 +27,87 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 }
 
 // initDB returns the path of a freshly initialised database.
+// initDB returns a path to a fresh initialised database.
+//
+// Copied from a template rather than migrated, because migrating is nearly the
+// whole cost of this package's tests. Replaying every migration takes about
+// two thirds of a second under -race, and with a few hundred tests doing it
+// that was the entire runtime — growing by a measurable amount with every
+// migration added, which is how the suite eventually walked into the ten
+// minute timeout.
+//
+// A SQLite database is one file, so a copy of a migrated one is the same thing
+// as a migrated one. The migration path itself is still exercised for real, by
+// the store package's own tests, which is where a migration going wrong should
+// be caught.
 func initDB(t *testing.T) string {
 	t.Helper()
+
+	template := migratedTemplate(t)
 	path := filepath.Join(t.TempDir(), "roz.db")
-	if _, err := runCLI(t, "init", "--db", path); err != nil {
-		t.Fatalf("init returned error: %v", err)
+
+	source, err := os.ReadFile(template)
+	if err != nil {
+		t.Fatalf("reading the template database: %v", err)
+	}
+	if err := os.WriteFile(path, source, 0o600); err != nil {
+		t.Fatalf("writing the test database: %v", err)
 	}
 	return path
+}
+
+var (
+	templateOnce sync.Once
+	templatePath string
+	templateErr  error
+)
+
+// migratedTemplate builds one migrated database for the whole test binary.
+//
+// Built through the command rather than by applying schema.sql, so what the
+// tests run against is what `roz init` produces — including the seeded
+// vocabulary and the identifier prefixes, which schema.sql describes but does
+// not own.
+func migratedTemplate(t *testing.T) string {
+	t.Helper()
+
+	templateOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "roz-template")
+		if err != nil {
+			templateErr = err
+			return
+		}
+		path := filepath.Join(dir, "template.db")
+		if _, err := runCLI(t, "init", "--db", path); err != nil {
+			templateErr = err
+			return
+		}
+		// Everything the copy needs has to be in the one file, so the
+		// write-ahead log is folded back in before it is read.
+		if err := checkpoint(path); err != nil {
+			templateErr = err
+			return
+		}
+		templatePath = path
+	})
+	if templateErr != nil {
+		t.Fatalf("building the template database: %v", templateErr)
+	}
+	return templatePath
+}
+
+// checkpoint folds the write-ahead log back into the database file.
+//
+// Without it a copy can miss committed data: in WAL mode the tail of it lives
+// in the -wal sidecar, and only the main file is copied.
+func checkpoint(path string) error {
+	db, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	return err
 }
 
 func TestProjectAddPrintsID(t *testing.T) {

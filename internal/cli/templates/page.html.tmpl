@@ -315,7 +315,7 @@
   {{if .Project}}<span class="mono">{{.Project}}</span>{{end}}
   {{range .PRs}}
   <span>
-    {{if .URL}}<a href="{{.URL}}" class="mono">{{.ID}}</a>{{else}}<span class="mono">{{.ID}}</span>{{end}}
+    {{if .URL}}<a href="{{.URL}}" class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</a>{{else}}<span class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</span>{{end}}
     {{if .Status}}<span class="{{if .Bad}}bad{{else}}state{{end}}">{{.Status}}</span>{{end}}
   </span>
   {{end}}
@@ -336,5 +336,5 @@
 {{end}}
 
 {{define "issue"}}
-{{if .URL}}<a href="{{.URL}}" class="mono">{{.Key}}</a>{{else}}<span class="mono">{{.Key}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}
+{{if .URL}}<a href="{{.URL}}" class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</a>{{else}}<span class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}
 {{end}}

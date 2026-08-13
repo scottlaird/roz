@@ -606,6 +606,12 @@ Prose then writes `api#1234`, and the page renders it as a link to
 what is stored — this is a rendering rule, so a short name changed later
 changes every mention at once, and a repository with none loses nothing.
 
+The page writes them too. A pull request chip and a tracker issue say
+`api#1234` rather than `acme/api-server#1234`, because that is what the short
+name is *for*: it is what the repository is called around here, and a column of
+repeated owners is a column of noise. The href is the real address either way,
+and a repository with no short name keeps its full one.
+
 **Only registered names expand.** `foo#12` stays literal, which is what keeps
 the rule from surprising text that was never about a pull request. A short name
 is unique across tracked repositories, and a collision is refused when it is
@@ -821,6 +827,12 @@ nothing re-synced. Anything untracked, or tracked but never observed, gets no
 tooltip at all: a blank one would say roz looked and found nothing, which is a
 worse thing to claim on a hover than saying nothing. Long titles are cut at
 about ninety characters on a word boundary, because a tooltip is a glance.
+
+The chips beside an action follow the same rule, and by the same means: the
+pull requests it is about and the issues its project tracks carry the title or
+summary last observed. A tracker issue also keeps its status where it has one,
+as a span of its own rather than folded into the tooltip — the status is what
+you read, the summary is what you hover for.
 
 ## Prose fields
 

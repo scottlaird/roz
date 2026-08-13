@@ -683,3 +683,138 @@ func TestPageLinksReferencesInProse(t *testing.T) {
 		t.Errorf("the unresolvable reference lost its text:\n%s", page)
 	}
 }
+
+// TestATrackerIssueIsALink: the column held the key as plain text, so the one
+// thing a reader wants from it — going to the issue — meant copying a string
+// into a search box.
+func TestATrackerIssueIsALink(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "Track the issues")
+	linkIssue(t, db, project, "github", "scottlaird/roz#101")
+	linkIssue(t, db, project, "jira", "CDSS-1744")
+	if _, err := runCLI(t, "config", "set", "--db", db,
+		"--jira-base-url", "https://example.atlassian.net/browse",
+		"--jira-prefix", "CDSS"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	// /issues/ rather than /pull/: the row says which kind it is.
+	for _, want := range []string{
+		`href="https://github.com/scottlaird/roz/issues/101"`,
+		`href="https://example.atlassian.net/browse/CDSS-1744"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the page does not link %s:\n%s", want, out)
+		}
+	}
+}
+
+// TestAGitHubIssueUsesTheShortName: what registering a short name says is that
+// this is what the repository is called around here.
+func TestAGitHubIssueUsesTheShortName(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "Track the issues")
+	linkIssue(t, db, project, "github", "scottlaird/roz#101")
+	linkIssue(t, db, project, "github", "someone/else#7")
+
+	before, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(before, ">scottlaird/roz#101<") {
+		t.Errorf("an unregistered repository should render in full:\n%s", before)
+	}
+
+	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz",
+		"--short-name", "roz"); err != nil {
+		t.Fatalf("repo track returned error: %v", err)
+	}
+	after, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(after, ">roz#101<") {
+		t.Errorf("the short name is not used:\n%s", after)
+	}
+	if strings.Contains(after, ">scottlaird/roz#101<") {
+		t.Errorf("the full name is still drawn:\n%s", after)
+	}
+	// The href is the repository's real address either way, and a repository
+	// with no short name keeps its full one.
+	if !strings.Contains(after, `href="https://github.com/scottlaird/roz/issues/101"`) {
+		t.Errorf("the link no longer addresses the repository:\n%s", after)
+	}
+	if !strings.Contains(after, ">someone/else#7<") {
+		t.Errorf("a repository with no short name should be unchanged:\n%s", after)
+	}
+}
+
+// TestATrackerIssueCarriesItsSummary is #160: the summary is stored and was
+// not reaching the anchor, so a key said which issue only if you knew it.
+func TestATrackerIssueCarriesItsSummary(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "Track the issues")
+	linkIssue(t, db, project, "jira", "CDSS-1744")
+	linkIssue(t, db, project, "jira", "CDSS-9999")
+	if _, err := runCLI(t, "config", "set", "--db", db,
+		"--jira-base-url", "https://example.atlassian.net/browse",
+		"--jira-prefix", "CDSS"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+	if _, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-1744",
+		"--summary", "Allow scaling walker cells up", "--status", "In Progress"); err != nil {
+		t.Fatalf("issue observe returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(out, `title="Allow scaling walker cells up"`) {
+		t.Errorf("the summary is not on the anchor:\n%s", out)
+	}
+	// Absent rather than blank: a link with an empty tooltip claims roz looked
+	// and found nothing.
+	if strings.Contains(out, `title=""`) {
+		t.Errorf("an unobserved issue got an empty tooltip:\n%s", out)
+	}
+	// The status stays its own span rather than merging into the tooltip.
+	if !strings.Contains(out, `<span class="state">(In Progress)</span>`) {
+		t.Errorf("the status span is gone:\n%s", out)
+	}
+}
+
+// linkIssue attaches a tracker issue to a project.
+func linkIssue(t *testing.T, db, project, tracker, key string) {
+	t.Helper()
+	if _, err := runCLI(t, "project", "link-issue", "--db", db,
+		"--project", project, "--tracker", tracker, "--issue", key); err != nil {
+		t.Fatalf("project link-issue returned error: %v", err)
+	}
+}
+
+// TestAPullRequestChipUsesTheShortName: the same rule as an issue's, since
+// both are roz writing an identifier rather than repeating one somebody typed.
+func TestAPullRequestChipUsesTheShortName(t *testing.T) {
+	db := initDB(t)
+	if _, err := runCLI(t, "repo", "track", "--db", db, "scottlaird/roz",
+		"--short-name", "roz"); err != nil {
+		t.Fatalf("repo track returned error: %v", err)
+	}
+	if _, err := runCLI(t, "pr", "track", "--db", db, "scottlaird/roz#39"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	addAction(t, db, "--title", "Review it", "--verb", "review", "--pr", "scottlaird/roz#39")
+
+	out, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(out, ">roz#39<") {
+		t.Errorf("the chip does not use the short name:\n%s", out)
+	}
+}

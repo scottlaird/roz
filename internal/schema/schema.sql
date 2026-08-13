@@ -236,6 +236,15 @@ CREATE TABLE project (
   last_verified_at TEXT,
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
+  -- the project this is part of, for display only: a parent does not block a
+  -- child, closing one does not close the other, and nothing about ranking
+  -- reads it. project_blocks already says one project must finish before
+  -- another, and conflating "is part of" with "waits for" would make both mean
+  -- less. Most projects have none. The CHECK stops the shortest cycle; longer
+  -- ones cannot be expressed over one row, so the command walks the ancestors.
+  -- Last of the columns because ADD COLUMN put it there. See 0026.
+  parent_id        TEXT REFERENCES project(id)
+                     CHECK (parent_id IS NULL OR parent_id <> id),
   UNIQUE (kind, n),
   CHECK (id = kind || n),
   CHECK ((snooze_until IS NOT NULL) = (status = 'snoozed'))
@@ -693,6 +702,8 @@ CREATE INDEX project_expired ON project(snooze_until)
                              WHERE status = 'snoozed' AND snooze_until IS NOT NULL;
 CREATE INDEX action_project  ON action(project_id);
 CREATE INDEX project_tracker_issue_issue ON project_tracker_issue(issue_id);
+-- reading a tree walks parent to children, so that is the direction to serve
+CREATE INDEX project_parent ON project(parent_id) WHERE parent_id IS NOT NULL;
 CREATE UNIQUE INDEX github_repo_short_name ON github_repo(short_name)
   WHERE short_name IS NOT NULL;
 CREATE INDEX raised_action_condition

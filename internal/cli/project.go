@@ -55,6 +55,8 @@ const (
 	flagDesignRef    = "design-ref"
 	flagIssueKey     = "issue"
 	flagJSON         = "json"
+	flagParent       = "parent"
+	flagTree         = "tree"
 )
 
 func newProjectAddCmd() *cobra.Command {
@@ -81,7 +83,7 @@ func newProjectAddCmd() *cobra.Command {
 // records it with the checks that belong to it.
 var projectFieldFlags = []string{
 	flagTitle, flagSummary, flagStatus, flagPriority, flagEffort,
-	flagSnoozeUntil, flagSnoozeReason, flagDesignRef,
+	flagSnoozeUntil, flagSnoozeReason, flagDesignRef, flagParent,
 }
 
 func addProjectFieldFlags(cmd *cobra.Command) {
@@ -95,6 +97,8 @@ func addProjectFieldFlags(cmd *cobra.Command) {
 	f.String(flagSnoozeReason, "", "why it is deferred")
 	f.StringArray(flagDesignRef, nil, "path to a design note; repeatable")
 	f.StringArray(flagIssueKey, nil, "tracker issue to track, e.g. CDSS-1744; repeatable")
+	f.String(flagParent, "",
+		"the project this is part of, e.g. SL7; \"\" clears it. Display only: a parent does not block or close a child")
 	f.StringArray(flagJiraKeyOld, nil, "issue to track, e.g. CDSS-1744; repeatable")
 	_ = f.MarkDeprecated(flagJiraKeyOld, "use --issue, with --tracker if it is not Jira")
 	addTrackerFlag(cmd)
@@ -149,6 +153,20 @@ func runProjectAdd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer tx.Rollback()
+
+	// Before the insert, so a mistyped parent is refused by name rather than
+	// as a foreign key. A brand-new project cannot make a cycle: nothing
+	// points at it yet.
+	parent, err := cmd.Flags().GetString(flagParent)
+	if err != nil {
+		return err
+	}
+	if parent != "" {
+		if _, err := tx.LoadProject(ctx, parent); err != nil {
+			return notFoundOr(err, parent)
+		}
+		p.ParentID = sql.NullString{String: parent, Valid: true}
+	}
 
 	if err := tx.Insert(ctx, p); err != nil {
 		return err
@@ -411,15 +429,44 @@ func runProjectSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("nothing to set: pass a column flag or --%s", flagJSON)
 	}
 
-	return updateProject(cmd, args[0], func(_ context.Context, _ *store.Tx, p *store.Project) error {
+	return updateProject(cmd, args[0], func(ctx context.Context, tx *store.Tx, p *store.Project) error {
 		if err := applyProjectJSON(cmd, p); err != nil {
 			return err
 		}
 		if err := applyProjectFlags(cmd, p); err != nil {
 			return err
 		}
+		// Through the store rather than as a plain column, because a parent is
+		// the one field here whose validity depends on the rest of the table:
+		// a chain that comes back round is only visible by walking it.
+		if cmd.Flags().Changed(flagParent) {
+			parent, err := cmd.Flags().GetString(flagParent)
+			if err != nil {
+				return err
+			}
+			if err := checkParent(ctx, tx, p, parent); err != nil {
+				return err
+			}
+			p.ParentID = sql.NullString{String: parent, Valid: parent != ""}
+		}
 		return checkSnoozeConsistency(p)
 	})
+}
+
+// checkParent refuses a parent that does not exist or that would make a
+// project its own ancestor.
+//
+// Read-only: the write is the caller's ordinary update, so a parent change is
+// one event beside whatever else was set rather than a second write of its
+// own.
+func checkParent(ctx context.Context, tx *store.Tx, p *store.Project, parent string) error {
+	if parent == "" {
+		return nil
+	}
+	if _, err := tx.LoadProject(ctx, parent); err != nil {
+		return notFoundOr(err, parent)
+	}
+	return tx.CheckParent(ctx, p, parent)
 }
 
 // checkSnoozeConsistency reports the schema's status/snooze_until coupling as
@@ -637,6 +684,8 @@ func newProjectListCmd() *cobra.Command {
 	f.Bool("orphaned", false, "no open action and no snooze — how live work goes quiet")
 	f.Bool("expired", false, "snoozed with a date that has passed")
 	f.String("status", "", "filter to one status")
+	f.Bool(flagTree, false,
+		"draw the hierarchy, indenting each project under the one it is part of")
 	addSortFlag(cmd)
 	addOutputFlag(cmd)
 	return cmd
@@ -667,7 +716,25 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	if format == outputJSON {
 		return writeProjectJSON(cmd.OutOrStdout(), projects)
 	}
-	return writeProjectTable(cmd.OutOrStdout(), projects)
+
+	tree, err := cmd.Flags().GetBool(flagTree)
+	if err != nil {
+		return err
+	}
+	if !tree {
+		// Flat by default: most projects have no parent, and a hierarchy of
+		// one level is a list with extra ceremony.
+		return writeProjectTable(cmd.OutOrStdout(), projects)
+	}
+
+	// A filtered list can name a parent it does not contain — showing only
+	// open projects, under a closed one. Those are pulled back in so the tree
+	// has no gaps, and marked, since they are context rather than work.
+	connected, err := st.WithAncestors(ctx, projects)
+	if err != nil {
+		return err
+	}
+	return writeProjectNodes(cmd.OutOrStdout(), store.Tree(connected))
 }
 
 // writeProjectJSON emits an array, empty rather than null when there is
@@ -706,7 +773,25 @@ func projectFilterFrom(cmd *cobra.Command) (store.ProjectFilter, error) {
 }
 
 func writeProjectTable(out io.Writer, projects []*store.Project) error {
-	if len(projects) == 0 {
+	return writeProjectNodes(out, flatNodes(projects))
+}
+
+// flatNodes is the listing as it has always been: no depth, no context rows.
+func flatNodes(projects []*store.Project) []store.TreeNode {
+	nodes := make([]store.TreeNode, len(projects))
+	for i, p := range projects {
+		nodes[i] = store.TreeNode{Project: p}
+	}
+	return nodes
+}
+
+// writeProjectNodes prints the table, indenting the title by depth.
+//
+// The title rather than the identifier, so the identifier column stays a
+// column: indenting that would make it unreadable down the page and unusable
+// to copy out of, which is most of what anybody does with it.
+func writeProjectNodes(out io.Writer, nodes []store.TreeNode) error {
+	if len(nodes) == 0 {
 		fmt.Fprintln(out, "no projects")
 		return nil
 	}
@@ -714,10 +799,16 @@ func writeProjectTable(out io.Writer, projects []*store.Project) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	now := time.Now().UTC().Format(store.TimeFormat)
 	fmt.Fprintln(w, "ID\tSTATUS\tPRI\tEFFORT\tSNOOZED UNTIL\tTITLE")
-	for _, p := range projects {
+	for _, node := range nodes {
+		p := node.Project
+		title := strings.Repeat("  ", node.Depth) + p.Title
+		if node.Context {
+			// Shown to hold its children up, not because it is live.
+			title += "  (closed)"
+		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			p.ID, p.Status, nullIntText(p.Priority), nullText(p.Effort),
-			snoozeCell(p.SnoozeUntil, now), p.Title)
+			snoozeCell(p.SnoozeUntil, now), title)
 	}
 	return w.Flush()
 }

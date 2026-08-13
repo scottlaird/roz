@@ -430,3 +430,63 @@ func TestNoEventsWithoutAChangeSource(t *testing.T) {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 }
+
+// TestStoppingWithAStreamOpenIsPrompt is the interrupt path, which reported
+// "context deadline exceeded" after a few seconds for as long as the server
+// has existed.
+//
+// Shutdown waits for requests in flight and does not cancel their contexts, so
+// an event stream — which is meant to last as long as the page is open — was
+// waited out for the whole grace period and then given up on. With a browser
+// open, every Ctrl-C looked like a failure.
+func TestStoppingWithAStreamOpenIsPrompt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := New("127.0.0.1:0",
+		func(context.Context) ([]byte, error) { return []byte("page"), nil },
+		func(context.Context) (int64, error) { return 1, nil },
+		nil)
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- s.Run(ctx) }()
+
+	waiting, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer waitCancel()
+	addr, err := s.Addr(waiting)
+	if err != nil {
+		t.Fatalf("Addr() returned error: %v", err)
+	}
+
+	// A client holding the stream open, as a browser with the page open does.
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr.String()+"/events", nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("opening the stream: %v", err)
+	}
+	defer resp.Body.Close()
+	// Read the headers' worth, so the handler is certainly inside its loop
+	// rather than still starting up.
+	buf := make([]byte, 1)
+	go func() { _, _ = resp.Body.Read(buf) }()
+
+	started := time.Now()
+	cancel()
+
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Errorf("Run() returned %v, want a clean stop", err)
+		}
+	case <-time.After(shutdownGrace):
+		t.Fatal("the server waited out the whole grace period with a stream open")
+	}
+	// Prompt, not merely inside the grace period: the point is that it does
+	// not wait for a stream that would never end on its own.
+	if waited := time.Since(started); waited > shutdownGrace/2 {
+		t.Errorf("stopping took %v, which is most of the %v grace", waited, shutdownGrace)
+	}
+}

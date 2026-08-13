@@ -17,6 +17,9 @@
     --wait:#55606e; --wait-bg:#eff1f4;
     --bad:#963232; --bad-bg:#faecec;
     --link:#33507f;
+    /* One level of project hierarchy. A size rather than a colour, and here
+       because it is the one number worth adjusting by eye. */
+    --indent:1.125rem;
   }
   @media (prefers-color-scheme:dark){
     :root{
@@ -111,9 +114,13 @@
   tbody tr:last-child td{border-bottom:none}
   /* A hierarchy is display only: the indent says what a project is part of,
      and nothing about it blocks or closes anything. */
-  tr.depth1 td:nth-child(2){padding-left:1.5rem}
-  tr.depth2 td:nth-child(2){padding-left:3rem}
-  tr.depth3 td:nth-child(2){padding-left:4.5rem}
+  /* Added to the cell's own padding rather than replacing it, so every level
+     steps by the same amount. Written flat, the first level indented half as
+     far as the ones below it: the 12px a cell already has was being swallowed
+     by the override, and only the first level notices. */
+  tr.depth1 td:nth-child(2){padding-left:calc(12px + var(--indent))}
+  tr.depth2 td:nth-child(2){padding-left:calc(12px + 2*var(--indent))}
+  tr.depth3 td:nth-child(2){padding-left:calc(12px + 3*var(--indent))}
   /* Closed, and shown only to hold open children up. */
   tr.context td{opacity:.55}
   tr.expired td{background:var(--bad-bg)}
@@ -221,9 +228,14 @@
           {{/* The summary is prose and does not fit a cell, so it gets a row
                of its own spanning the rest of the table, indented under the
                title it belongs to. Only when there is one: most rows are the
-               table, and this is the exception that explains one. */}}
+               table, and this is the exception that explains one.
+
+               It carries the same depth as its title, so prose under an
+               indented project lines up with the project rather than with the
+               margin — otherwise a child's summary reads as belonging to
+               whatever is furthest left. */}}
           {{if .Summary}}
-          <tr class="detail{{if .Expired}} expired{{end}}">
+          <tr class="detail depth{{.Depth}}{{if .Expired}} expired{{end}}{{if .Context}} context{{end}}">
             <td></td>
             <td colspan="7"><div class="prose">{{.Summary}}</div></td>
           </tr>

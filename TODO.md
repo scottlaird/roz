@@ -76,6 +76,17 @@ bites; not worth one before.
   name, so `the *old* pipeline` keeps its asterisks there. `jira_issue.summary`
   is observed and stays plain — it is not ours to interpret — and `event.note`
   stays plain because the log is not rendered anywhere.
+- **A pattern is matched against a run of adjacent text nodes, not one node.**
+  goldmark splits on a `[` that might have opened a link, so `see [[SL7]] for
+  why` arrives as four text nodes — `see [`, `[`, `SL7]`, `] for why` — and
+  `[[SL7]]` appears in none of them. Matched per node the wiki form never
+  fired, only the bare identifier inside it did, and the brackets were left
+  stranded around the anchor. A run stops at anything that is not plain
+  adjacent text, so a code span or a hand-written link still breaks it and
+  their contents stay literal. The alternative was a goldmark inline parser for
+  `[[`, which would have meant two definitions of the syntax — one for the
+  Markdown path and one for the plain one — and the point of sharing `find` is
+  that a reference cannot mean different things in a title and in a summary.
 - **Linkification is an AST transformer, not a regex.** goldmark parses, and a
   transformer visits text nodes only, which is the difference between linking
   an identifier and rewriting one inside a code span, inside the text of a link

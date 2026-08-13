@@ -28,7 +28,18 @@ type Overdue struct {
 	// Waiting is how long it has been, rounded to whole days for a message
 	// nobody has to parse.
 	Waiting int
+	// RankClass is the verb's, and decides whether this needed an item of its
+	// own: the queue leaves waits out, and shows everything else.
+	RankClass string
 }
+
+// InQueue reports whether the action is already something a person will meet
+// without being told.
+//
+// The same test `--unblocked` makes, deliberately: an item is invisible in the
+// queue exactly when its rank class is wait, so that is exactly when an
+// overdue report has to produce something else to look at.
+func (o Overdue) InQueue() bool { return o.RankClass != RankWait }
 
 // overdueQuery finds open actions past their deadline that have not already
 // been reported for this wait.
@@ -77,7 +88,8 @@ SELECT %s,
                          datetime(max(datetime(a.created_at),
                                       datetime(coalesce(a.ready_since, a.created_at)),
                                       datetime(coalesce(a.waiting_since, a.created_at))),
-                                  '+' || v.wait_days || ' days'))) AS deadline
+                                  '+' || v.wait_days || ' days'))) AS deadline,
+       v.rank_class
   FROM action a
   JOIN actionverb v ON v.verb = a.verb
  WHERE a.closed_at IS NULL
@@ -85,11 +97,44 @@ SELECT %s,
    AND a.hidden_behind IS NULL
    AND (v.wait_days IS NOT NULL OR a.okay_to_wait_until IS NOT NULL)
    AND deadline < datetime(?)
-   AND NOT EXISTS (
+%s
+ ORDER BY deadline, a.n`
+
+// unreported is the clause that makes OverdueWaits idempotent, and the only
+// difference between finding what is late and finding what is newly late.
+const unreported = `   AND NOT EXISTS (
          SELECT 1 FROM event e
           WHERE e.subject_type = 'action' AND e.subject_id = a.id
-            AND e.kind = ? AND datetime(e.at) >= deadline)
- ORDER BY deadline, a.n`
+            AND e.kind = ? AND datetime(e.at) >= deadline)`
+
+// LateActions returns how many days past its deadline each open action is.
+//
+// Read-only, and it asks about everything late rather than everything newly
+// late: a listing shows a state, where reporting announces a change.
+//
+// It exists because an action already in the queue is told about by marking it
+// rather than by raising a second item — so without this the allowance on a
+// verb like `merge` would mean nothing anybody could see, which is the failure
+// the whole mechanism is meant to prevent.
+func (s *Store) LateActions(ctx context.Context) (map[string]int, error) {
+	now := s.now()
+	query := fmt.Sprintf(overdueQuery, strings.Join([]string{"a.id"}, ", "), "")
+	rows, err := s.db.QueryContext(ctx, query, ActionReady, now.UTC().Format(timeFormat))
+	if err != nil {
+		return nil, fmt.Errorf("finding late actions: %w", err)
+	}
+	defer rows.Close()
+
+	late := map[string]int{}
+	for rows.Next() {
+		var id, deadline, rankClass string
+		if err := rows.Scan(&id, &deadline, &rankClass); err != nil {
+			return nil, fmt.Errorf("finding late actions: %w", err)
+		}
+		late[id] = daysPast(deadline, now)
+	}
+	return late, rows.Err()
+}
 
 // OverdueWaits reports the actions that have been waiting too long, raising
 // one exception each.
@@ -116,7 +161,7 @@ func (s *Store) OverdueWaits(ctx context.Context, actor Actor) ([]Overdue, error
 	// diverge under test is a bug waiting for a Tuesday.
 	now := s.now()
 	at := now.UTC().Format(timeFormat)
-	query := fmt.Sprintf(overdueQuery, strings.Join(columns, ", "))
+	query := fmt.Sprintf(overdueQuery, strings.Join(columns, ", "), unreported)
 	rows, err := s.db.QueryContext(ctx, query, ActionReady, at, EventWaitedTooLong)
 	if err != nil {
 		return nil, fmt.Errorf("finding overdue waits: %w", err)
@@ -131,14 +176,16 @@ func (s *Store) OverdueWaits(ctx context.Context, actor Actor) ([]Overdue, error
 		for _, f := range fields {
 			dest = append(dest, f.pointerOf(&a))
 		}
-		dest = append(dest, &deadline)
+		var rankClass string
+		dest = append(dest, &deadline, &rankClass)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, fmt.Errorf("finding overdue waits: %w", err)
 		}
 		overdue = append(overdue, Overdue{
-			Action:   &a,
-			Deadline: deadline,
-			Waiting:  daysSince(waitStartedAt(&a), now),
+			Action:    &a,
+			Deadline:  deadline,
+			Waiting:   daysSince(waitStartedAt(&a), now),
+			RankClass: rankClass,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -148,6 +195,17 @@ func (s *Store) OverdueWaits(ctx context.Context, actor Actor) ([]Overdue, error
 	for i := range overdue {
 		if err := s.reportOverdue(ctx, actor, overdue[i]); err != nil {
 			return nil, err
+		}
+		// Only for the ones the queue leaves out. An action already in the
+		// queue is already something a person meets; adding a second row about
+		// it is two items for one piece of work, and the second cannot be
+		// cleared by doing the first.
+		//
+		// This is why the test is the rank class rather than how the verb
+		// closes. `merge` closes on a predicate and sits in the queue like any
+		// other item, so an overdue merge needs no twin either.
+		if overdue[i].InQueue() {
+			continue
 		}
 		// The log has it either way; this is what makes it something a person
 		// meets rather than something they have to go looking for.
@@ -177,6 +235,26 @@ func (s *Store) reportOverdue(ctx context.Context, actor Actor, o Overdue) error
 		return err
 	}
 	return tx.Commit()
+}
+
+// sqliteTime is what datetime() returns: no T, no zone, no fraction. The
+// deadline is computed in SQL rather than stored, so it comes back in this
+// shape rather than in the store's own format.
+const sqliteTime = "2006-01-02 15:04:05"
+
+// daysPast is how many whole days a deadline has been missed by, which is zero
+// for one missed an hour ago. Presence in the map is what says late; this only
+// says by how much.
+func daysPast(deadline string, now time.Time) int {
+	passed, err := time.Parse(sqliteTime, deadline)
+	if err != nil {
+		return 0
+	}
+	days := int(now.UTC().Sub(passed).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	return days
 }
 
 // waitStartedAt is when the clock started: the latest of the three the query

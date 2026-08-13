@@ -70,6 +70,8 @@
   li.session::before,li.session .id{color:var(--session)}
   li.wait{border-left-color:var(--wait);background:var(--wait-bg)}
   li.wait::before,li.wait .id{color:var(--wait)}
+  li.late{border-left-color:var(--bad)}
+  span.overdue{color:var(--bad);font-size:.85em;margin-left:.5em;white-space:nowrap}
   li.expired{border-left-color:var(--bad);background:var(--bad-bg)}
   li.expired::before,li.expired .id{color:var(--bad)}
 
@@ -154,10 +156,11 @@
     {{if .Queue}}
     <ol class="queue">
       {{range .Queue}}
-      <li id="{{.ID}}" class="{{.RankClass}}{{if .Expired}} expired{{end}}">
+      <li id="{{.ID}}" class="{{.RankClass}}{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
         <div class="do">
           {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
           <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
+          {{if .Late}}<span class="overdue">{{.Late}}</span>{{end}}
         </div>
         {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}
         {{template "refs" .}}
@@ -172,7 +175,7 @@
     <h2>waiting — not the queue, but not nothing</h2>
     <ol class="queue">
       {{range .Waiting}}
-      <li id="{{.ID}}" class="wait{{if .Expired}} expired{{end}}">
+      <li id="{{.ID}}" class="wait{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
         <div class="do">
           {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
           <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>

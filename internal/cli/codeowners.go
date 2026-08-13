@@ -13,6 +13,7 @@ import (
 
 	"github.com/scottlaird/roz/internal/codeowners"
 	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 const (
@@ -91,10 +92,125 @@ func runCodeowners(cmd *cobra.Command, _ []string) error {
 	}
 	approvedBy = append(approvedBy, given...)
 
+	// Who this repository would rather go to first, where the change names one
+	// roz tracks. A preference is per-repository, so a bare --path has none.
+	hints, members, err := preferencesFor(cmd, owners)
+	if err != nil {
+		return err
+	}
+
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "owners  %s\n", source)
-	return reportOwnership(out, owners.Of(paths),
-		codeowners.Approval(approvedBy, teams), len(approvedBy) > 0)
+	ownership := owners.Of(paths)
+	approved := codeowners.Approval(approvedBy, teams)
+	if err := reportOwnership(out, ownership, approved, len(approvedBy) > 0); err != nil {
+		return err
+	}
+	return reportRoute(out, ownership, approved, hints, members)
+}
+
+// preferencesFor reads a repository's preferred owners, and the team
+// membership needed to tell whether one of them stands for an owner.
+//
+// Both are optional. Without hints the routing is the greedy coverage answer;
+// without membership the subset case is lost and everything else still works.
+func preferencesFor(cmd *cobra.Command, file *codeowners.File) ([]codeowners.Owner, codeowners.Membership, error) {
+	key, err := cmd.Flags().GetString(flagForPR)
+	if err != nil || key == "" {
+		return nil, nil, err
+	}
+	repo, _, err := store.ParsePRKey(key)
+	if err != nil {
+		return nil, nil, nil
+	}
+
+	// Quietly none where there is no database to read. This command reasons
+	// about CODEOWNERS and GitHub, and worked before roz tracked anything —
+	// requiring a database for an optional preference would take that away.
+	st, err := openStore(cmd)
+	if err != nil {
+		return nil, nil, nil
+	}
+	defer st.Close()
+
+	tx, err := st.Begin(cmd.Context(), store.ActorHuman)
+	if err != nil {
+		return nil, nil, nil
+	}
+	defer tx.Rollback()
+
+	stored, err := tx.OwnerHints(cmd.Context(), repo)
+	if err != nil {
+		return nil, nil, nil
+	}
+	if len(stored) == 0 {
+		return nil, nil, nil
+	}
+	hints := make([]codeowners.Owner, 0, len(stored))
+	for _, owner := range stored {
+		hints = append(hints, codeowners.NormalizeOwner(owner))
+	}
+
+	// Membership for the owners in the file *and* the hinted ones: the case
+	// worth having is a hint that appears in no rule, so asking only about the
+	// file's teams would miss exactly the teams this is for.
+	wanted := file.Teams()
+	for _, hint := range hints {
+		if hint.IsTeam() {
+			wanted = append(wanted, hint)
+		}
+	}
+	return hints, membershipOf(cmd, wanted), nil
+}
+
+// membershipOf reads who belongs to each team, for the subset test.
+//
+// A live read, and this is routing rather than reduction: it happens before
+// anybody has approved, so there is no approval to fall back on. Where it
+// fails, routing carries on from CODEOWNERS alone and only the subset case is
+// lost — a hinted team that owns nothing simply gets skipped, which is the
+// same answer as before hints existed.
+func membershipOf(cmd *cobra.Command, teams []codeowners.Owner) codeowners.Membership {
+	if len(teams) == 0 {
+		return nil
+	}
+	refs := make([]string, len(teams))
+	for i, team := range teams {
+		refs[i] = string(team)
+	}
+
+	members, err := newChangeReader().TeamMembers(cmd.Context(), refs)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: could not read team membership, so a preferred team that owns "+
+				"nothing directly cannot be routed to: %v\n", err)
+		return nil
+	}
+	return codeowners.NewStaticMembership(members)
+}
+
+// reportRoute prints who to ask, in order, and why each one.
+//
+// The why is the point. Routing that cannot be accounted for is the folklore
+// this replaces, just written down somewhere less visible.
+func reportRoute(out io.Writer, o *codeowners.Ownership, approved codeowners.OwnerSet,
+	hints []codeowners.Owner, members codeowners.Membership) error {
+
+	tiers := o.Route(approved, hints, members)
+	if len(tiers) == 0 {
+		return nil
+	}
+
+	fmt.Fprintln(out, "\nask, in order")
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	for i, tier := range tiers {
+		why := tier.Reason
+		if len(tier.StandsFor) > 0 {
+			why = fmt.Sprintf("%s (%s)", why, joinOwners(tier.StandsFor))
+		}
+		fmt.Fprintf(w, "  %d. %s\t%d files\t%s\n", i+1, tier.Owner, tier.Files, why)
+	}
+	return w.Flush()
 }
 
 // changeUnderReview resolves what to reason about: a pull request GitHub can

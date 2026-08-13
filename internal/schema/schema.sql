@@ -461,6 +461,25 @@ CREATE TABLE project_tracker_issue (
 -- "one item covering two unrelated PRs" unrepresentable rather than merely wrong
 CREATE UNIQUE INDEX action_one_subject ON action_pr(action_id) WHERE role = 'subject';
 
+-- The owners a repository would rather go to first.
+--
+-- A preference, never an assertion: each is checked against what is actually
+-- outstanding in a given change before it is used, so a hint that owns nothing
+-- there is skipped rather than asked. Hints order what CODEOWNERS already
+-- requires and never substitute for it.
+--
+-- Ordered, so a sub-table rather than a column -- a repository legitimately has
+-- several tiers, and "try these, in this order" is the whole content of it. An
+-- owner need not appear in CODEOWNERS: a team whose members all belong to an
+-- owning team is usable, since the approval it produces satisfies the rule.
+-- See 0025.
+CREATE TABLE repo_owner_hint (
+  repo_id  TEXT NOT NULL REFERENCES github_repo(id),
+  position INTEGER NOT NULL,
+  owner    TEXT NOT NULL CHECK (owner <> ''),
+  PRIMARY KEY (repo_id, position)
+) STRICT;
+
 -- ── git refs ─────────────────────────────────────────────────────────
 -- A branch or tag as GitHub last reported it. Observed, written only by sync.
 --

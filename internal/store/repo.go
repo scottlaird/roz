@@ -203,3 +203,60 @@ func (s *Store) ShortNames(ctx context.Context) (map[string]string, error) {
 	}
 	return names, rows.Err()
 }
+
+// OwnerHints returns the owners a repository prefers, in order.
+//
+// A preference, checked against coverage before it is used. Empty is the
+// ordinary case: a repository with no hints still routes from CODEOWNERS
+// alone.
+func (t *Tx) OwnerHints(ctx context.Context, repo string) ([]string, error) {
+	rows, err := t.tx.QueryContext(ctx,
+		"SELECT owner FROM repo_owner_hint WHERE repo_id = ? ORDER BY position", repo)
+	if err != nil {
+		return nil, fmt.Errorf("reading the preferred owners of %s: %w", repo, err)
+	}
+	defer rows.Close()
+
+	var hints []string
+	for rows.Next() {
+		var owner string
+		if err := rows.Scan(&owner); err != nil {
+			return nil, fmt.Errorf("reading the preferred owners of %s: %w", repo, err)
+		}
+		hints = append(hints, owner)
+	}
+	return hints, rows.Err()
+}
+
+// SetOwnerHints replaces a repository's preferred owners, logging the change.
+//
+// Replaces rather than edits, the way a pipeline's steps do: the list is short
+// and ordered, and "the preference is now this" is the only edit anybody makes
+// to one.
+func (t *Tx) SetOwnerHints(ctx context.Context, r *GitHubRepo, hints []string) error {
+	before, err := t.OwnerHints(ctx, r.ID)
+	if err != nil {
+		return err
+	}
+	if _, err := t.tx.ExecContext(ctx,
+		"DELETE FROM repo_owner_hint WHERE repo_id = ?", r.ID); err != nil {
+		return fmt.Errorf("clearing the preferred owners of %s: %w", r.ID, err)
+	}
+	for i, owner := range hints {
+		if _, err := t.tx.ExecContext(ctx,
+			"INSERT INTO repo_owner_hint (repo_id, position, owner) VALUES (?, ?, ?)",
+			r.ID, i+1, owner); err != nil {
+			return fmt.Errorf("writing preferred owner %d of %s: %w", i+1, r.ID, err)
+		}
+	}
+
+	// Rows rather than a column, so the diff cannot see them. Logged here as
+	// one change to the preference rather than one per row.
+	from, to := strings.Join(before, ", "), strings.Join(hints, ", ")
+	if from == to {
+		return nil
+	}
+	return t.emit(ctx, r, event{
+		kind: eventChanged, field: "owner_hints", oldValue: from, newValue: to,
+	})
+}

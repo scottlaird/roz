@@ -540,3 +540,104 @@ func TestIdentifiersInProseAndCodeSpans(t *testing.T) {
 		t.Errorf("Render() = %q, want a code span left alone", got)
 	}
 }
+
+// TestWikiReferencesThroughMarkdown is the same three requirements again, on
+// the path every prose field actually renders through.
+//
+// They were only ever checked against Text(), which parses nothing. goldmark
+// splits on a `[` that might have opened a link, so `see [[SL7]] for why`
+// arrives as four text nodes and `[[SL7]]` appears in none of them — the
+// pattern never matched, the bare identifier inside it did, and the brackets
+// were left stranded around the anchor.
+func TestWikiReferencesThroughMarkdown(t *testing.T) {
+	r := NewRenderer(withRefs())
+
+	tests := []struct {
+		name, src, want string
+	}{
+		{
+			name: "a reference that resolves",
+			src:  "see [[SL7]] for why",
+			want: `<p>see <a href="#SL7">SL7</a> for why</p>`,
+		},
+		{
+			name: "a reference to nothing keeps its text and loses its brackets",
+			src:  "see [[NA999]] for why",
+			want: "<p>see NA999 for why</p>",
+		},
+		{
+			name: "at the start of a line",
+			src:  "[[SL7]] first",
+			want: `<p><a href="#SL7">SL7</a> first</p>`,
+		},
+		{
+			name: "at the end of a line",
+			src:  "ends with [[SL7]]",
+			want: `<p>ends with <a href="#SL7">SL7</a></p>`,
+		},
+		{
+			name: "inside emphasis",
+			src:  "**bold [[SL7]]** after",
+			want: `<p><strong>bold <a href="#SL7">SL7</a></strong> after</p>`,
+		},
+		{
+			name: "two on one line",
+			src:  "[[SL7]] and [[NA57]]",
+			want: `<p><a href="#SL7">SL7</a> and <a href="#NA57" title="Write the priority entity">NA57</a></p>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strings.TrimSpace(string(r.Render(tt.src)))
+			if got != tt.want {
+				t.Errorf("Render(%q) =\n  %s\nwant\n  %s", tt.src, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWikiReferenceInACodeSpanStaysLiteral: a code span is somebody writing
+// about the syntax, and joining text nodes must not reach inside one.
+func TestWikiReferenceInACodeSpanStaysLiteral(t *testing.T) {
+	got := string(NewRenderer(withRefs()).Render("a `[[SL7]]` code span"))
+
+	if !strings.Contains(got, "<code>[[SL7]]</code>") {
+		t.Errorf("Render() = %q, want the code span left alone", got)
+	}
+	if strings.Contains(got, `href="#SL7"`) {
+		t.Errorf("Render() = %q, want no link inside a code span", got)
+	}
+}
+
+// TestWikiReferenceBesideAWrittenLink: a hand-written link is its own node and
+// breaks a run, so the reference after it still has to be found.
+func TestWikiReferenceBesideAWrittenLink(t *testing.T) {
+	got := string(NewRenderer(withRefs()).Render("a [link](https://example.com) and [[SL7]]"))
+
+	if !strings.Contains(got, `<a href="https://example.com">link</a>`) {
+		t.Errorf("Render() = %q, want the written link untouched", got)
+	}
+	if !strings.Contains(got, `<a href="#SL7">SL7</a>`) {
+		t.Errorf("Render() = %q, want the reference linked", got)
+	}
+	if strings.Contains(got, "[[") {
+		t.Errorf("Render() = %q, want no stray brackets", got)
+	}
+}
+
+// TestWikiReferencesAcrossASoftBreak: a run ends at a line break, so a
+// reference on each line is found and the lines do not run together.
+func TestWikiReferencesAcrossASoftBreak(t *testing.T) {
+	got := string(NewRenderer(withRefs()).Render("first [[SL7]]\nsecond [[NA57]]"))
+
+	if strings.Count(got, "<a ") != 2 {
+		t.Errorf("Render() = %q, want both references linked", got)
+	}
+	if !strings.Contains(got, "\n") {
+		t.Errorf("Render() = %q, want the line break kept", got)
+	}
+	if strings.Contains(got, "[[") {
+		t.Errorf("Render() = %q, want no stray brackets", got)
+	}
+}

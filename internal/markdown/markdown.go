@@ -426,8 +426,8 @@ func (t *linkTransformer) Transform(doc *ast.Document, reader text.Reader, _ par
 		return ast.WalkContinue, nil
 	})
 
-	for _, node := range targets {
-		t.rewrite(node, source)
+	for _, run := range runsOf(targets) {
+		t.rewrite(run, source)
 	}
 	// Hand-written links, annotated the same way the generated ones are: what
 	// a link points at is a property of its destination, not of how it came to
@@ -448,28 +448,80 @@ func (t *linkTransformer) annotate(node *ast.Link) {
 	}
 }
 
-// rewrite replaces one text node with the alternating text and link nodes its
-// identifiers imply.
-func (t *linkTransformer) rewrite(node *ast.Text, source []byte) {
-	segment := node.Segment
-	parent := node.Parent()
-	// Padding is the synthetic leading space of a continuation line, which
-	// means the node's text is not exactly source[Start:Stop] and the offsets
-	// below would be off. It is rare, and skipping it loses a link rather than
-	// corrupting a line.
-	if parent == nil || segment.Padding != 0 {
+// runsOf groups text nodes into maximal runs of adjacent siblings covering
+// consecutive source.
+//
+// A pattern has to be matched against what the author wrote, and one text node
+// is not that. goldmark splits on a `[` that might have opened a link, so
+// `see [[SL7]] for why` arrives as four nodes — "see [", "[", "SL7]",
+// "] for why" — and `[[SL7]]` appears in none of them. Matched per node, the
+// wiki form never fires and only the bare identifier inside it does, which is
+// how the brackets survived into the output.
+//
+// A run stops at anything that is not plain adjacent text, so a code span or a
+// hand-written link still breaks it: those are separate node kinds the walk
+// never collects, and their contents stay literal.
+//
+// Padding is the synthetic leading space of a continuation line, which means a
+// node's text is not exactly source[Start:Stop]. Those are dropped rather than
+// joined: rare, and skipping one loses a link where including it would corrupt
+// a line.
+func runsOf(targets []*ast.Text) [][]*ast.Text {
+	var runs [][]*ast.Text
+	var current []*ast.Text
+
+	for _, node := range targets {
+		if node.Parent() == nil || node.Segment.Padding != 0 {
+			current = nil
+			continue
+		}
+		if len(current) > 0 {
+			prev := current[len(current)-1]
+			// A break belongs to the node that carries it, so a run ends
+			// there rather than spanning two lines.
+			joins := prev.NextSibling() == ast.Node(node) &&
+				prev.Segment.Stop == node.Segment.Start &&
+				!prev.SoftLineBreak() && !prev.HardLineBreak()
+			if !joins {
+				runs = append(runs, current)
+				current = nil
+			}
+		}
+		current = append(current, node)
+	}
+	if len(current) > 0 {
+		runs = append(runs, current)
+	}
+	return runs
+}
+
+// rewrite replaces a run of text nodes with the alternating text and link
+// nodes its identifiers imply.
+func (t *linkTransformer) rewrite(run []*ast.Text, source []byte) {
+	if len(run) == 0 {
 		return
 	}
+	node, last := run[0], run[len(run)-1]
+	parent := node.Parent()
+	if parent == nil {
+		return
+	}
+	// One segment spanning the whole run: the nodes are adjacent and cover
+	// consecutive source, so the offsets a match reports are offsets into this.
+	segment := text.NewSegment(node.Segment.Start, last.Segment.Stop)
+
 	value := string(source[segment.Start:segment.Stop])
 	refs := t.links.find(value)
 	if len(refs) == 0 {
 		return
 	}
 
-	var last ast.Node
+	// written is the most recent node inserted, which the line-break flag may
+	// have to be attached to.
+	var written ast.Node
 	insert := func(n ast.Node) {
 		parent.InsertBefore(parent, node, n)
-		last = n
+		written = n
 	}
 
 	at := 0
@@ -499,17 +551,19 @@ func (t *linkTransformer) rewrite(node *ast.Text, source []byte) {
 	// its own, so it has to be carried across. When the line ends on the link
 	// itself there is no text node left to carry it, and an empty one is added
 	// rather than letting two lines run together.
-	if node.SoftLineBreak() || node.HardLineBreak() {
-		tail, ok := last.(*ast.Text)
+	if last.SoftLineBreak() || last.HardLineBreak() {
+		tail, ok := written.(*ast.Text)
 		if !ok {
 			tail = ast.NewTextSegment(text.NewSegment(segment.Stop, segment.Stop))
 			insert(tail)
 		}
-		tail.SetSoftLineBreak(node.SoftLineBreak())
-		tail.SetHardLineBreak(node.HardLineBreak())
+		tail.SetSoftLineBreak(last.SoftLineBreak())
+		tail.SetHardLineBreak(last.HardLineBreak())
 	}
 
-	parent.RemoveChild(parent, node)
+	for _, n := range run {
+		parent.RemoveChild(parent, n)
+	}
 }
 
 // validator parses for Validate. It renders nothing, so it needs none of the

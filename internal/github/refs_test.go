@@ -523,3 +523,76 @@ func TestKnownIsAskedAboutTheWholeName(t *testing.T) {
 		t.Errorf("Known was asked about %q, want the stored name", asked)
 	}
 }
+
+// TestABranchReadDoesNotStopAtWhatItRecognises is the difference between the
+// two orderings, and it is a correctness difference rather than a cost one.
+//
+// Tags come back newest-first, so meeting a known one means the read has
+// caught up. Branches come back alphabetically, so a new branch sorts wherever
+// its name falls — and the first page stays old and familiar for ever, which
+// would hide anything named late in the alphabet.
+func TestABranchReadDoesNotStopAtWhatItRecognises(t *testing.T) {
+	pages := func() func(context.Context, string) ([]byte, error) {
+		var n int
+		return func(context.Context, string) ([]byte, error) {
+			n++
+			if n == 1 {
+				return []byte(`{"data":{"ref0":{"refs":{"totalCount":300,
+				  "pageInfo":{"hasNextPage":true,"endCursor":"C1"},
+				  "nodes":[{"name":"aaa-old","target":{"oid":"a"}}]}}}}`), nil
+			}
+			return []byte(`{"data":{"ref0":{"refs":{
+			  "pageInfo":{"hasNextPage":false,"endCursor":""},
+			  "nodes":[{"name":"zzz-new","target":{"oid":"z"}}]}}}}`), nil
+		}
+	}
+	known := func(name string) bool { return name == "aaa-old" }
+
+	branches := NewWithRunner(pages())
+	result, err := branches.Refs(context.Background(), []RefQuery{{
+		Repo: "acme/api", Prefix: "refs/heads/", Known: known,
+	}})
+	if err != nil {
+		t.Fatalf("Refs() returned error: %v", err)
+	}
+	var found bool
+	for _, r := range result.Refs {
+		if r.Name == "zzz-new" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a branch sorting after the first page was never read")
+	}
+
+	// Tags keep the optimisation, because for them it is sound.
+	tags := NewWithRunner(pages())
+	if _, err := tags.Refs(context.Background(), []RefQuery{{
+		Repo: "acme/api", Prefix: "refs/tags/", Known: known,
+	}}); err != nil {
+		t.Fatalf("Refs() returned error: %v", err)
+	}
+}
+
+// TestABranchReadStillStopsWhenExhausted: the usual branch namespace is small
+// — aws/aws-sdk-go-v2 has 32 — so one page answers it and there is no second
+// request to make.
+func TestABranchReadStillStopsWhenExhausted(t *testing.T) {
+	var asked int
+	client := NewWithRunner(func(context.Context, string) ([]byte, error) {
+		asked++
+		return []byte(`{"data":{"ref0":{"refs":{"totalCount":32,
+		  "pageInfo":{"hasNextPage":false,"endCursor":""},
+		  "nodes":[{"name":"main","target":{"oid":"a"}}]}}}}`), nil
+	})
+
+	if _, err := client.Refs(context.Background(), []RefQuery{{
+		Repo: "acme/api", Prefix: "refs/heads/",
+		Known: func(string) bool { return true },
+	}}); err != nil {
+		t.Fatalf("Refs() returned error: %v", err)
+	}
+	if asked != 1 {
+		t.Errorf("asked %d times for a namespace that fits one page, want 1", asked)
+	}
+}

@@ -398,3 +398,57 @@ func (s *Store) IssuesByProject(ctx context.Context) (map[string][]*TrackerIssue
 	}
 	return byProject, rows.Err()
 }
+
+// IssueKeys returns the keys of every issue held for one tracker.
+//
+// Keys rather than records, because the caller is about to ask the tracker
+// about them: what roz has stored is exactly what a poll is going to replace.
+func (s *Store) IssueKeys(ctx context.Context, tracker string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT key FROM tracker_issue WHERE tracker = ? ORDER BY key", tracker)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s issues: %w", tracker, err)
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("reading %s issues: %w", tracker, err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+// OpenActionsForIssue returns the open actions on every project that tracks an
+// issue.
+//
+// The question behind "this closed, and there is still work against it". A
+// project may track several issues and an issue may be tracked by several
+// projects, so this is deliberately the union rather than an attempt to say
+// which action belongs to which issue — nothing records that, and guessing
+// would put the wrong work in the message.
+func (s *Store) OpenActionsForIssue(ctx context.Context, issueID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT a.id
+		FROM project_tracker_issue j
+		JOIN action a ON a.project_id = j.project_id
+		WHERE j.issue_id = ? AND a.closed_at IS NULL
+		ORDER BY a.n`, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("reading the open actions against %s: %w", issueID, err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("reading the open actions against %s: %w", issueID, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

@@ -32,7 +32,9 @@ func newSyncCmd() *cobra.Command {
 			"so the store refuses any attempt to touch an authored column.\n\n" +
 			"Pull requests are polled in batches through one GraphQL query each, so\n" +
 			"the cost is a handful of rate limit points however many are tracked.\n" +
-			"Only pull requests already tracked with `roz pr track` are polled.",
+			"Only pull requests already tracked with `roz pr track` are polled.\n\n" +
+			"Issues a project tracks through `roz project link-issue --tracker github`\n" +
+			"are read the same way: title, state, milestone and assignees.",
 		Args: cobra.ExactArgs(1),
 		RunE: runSync,
 	}
@@ -81,6 +83,14 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	for _, key := range sortedKeys(result.Backfilled) {
 		fmt.Fprintf(out, "%s: %d recorded on the first poll\n", key, result.Backfilled[key])
 	}
+	for _, issue := range result.Issues {
+		for _, change := range issue.Changes {
+			fmt.Fprintf(out, "%s %s\n", issue.Key, change)
+		}
+	}
+	for _, note := range result.IssuesClosedWithWork {
+		fmt.Fprintf(out, "%s\n", note)
+	}
 	for _, o := range result.Owners {
 		fmt.Fprintf(out, "%s needs %s\n", o.PR, ownersText(o.Required))
 	}
@@ -111,6 +121,11 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		}
 		if result.OverdueCount() > 0 {
 			fmt.Fprintf(out, ", %d overdue", result.OverdueCount())
+		}
+		if result.IssuesPolled == 1 {
+			fmt.Fprint(out, ", 1 issue polled")
+		} else if result.IssuesPolled > 1 {
+			fmt.Fprintf(out, ", %d issues polled", result.IssuesPolled)
 		}
 		if result.RefsPolled > 0 {
 			fmt.Fprintf(out, ", %d ref queries", result.RefsPolled)

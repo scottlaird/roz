@@ -52,6 +52,15 @@ type Result struct {
 	// something open already covered merging it.
 	Ejected []store.Ejected
 
+	// IssuesPolled is how many tracked issues were asked about. Counted apart
+	// from Polled because "polled 0" over a database of nothing but issues
+	// would otherwise read as though the sync had done nothing.
+	IssuesPolled int
+	// Issues lists the tracked issues whose state moved this poll.
+	Issues []store.TrackerApplied
+	// IssuesClosedWithWork lists the issues that closed while actions against
+	// them were still open, as the note each was reported with.
+	IssuesClosedWithWork []string
 	// Owners lists the pull requests whose required reviewers changed, worked
 	// out from the files they touch against the repository's CODEOWNERS.
 	Owners []Owners
@@ -109,6 +118,15 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 	// to be in place before Settle asks whether it arrived.
 	if err := syncRefs(ctx, st, client, &result); err != nil {
 		return Result{}, err
+	}
+
+	// Issues too, and for the same reason: a project can track one in a
+	// database with no pull requests at all, and the early return below would
+	// otherwise skip them entirely.
+	if reader, ok := client.(IssueReader); ok {
+		if err := syncIssues(ctx, st, reader, &result); err != nil {
+			return Result{}, err
+		}
 	}
 
 	tracked, err := st.ListPRs(ctx, store.PRFilter{})

@@ -280,3 +280,123 @@ func TestTrackerObservationsAreLoggedAsManual(t *testing.T) {
 		t.Error("no status event was written against the issue")
 	}
 }
+
+// TestIssueKeysAreScopedToTheirTracker: a sync asks about the issues of one
+// tracker, and a Jira key means nothing to GitHub.
+func TestIssueKeysAreScopedToTheirTracker(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	p := insertProject(t, st, "the work")
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	for _, link := range []struct{ tracker, key string }{
+		{TrackerGitHub, "owner/repo#7"},
+		{TrackerGitHub, "owner/repo#3"},
+		{TrackerJira, "CDSS-1744"},
+	} {
+		if err := tx.LinkProjectIssue(ctx, p.ID, link.tracker, link.key); err != nil {
+			t.Fatalf("LinkProjectIssue() returned error: %v", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	got, err := st.IssueKeys(ctx, TrackerGitHub)
+	if err != nil {
+		t.Fatalf("IssueKeys() returned error: %v", err)
+	}
+	want := []string{"owner/repo#3", "owner/repo#7"}
+	if len(got) != len(want) {
+		t.Fatalf("IssueKeys() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("IssueKeys()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestOpenActionsForIssueIsTheUnionOverProjects: an issue may be tracked by
+// more than one project, and nothing records which action belongs to which
+// issue, so the answer is every open action on every project that tracks it.
+func TestOpenActionsForIssueIsTheUnionOverProjects(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	first := insertProject(t, st, "the work")
+	second := insertProject(t, st, "the other half")
+	other := insertProject(t, st, "something else")
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	for _, p := range []*Project{first, second} {
+		if err := tx.LinkProjectIssue(ctx, p.ID, TrackerGitHub, "owner/repo#7"); err != nil {
+			t.Fatalf("LinkProjectIssue() returned error: %v", err)
+		}
+	}
+	if err := tx.LinkProjectIssue(ctx, other.ID, TrackerGitHub, "owner/repo#8"); err != nil {
+		t.Fatalf("LinkProjectIssue() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	open := actionOn(t, st, first, "finish it")
+	alsoOpen := actionOn(t, st, second, "and this")
+	actionOn(t, st, other, "not this")
+	closed := actionOn(t, st, first, "already done")
+	closeAction(t, st, closed)
+
+	got, err := st.OpenActionsForIssue(ctx, IssueID(TrackerGitHub, "owner/repo#7"))
+	if err != nil {
+		t.Fatalf("OpenActionsForIssue() returned error: %v", err)
+	}
+	want := []string{open.ID, alsoOpen.ID}
+	if len(got) != len(want) {
+		t.Fatalf("OpenActionsForIssue() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("OpenActionsForIssue()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// actionOn adds an open action to a project.
+func actionOn(t *testing.T, st *Store, p *Project, title string) *Action {
+	t.Helper()
+	ctx := context.Background()
+
+	a := NewAction(title, "write")
+	a.ProjectID = sql.NullString{String: p.ID, Valid: true}
+	if err := st.AllocateAction(ctx, a); err != nil {
+		t.Fatalf("AllocateAction() returned error: %v", err)
+	}
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+	if err := tx.Insert(ctx, a); err != nil {
+		t.Fatalf("Insert() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return a
+}
+
+func closeAction(t *testing.T, st *Store, a *Action) {
+	t.Helper()
+
+	if _, err := st.CloseAction(context.Background(), ActorHuman,
+		CloseRequest{ID: a.ID}); err != nil {
+		t.Fatalf("CloseAction() returned error: %v", err)
+	}
+}

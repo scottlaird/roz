@@ -116,16 +116,16 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 	}
 
 	for start := 0; start < len(queries); start += BatchSize {
-		batch := queries[start:min(start+BatchSize, len(queries))]
+		queryBatch := queries[start:min(start+BatchSize, len(queries))]
 
 		// cursors carries where each query has read up to; a query leaves the
 		// map when it is exhausted or has failed.
-		cursors := make(map[int]string, len(batch))
-		for i := range batch {
+		cursors := make(map[int]string, len(queryBatch))
+		for i := range queryBatch {
 			cursors[i] = ""
 		}
 
-		read := make(map[int]int, len(batch))
+		read := make(map[int]int, len(queryBatch))
 		var matched map[int]int
 
 		// caughtUp holds the queries that stopped because they recognised
@@ -133,7 +133,16 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 		caughtUp := map[int]bool{}
 
 		for page := 0; page < RefMaxPages && len(cursors) > 0; page++ {
-			query, aliases := buildRefQuery(batch, cursors)
+			query, aliases := buildRefQuery(queryBatch, cursors)
+
+			// Counted from the cursors rather than the batch: a query that has
+			// finished or failed has left, so this is what the request actually
+			// asked about.
+			b := batch{
+				op: opRefs, entities: len(cursors),
+				index: start/BatchSize + 1, total: batches(len(queries)),
+				page: page + 1,
+			}
 
 			body, err := c.run(ctx, query)
 			if err == nil {
@@ -158,7 +167,7 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 					// named late in the alphabet was never seen at all: the
 					// first page would be old and familiar for ever.
 					for i := range pageResult.recognised {
-						if !newestFirst(batch[i]) {
+						if !newestFirst(queryBatch[i]) {
 							continue
 						}
 						caughtUp[i] = true
@@ -169,9 +178,11 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 			}
 
 			// Rate limiting is the caller's business: it means wait, not that
-			// anything is wrong with the question.
+			// anything is wrong with the question. It is also the only failure
+			// here that reaches a log rather than a per-repository note, so it
+			// is the only one that has to say which request it was.
 			if errors.Is(err, ErrRateLimited) {
-				return RefResult{}, err
+				return RefResult{}, b.fail(err)
 			}
 
 			// Anything else stops this batch where it is rather than failing
@@ -187,7 +198,7 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 			// is what they are.
 			for i := range cursors {
 				if read[i] == 0 {
-					result.Missing[batch[i].Repo] = fmt.Sprintf("could not read its refs: %v", err)
+					result.Missing[queryBatch[i].Repo] = fmt.Sprintf("could not read its refs: %v", err)
 					delete(cursors, i)
 				}
 			}
@@ -202,7 +213,7 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 				continue
 			}
 			result.Truncated = append(result.Truncated, RefTruncation{
-				Query: batch[i], Matched: matched[i], Read: read[i],
+				Query: queryBatch[i], Matched: matched[i], Read: read[i],
 			})
 		}
 	}
@@ -304,14 +315,10 @@ func decodeRefsInto(body []byte, aliases map[string]aliasedQuery, result *RefRes
 
 	var response graphQLResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return page, fmt.Errorf("parsing the GraphQL response: %w", err)
+		return page, unreadable(body, err)
 	}
 	if response.Data == nil {
-		summary := summarise(response.Errors)
-		if mentionsRateLimit(summary) {
-			return page, fmt.Errorf("%w: %s", ErrRateLimited, summary)
-		}
-		return page, fmt.Errorf("GraphQL returned no data: %s", summary)
+		return page, noData(body, response.Errors)
 	}
 
 	if raw, ok := response.Data["rateLimit"]; ok {

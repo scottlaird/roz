@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ErrRateLimited means GitHub refused the request because of a rate limit,
@@ -35,6 +36,48 @@ var ErrRateLimited = errors.New("rate limited by GitHub")
 // Deliberately well under where the API starts failing: 150 works and 250
 // returns a 502 with no explanation, so there is no signal to back off on.
 const BatchSize = 50
+
+// What each kind of request reads, for the message a failure carries.
+const (
+	opPullRequests = "pull requests"
+	opIssues       = "issues"
+	opRefs         = "refs"
+)
+
+// batch says which request failed, in the terms the caller would need to
+// reproduce it: what was being read, how much of it, and where in the run.
+//
+// A sync makes all three kinds of request on every cycle and they share both
+// their decoding and their failure messages, so without this a failed poll
+// says only that some GraphQL request returned something unexpected.
+type batch struct {
+	op       string
+	entities int
+	index    int // 1-based
+	total    int
+	page     int // 1-based; 0 where the request does not page
+}
+
+func (b batch) String() string {
+	entities := "entities"
+	if b.entities == 1 {
+		entities = "entity"
+	}
+	s := fmt.Sprintf("%s (batch %d of %d, %d %s", b.op, b.index, b.total, b.entities, entities)
+	if b.page > 0 {
+		s += fmt.Sprintf(", page %d", b.page)
+	}
+	return s + ")"
+}
+
+// batches is how many rounds of BatchSize a set of n takes.
+func batches(n int) int { return (n + BatchSize - 1) / BatchSize }
+
+// fail attaches the request's identity to whatever went wrong with it. The
+// cause is wrapped, so a rate limit is still recognisable as one.
+func (b batch) fail(err error) error {
+	return fmt.Errorf("reading %s: %w", b, err)
+}
 
 // Runner executes a GraphQL query and returns the raw response body.
 //
@@ -62,9 +105,16 @@ func NewWithRunner(run Runner) *Client {
 // runGH invokes `gh api graphql`, feeding the query on stdin so its length is
 // not bounded by the argument list.
 //
-// A non-zero exit is not treated as fatal when there is a body: gh exits 1
+// A non-zero exit is not treated as fatal when there is a JSON body: gh exits 1
 // whenever any alias fails to resolve, and the response still carries every
 // alias that did.
+//
+// A body that is not JSON is a different thing entirely — GitHub answering a
+// batch this size with an HTML error page — and is handled as a failed
+// invocation. Returning it to be parsed would report the first stray character
+// and throw away both the exit status and stderr, which is where gh says a
+// limit was hit: the response would then take the escalating backoff for a
+// fault rather than the flat wait a limit is supposed to get.
 func runGH(ctx context.Context, query string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", "api", "graphql", "-F", "query=@-")
 	cmd.Stdin = strings.NewReader(query)
@@ -74,17 +124,68 @@ func runGH(ctx context.Context, query string) ([]byte, error) {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	message := strings.TrimSpace(stderr.String())
+
 	if stdout.Len() > 0 {
-		return stdout.Bytes(), nil
+		if looksJSON(stdout.Bytes()) {
+			return stdout.Bytes(), nil
+		}
+		return nil, ghFailure(err, message, stdout.Bytes())
 	}
 	if err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if mentionsRateLimit(message) {
-			return nil, fmt.Errorf("%w: %s", ErrRateLimited, message)
-		}
-		return nil, fmt.Errorf("gh api graphql: %w: %s", err, message)
+		return nil, ghFailure(err, message, nil)
 	}
 	return nil, fmt.Errorf("gh api graphql returned nothing")
+}
+
+// ghFailure describes an invocation that produced no usable response, keeping
+// whatever gh said about why.
+//
+// Both stderr and the body are searched for a limit, since which one carries
+// the news depends on whether GitHub refused at the transport or answered with
+// a page saying so.
+func ghFailure(err error, message string, body []byte) error {
+	detail := message
+	if len(body) > 0 {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += "body: " + excerpt(body)
+	}
+	if mentionsRateLimit(message) || mentionsRateLimit(string(body)) {
+		return fmt.Errorf("%w: %s", ErrRateLimited, detail)
+	}
+	if err != nil {
+		return fmt.Errorf("gh api graphql: %w: %s", err, detail)
+	}
+	return fmt.Errorf("gh api graphql: %s", detail)
+}
+
+// looksJSON reports whether a body is worth handing to the parser. GitHub's
+// GraphQL responses are always objects, so anything else is an error page.
+func looksJSON(body []byte) bool {
+	return bytes.HasPrefix(bytes.TrimLeft(body, " \t\r\n"), []byte("{"))
+}
+
+// excerptMax is how much of an unreadable body to quote. An error page can run
+// to tens of kilobytes and this is a poll loop, so the excerpt is short enough
+// to sit on one line; the length is reported separately so a truncated quote
+// cannot be mistaken for the whole of a short body.
+const excerptMax = 200
+
+// excerpt renders the start of a body as a single line, bounded.
+func excerpt(body []byte) string {
+	flat := strings.Join(strings.Fields(string(body)), " ")
+	if len(flat) <= excerptMax {
+		return fmt.Sprintf("%q", flat)
+	}
+	// Cut on a rune boundary: a body can be anything, and half a character
+	// renders as escapes that read like part of the content.
+	cut := excerptMax
+	for cut > 0 && !utf8.RuneStart(flat[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%q… (of %d bytes)", flat[:cut], len(body))
 }
 
 // RateLimit is what GitHub said about the budget on the last request.
@@ -123,18 +224,22 @@ func (c *Client) Fetch(ctx context.Context, keys []string) (Result, error) {
 	result := Result{Missing: map[string]string{}}
 
 	for start := 0; start < len(keys); start += BatchSize {
-		batch := keys[start:min(start+BatchSize, len(keys))]
+		keyBatch := keys[start:min(start+BatchSize, len(keys))]
+		b := batch{
+			op: opPullRequests, entities: len(keyBatch),
+			index: start/BatchSize + 1, total: batches(len(keys)),
+		}
 
-		query, aliases, err := buildQuery(batch)
+		query, aliases, err := buildQuery(keyBatch)
 		if err != nil {
-			return Result{}, err
+			return Result{}, b.fail(err)
 		}
 		body, err := c.run(ctx, query)
 		if err != nil {
-			return Result{}, err
+			return Result{}, b.fail(err)
 		}
 		if err := decodeInto(body, aliases, &result); err != nil {
-			return Result{}, err
+			return Result{}, b.fail(err)
 		}
 	}
 	return result, nil
@@ -164,14 +269,10 @@ type wireRateLimit struct {
 func decodeInto(body []byte, aliases map[string]string, result *Result) error {
 	var response graphQLResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("parsing the GraphQL response: %w", err)
+		return unreadable(body, err)
 	}
 	if response.Data == nil {
-		summary := summarise(response.Errors)
-		if mentionsRateLimit(summary) {
-			return fmt.Errorf("%w: %s", ErrRateLimited, summary)
-		}
-		return fmt.Errorf("GraphQL returned no data: %s", summary)
+		return noData(body, response.Errors)
 	}
 
 	if raw, ok := response.Data["rateLimit"]; ok {
@@ -224,6 +325,31 @@ func mentionsRateLimit(message string) bool {
 		}
 	}
 	return false
+}
+
+// unreadable describes a body the JSON parser would not take.
+//
+// The parser reports where it gave up and nothing about what it was looking
+// at, which is the difference between knowing a response was not JSON and
+// knowing what arrived instead.
+func unreadable(body []byte, err error) error {
+	return fmt.Errorf("parsing the GraphQL response: %w: %s", err, excerpt(body))
+}
+
+// noData describes a response that parsed but carried nothing.
+//
+// GitHub usually says why in the errors array. When it does not, the body is
+// all there is to go on, so it is quoted rather than the reader being told
+// only that there was no explanation.
+func noData(body []byte, errs []graphQLError) error {
+	summary := summarise(errs)
+	if mentionsRateLimit(summary) {
+		return fmt.Errorf("%w: %s", ErrRateLimited, summary)
+	}
+	if len(errs) == 0 {
+		return fmt.Errorf("GraphQL returned no data and no error: %s", excerpt(body))
+	}
+	return fmt.Errorf("GraphQL returned no data: %s", summary)
 }
 
 func summarise(errs []graphQLError) string {

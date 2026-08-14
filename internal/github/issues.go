@@ -62,18 +62,22 @@ func (c *Client) Issues(ctx context.Context, keys []string) (IssueResult, error)
 	}
 
 	for start := 0; start < len(keys); start += BatchSize {
-		batch := keys[start:min(start+BatchSize, len(keys))]
+		keyBatch := keys[start:min(start+BatchSize, len(keys))]
+		b := batch{
+			op: opIssues, entities: len(keyBatch),
+			index: start/BatchSize + 1, total: batches(len(keys)),
+		}
 
-		query, aliases, err := buildIssueQuery(batch)
+		query, aliases, err := buildIssueQuery(keyBatch)
 		if err != nil {
-			return IssueResult{}, err
+			return IssueResult{}, b.fail(err)
 		}
 		body, err := c.run(ctx, query)
 		if err != nil {
-			return IssueResult{}, err
+			return IssueResult{}, b.fail(err)
 		}
 		if err := decodeIssuesInto(body, aliases, &result); err != nil {
-			return IssueResult{}, err
+			return IssueResult{}, b.fail(err)
 		}
 	}
 	return result, nil
@@ -121,14 +125,10 @@ type wireIssue struct {
 func decodeIssuesInto(body []byte, aliases map[string]string, result *IssueResult) error {
 	var response graphQLResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("parsing the GraphQL response: %w", err)
+		return unreadable(body, err)
 	}
 	if response.Data == nil {
-		summary := summarise(response.Errors)
-		if mentionsRateLimit(summary) {
-			return fmt.Errorf("%w: %s", ErrRateLimited, summary)
-		}
-		return fmt.Errorf("GraphQL returned no data: %s", summary)
+		return noData(body, response.Errors)
 	}
 
 	if raw, ok := response.Data["rateLimit"]; ok {

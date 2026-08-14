@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // realResponse is the shape GitHub actually returns, taken from a live query.
@@ -243,5 +244,150 @@ func TestBuildQueryEscapesNames(t *testing.T) {
 	}
 	if aliases["pr0"] != "owner/repo#1" {
 		t.Errorf("aliases = %v, want pr0 mapped to the key", aliases)
+	}
+}
+
+func TestFetchFailureNamesTheRequest(t *testing.T) {
+	// Fail the second batch, so the reported position is not the one a
+	// hardcoded "1 of 1" would also produce.
+	var calls int
+	client := NewWithRunner(func(context.Context, string) ([]byte, error) {
+		calls++
+		if calls == 2 {
+			return nil, errors.New("connection reset")
+		}
+		return []byte(`{"data":{}}`), nil
+	})
+
+	keys := make([]string, BatchSize+3)
+	for i := range keys {
+		keys[i] = "owner/repo#1"
+	}
+
+	_, err := client.Fetch(context.Background(), keys)
+	if err == nil {
+		t.Fatal("Fetch() with a failing runner returned nil, want an error")
+	}
+	for _, want := range []string{"pull requests", "batch 2 of 2", "3 entities", "connection reset"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err, want)
+		}
+	}
+}
+
+func TestIssuesFailureSaysItWasIssues(t *testing.T) {
+	client := NewWithRunner(func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("connection reset")
+	})
+
+	_, err := client.Issues(context.Background(), []string{"owner/repo#1", "owner/repo#2"})
+	if err == nil {
+		t.Fatal("Issues() with a failing runner returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "issues") {
+		t.Errorf("error = %q, want it to name the operation", err)
+	}
+	if strings.Contains(err.Error(), "pull requests") {
+		t.Errorf("error = %q, want it not to claim it was reading pull requests", err)
+	}
+	if !strings.Contains(err.Error(), "2 entities") {
+		t.Errorf("error = %q, want it to say how many it asked about", err)
+	}
+}
+
+func TestRequestIdentityKeepsARateLimitRecognisable(t *testing.T) {
+	client := NewWithRunner(fixedRunner(`{"errors":[{"message":"API rate limit exceeded"}]}`))
+
+	_, err := client.Fetch(context.Background(), []string{"owner/repo#1"})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("error = %v, want it to still be an ErrRateLimited", err)
+	}
+}
+
+func TestNonJSONBodyKeepsWhatGhSaid(t *testing.T) {
+	err := ghFailure(errors.New("exit status 1"), "gh: Bad gateway (HTTP 502)", []byte("<html><body>502</body></html>"))
+	if err == nil {
+		t.Fatal("ghFailure() returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "Bad gateway") {
+		t.Errorf("error = %q, want it to carry stderr", err)
+	}
+	if !strings.Contains(err.Error(), "<html>") {
+		t.Errorf("error = %q, want it to quote the body", err)
+	}
+}
+
+func TestAnHTMLLimitPageIsARateLimit(t *testing.T) {
+	// The limit is announced in the page rather than on stderr, which is the
+	// case that used to take the escalating backoff instead of waiting.
+	err := ghFailure(nil, "", []byte("<html><body>You have exceeded a secondary rate limit</body></html>"))
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("error = %v, want an ErrRateLimited", err)
+	}
+}
+
+func TestLooksJSONSeparatesBodiesFromPages(t *testing.T) {
+	for _, body := range []string{`{"data":{}}`, "\n  {\"data\":{}}"} {
+		if !looksJSON([]byte(body)) {
+			t.Errorf("looksJSON(%q) = false, want true", body)
+		}
+	}
+	for _, body := range []string{"<html>", "", "not json"} {
+		if looksJSON([]byte(body)) {
+			t.Errorf("looksJSON(%q) = true, want false", body)
+		}
+	}
+}
+
+func TestExcerptIsBounded(t *testing.T) {
+	body := []byte(strings.Repeat("x", 40000))
+
+	got := excerpt(body)
+	if len(got) > excerptMax+64 {
+		t.Errorf("excerpt is %d long, want it bounded near %d", len(got), excerptMax)
+	}
+	if !strings.Contains(got, "of 40000 bytes") {
+		t.Errorf("excerpt = %q, want it to report the full size", got)
+	}
+}
+
+func TestExcerptFlattensAndKeepsShortBodiesWhole(t *testing.T) {
+	got := excerpt([]byte("<html>\n  <body>502</body>\n</html>"))
+	if strings.Contains(got, "\n") {
+		t.Errorf("excerpt = %q, want it on one line", got)
+	}
+	if strings.Contains(got, "of ") {
+		t.Errorf("excerpt = %q, want no truncation note for a short body", got)
+	}
+}
+
+func TestExcerptCutsOnARuneBoundary(t *testing.T) {
+	got := excerpt([]byte(strings.Repeat("é", excerptMax)))
+	if !utf8.ValidString(got) {
+		t.Errorf("excerpt = %q, want valid UTF-8", got)
+	}
+}
+
+func TestNoDataAndNoErrorQuotesTheBody(t *testing.T) {
+	client := NewWithRunner(fixedRunner(`{"data":null,"errors":[]}`))
+
+	_, err := client.Fetch(context.Background(), []string{"owner/repo#1"})
+	if err == nil {
+		t.Fatal("Fetch() with no data returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), `errors\":[]`) {
+		t.Errorf("error = %q, want it to quote the body it could not use", err)
+	}
+}
+
+func TestUnreadableBodyQuotesIt(t *testing.T) {
+	client := NewWithRunner(fixedRunner(`{"data": truncated`))
+
+	_, err := client.Fetch(context.Background(), []string{"owner/repo#1"})
+	if err == nil {
+		t.Fatal("Fetch() with an unparseable body returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "truncated") {
+		t.Errorf("error = %q, want it to quote the body", err)
 	}
 }

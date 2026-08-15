@@ -130,6 +130,12 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		if result.RefsPolled > 0 {
 			fmt.Fprintf(out, ", %d ref queries", result.RefsPolled)
 		}
+		// Rare by design — only when a step is waiting for a group and the
+		// stored membership has aged out — so it is worth a mention when it
+		// happens rather than a permanent column of zero.
+		if result.Teams > 0 {
+			fmt.Fprintf(out, ", %d team memberships read", result.Teams)
+		}
 		fmt.Fprintln(out)
 	}
 	return nil

@@ -112,6 +112,12 @@ CREATE TABLE actionverb (
   -- error naming the wrong one is its own small bug. Last of the columns
   -- because ADD COLUMN put it there. See 0020.
   requires_ref  INTEGER NOT NULL DEFAULT 0 CHECK (requires_ref IN (0,1)),
+  -- whether the verb needs an owner to be able to close: which group's review
+  -- this step waits for. A third flag rather than one "requires a subject"
+  -- enum, for the reason requires_ref is separate from requires_pr -- the
+  -- remedies differ, and the spec means something different to each. Last of
+  -- the columns because ADD COLUMN put it there. See 0033.
+  requires_owner INTEGER NOT NULL DEFAULT 0 CHECK (requires_owner IN (0,1)),
   -- a predicate_key exists exactly when the verb closes on one
   CHECK ((closes = 'predicate') = (predicate_key IS NOT NULL))
 ) STRICT;
@@ -124,48 +130,56 @@ CREATE TABLE actionverb (
 -- vocabulary can grow without a deploy, and a database may have gained or
 -- retired verbs since. Never delete a row -- closed actions and log entries
 -- reference retired verbs. Set active = 0 instead.
-INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires_pr, requires_ref, starts_pipeline, wait_days, description) VALUES
+INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires_pr, requires_ref, requires_owner, starts_pipeline, wait_days, description) VALUES
   -- Predicate-closed. These flow through on their own.
-  ('undraft',          'un-draft',          'predicate', 'pr_not_draft',      'click',   1, 0, 0, NULL,
+  ('undraft',          'un-draft',          'predicate', 'pr_not_draft',      'click',   1, 0, 0, 0, NULL,
    'Take the pull request out of draft.'),
-  ('send_for_review',  'send for review',   'predicate', 'pr_announced',      'click',   1, 0, 0, NULL,
+  ('send_for_review',  'send for review',   'predicate', 'pr_announced',      'click',   1, 0, 0, 0, NULL,
    'Announce it where reviewers will see it. The announcement is the one signal GitHub cannot supply.'),
-  ('wait_review',      'wait for review',   'predicate', 'pr_approved',       'wait',    1, 0, 0, 3,
+  ('wait_review',      'wait for review',   'predicate', 'pr_approved',       'wait',    1, 0, 0, 0, 3,
    'Nothing to do but wait. Closes when the review decision is APPROVED.'),
-  ('address_comments', 'address comments',  'predicate', 'pr_threads_clear',  'session', 1, 0, 0, NULL,
+  ('address_comments', 'address comments',  'predicate', 'pr_threads_clear',  'session', 1, 0, 0, 0, NULL,
    'Deal with review threads. Closes when none are unresolved against the current head.'),
-  ('rebase',           'rebase',            'predicate', 'pr_mergeable',      'click',   1, 0, 0, NULL,
+  ('rebase',           'rebase',            'predicate', 'pr_mergeable',      'click',   1, 0, 0, 0, NULL,
    'Bring it up to date. Closes when the merge state is neither BEHIND nor DIRTY.'),
-  ('merge',            'merge',             'predicate', 'pr_merged',         'click',   1, 0, 0, 1,
+  ('merge',            'merge',             'predicate', 'pr_merged',         'click',   1, 0, 0, 0, 1,
    'One click, once everything else is done.'),
   -- The one verb that waits on something other than a pull request. wait_days
   -- is NULL because a release date is not ours to influence and there is
   -- nobody to chase: since 0019 an overdue wait puts an item in the queue, so
   -- the noise would be durable rather than passing. See 0020.
-  ('wait_ref',         'wait for a ref',    'predicate', 'ref_exists',        'wait',    0, 1, 0, NULL,
+  ('wait_ref',         'wait for a ref',    'predicate', 'ref_exists',        'wait',    0, 1, 0, 0, NULL,
    'Wait for a branch or tag to appear. Closes when one matching the expression exists.'),
 
   -- Human-closed. These are the items worth spending attention on, and the
   -- only ones that reach the queue as thinking work.
-  ('decide',           'decide',            'human',     NULL,                'decide',  0, 0, 0, NULL,
+  ('decide',           'decide',            'human',     NULL,                'decide',  0, 0, 0, 0, NULL,
    'A judgement that has to be made before anything else can move.'),
-  ('write',            'write',             'human',     NULL,                'session', 0, 0, 1, NULL,
+  ('write',            'write',             'human',     NULL,                'session', 0, 0, 0, 1, NULL,
    'Actual work. Usually ends with a pull request.'),
-  ('announce',         'announce',          'human',     NULL,                'click',   0, 0, 0, NULL,
+  ('announce',         'announce',          'human',     NULL,                'click',   0, 0, 0, 0, NULL,
    'Tell someone something.'),
-  ('run',              'run',               'human',     NULL,                'click',   0, 0, 0, NULL,
+  ('run',              'run',               'human',     NULL,                'click',   0, 0, 0, 0, NULL,
    'Run a command or a job and see what it says.'),
-  ('file',             'file',              'human',     NULL,                'click',   0, 0, 0, NULL,
+  ('file',             'file',              'human',     NULL,                'click',   0, 0, 0, 0, NULL,
    'Raise a ticket or an issue somewhere else.'),
-  ('investigate',      'investigate',       'human',     NULL,                'session', 0, 0, 0, NULL,
+  ('investigate',      'investigate',       'human',     NULL,                'session', 0, 0, 0, 0, NULL,
    'Find out what is going on. Closes when you know.'),
 
   -- review is human-closed for now, though the sketch has it closing on a
   -- predicate. It needs to know that *we* submitted a review, which needs
   -- both the viewer's identity and pull requests tracked because they are
   -- assigned to us rather than authored by us. Neither exists yet.
-  ('review',           'review',            'human',     NULL,                'session', 1, 0, 0, NULL,
-   'Review someone else''s pull request.');
+  ('review',           'review',            'human',     NULL,                'session', 1, 0, 0, 0, NULL,
+   'Review someone else''s pull request.'),
+
+  -- One named group's review, rather than the pull request as a whole.
+  -- reviewDecision is a single verdict and cannot express a change that needs
+  -- three reviews in order, so this asks about the group its spec names. Its
+  -- allowance matches wait_review: a tier is still one team being waited on.
+  -- See 0033.
+  ('wait_review_from', 'wait for review from', 'predicate', 'pr_approved_by',  'wait',    1, 0, 1, 0, 3,
+   'Wait for one named group to approve, rather than for the pull request as a whole. Closes when somebody who stands for that group has approved.');
 
 -- ── pipelines ────────────────────────────────────────────────────────
 -- What closing a verb instantiates. Closing a `write` action produces the
@@ -740,6 +754,31 @@ CREATE TABLE owner_channel (
   channel    TEXT NOT NULL CHECK (channel <> ''),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+) STRICT;
+
+-- ── team_membership, team_member ─────────────────────────────────────
+-- Who belongs to a team. An approval arrives as a login and a step waits for a
+-- team, so "has this group approved" is a question about membership -- and a
+-- predicate is a pure function of stored rows, so the membership it reads has
+-- to be here rather than fetched when the question is asked.
+--
+-- Cached rather than authoritative: membership changes without anything in roz
+-- changing, and the read time is what says how much to trust it. Sync
+-- refreshes a team only when something is actually waiting on it, which keeps
+-- this to the handful of teams open steps name. A team nothing has read has no
+-- rows, which reads as "not approved" -- absence is not completion.
+--
+-- Two tables because an empty team has a read time and no members, and one
+-- table keyed on the member could not say that it had been read. See 0033.
+CREATE TABLE team_membership (
+  team      TEXT PRIMARY KEY CHECK (team <> '' AND instr(team, '/') > 0),
+  synced_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE team_member (
+  team  TEXT NOT NULL REFERENCES team_membership(team),
+  login TEXT NOT NULL CHECK (login <> ''),
+  PRIMARY KEY (team, login)
 ) STRICT;
 
 -- ── indexes for the queries that run every render ────────────────────

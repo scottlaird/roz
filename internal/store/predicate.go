@@ -1,8 +1,10 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Facts is everything a predicate may read: the observed rows belonging to
@@ -20,6 +22,17 @@ type Facts struct {
 	// repository, one kind. Empty where nothing has been observed yet, which
 	// is not the same as the ref not existing.
 	Refs []*GitRef
+
+	// Action is the action being asked about, for a predicate that needs
+	// something the action carries rather than something its subject does.
+	// Only a per-owner review step does today: which group it waits for is on
+	// the action, because a pull request needing three reviews in order has
+	// three different answers at once.
+	Action *Action
+	// Members are the logins belonging to that group, as last read from
+	// GitHub. Empty where the group has never been read, and empty is not
+	// approval.
+	Members []string
 }
 
 // A Predicate decides whether an action's work is finished, from the observed
@@ -57,6 +70,12 @@ const (
 	PredicateThreadsClear = "pr_threads_clear"
 	PredicateMergeable    = "pr_mergeable"
 	PredicateMerged       = "pr_merged"
+
+	// PredicateApprovedBy asks about one named group rather than about the
+	// pull request as a whole, which is why it is not PredicateApproved with
+	// an argument: the two answer different questions and a chain can hold
+	// several of this one at once.
+	PredicateApprovedBy = "pr_approved_by"
 
 	// PredicateRefExists is not prefixed pr_: it asks about a repository and
 	// a pattern, and nothing about a pull request.
@@ -121,6 +140,52 @@ var predicates = map[string]Predicate{
 		return pr.State.Valid && pr.State.String == PRStateMerged
 	}),
 
+	// One named group has approved.
+	//
+	// Not reviewDecision, which is a single verdict for the whole pull
+	// request and is what makes a three-stage review inexpressible: it says
+	// APPROVED once, at the end, which is the wrong answer twice for a change
+	// that needs its own team, then the owners of what it touches, then
+	// whoever guards the protected parts.
+	//
+	// Membership is the whole of the work. An approval arrives as a login and
+	// a step waits for a team, so the question is whether any approver stands
+	// for the group — which is what the cached membership answers, and why a
+	// group nothing has read answers false. That is the same rule as an
+	// unsynced column: a wait that stays open because nothing was read is
+	// visible; one that closed for that reason would not be.
+	//
+	// GitHub's own dismissal rules do the rest. latestOpinionatedReviews
+	// carries what still counts against the current head where branch
+	// protection dismisses stale approvals, and carries a standing approval
+	// where it does not — which is the repository's policy on whether an
+	// approval survives a push, and not ours to second-guess.
+	PredicateApprovedBy: func(f Facts) bool {
+		if f.PR == nil || f.Action == nil {
+			return false
+		}
+		target := f.Action.WaitingFor
+		if !target.Valid || target.String == "" {
+			return false
+		}
+		approvals := decodeJSONStrings(f.PR.Approvals)
+		if len(approvals) == 0 {
+			return false
+		}
+
+		// The group may be a person — a tier that resolves to one individual
+		// is a real case, and their own approval is the answer.
+		if approvedBy(approvals, target.String) {
+			return true
+		}
+		for _, member := range f.Members {
+			if approvedBy(approvals, member) {
+				return true
+			}
+		}
+		return false
+	},
+
 	// A branch or tag matching the wait exists.
 	//
 	// The first predicate that reads something other than a pull request, and
@@ -138,6 +203,44 @@ var predicates = map[string]Predicate{
 		}
 		return false
 	},
+}
+
+// approvedBy reports whether one of the approving logins is this owner.
+//
+// Compared the way CODEOWNERS compares: case-insensitively, and without the
+// leading @, because the same person is "alice" in an approval, "@alice" in
+// the file and "@Alice" in whatever somebody typed. Two spellings of one login
+// is a comparison that fails silently, which here means a wait that never
+// closes for a reason nothing reports.
+func approvedBy(approvals []string, owner string) bool {
+	want := normalizeLogin(owner)
+	if want == "" {
+		return false
+	}
+	for _, login := range approvals {
+		if normalizeLogin(login) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeLogin(raw string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "@"))
+}
+
+// decodeJSONStrings reads one of the observed JSON list columns, treating
+// anything unreadable as empty. A malformed column is not a reason to report
+// work finished.
+func decodeJSONStrings(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // LookupPredicate returns the function a key names.

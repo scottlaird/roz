@@ -71,6 +71,12 @@ func (s *Store) CloseAction(ctx context.Context, actor Actor, req CloseRequest) 
 		a := NewAction(step.title, step.verb)
 		a.ProjectID = plan.action.ProjectID
 		a.Why = plan.action.Why
+		// A step waiting for one group carries which group, in the column a
+		// person would otherwise fill in by hand. The pipeline said it once;
+		// nobody should have to say it again per pull request.
+		if step.requiresOwner && step.spec != "" {
+			a.WaitingFor = sql.NullString{String: step.spec, Valid: true}
+		}
 		if err := s.AllocateAction(ctx, a); err != nil {
 			return nil, err
 		}
@@ -91,11 +97,14 @@ type closePlan struct {
 
 type plannedStep struct {
 	verb string
-	// spec is what the step waits for, where the verb needs telling. It
-	// becomes a pending gate rather than a wait: what it resolves to is a fact
-	// about the repository that has to be read first.
-	spec  string
-	title string
+	// spec is what the step waits for, where the verb needs telling. What it
+	// means is the verb's business: a release gate becomes a pending ref,
+	// because what it resolves to is a fact about the repository that has to
+	// be read first, and a review step becomes the group on the action.
+	spec string
+	// requiresOwner says the spec is a group rather than a release.
+	requiresOwner bool
+	title         string
 }
 
 // planClose reads what closing will do. It writes nothing, and its
@@ -216,9 +225,10 @@ func (p *closePlan) readPipeline(ctx context.Context, tx *Tx) error {
 			continue
 		}
 		p.steps = append(p.steps, plannedStep{
-			verb:  step.Verb,
-			spec:  step.Spec,
-			title: stepTitle(verb, step, p.subject),
+			verb:          step.Verb,
+			spec:          step.Spec,
+			requiresOwner: verb.RequiresOwner,
+			title:         stepTitle(verb, step, p.subject),
 		})
 	}
 	return nil
@@ -230,6 +240,12 @@ func (p *closePlan) readPipeline(ctx context.Context, tx *Tx) error {
 // "wait for a ref owner/repo#1" would name the wrong thing entirely. It is
 // about the repository and the release it is counting to.
 func stepTitle(verb *ActionVerb, step PipelineStep, subject string) string {
+	// A step waiting for a group is still about the pull request — it is one
+	// review of it — so it is named after the pull request, with the group.
+	// Only a release gate is about the repository instead.
+	if verb.RequiresOwner && step.Spec != "" {
+		return fmt.Sprintf("%s %s on %s", verb.Label, step.Spec, subject)
+	}
 	if step.Spec != "" {
 		repo, _, err := ParsePRKey(subject)
 		if err == nil {
@@ -377,8 +393,10 @@ func (t *Tx) instantiate(ctx context.Context, steps []*Action, planned []planned
 
 		// A step that waits for a release becomes a gate rather than a wait.
 		// What it resolves to is a fact about the repository, and reading that
-		// here would mean a network call inside closing an action.
-		if spec := planned[i].spec; spec != "" {
+		// here would mean a network call inside closing an action. A step
+		// waiting for a group needs none of that: the group is already on the
+		// action, written when it was built.
+		if spec := planned[i].spec; spec != "" && !planned[i].requiresOwner {
 			if repoErr != nil {
 				return nil, fmt.Errorf("%s waits for %s, but %q names no repository",
 					a.ID, spec, subject)

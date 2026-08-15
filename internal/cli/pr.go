@@ -314,6 +314,7 @@ func newPRListCmd() *cobra.Command {
 		"why it is tracked: "+strings.Join(store.TrackingReasons, ", ")+
 			" — most usefully what you are on the hook to review")
 	f.String(flagSince, "", "merged on or after this date or timestamp; selects merged ones")
+	addSortFlag(cmd, prColumns)
 	addListingFlags(cmd, prColumns)
 	return cmd
 }
@@ -422,8 +423,13 @@ func prFilterFrom(cmd *cobra.Command) (store.PRFilter, error) {
 			return store.PRFilter{}, err
 		}
 	}
+	_, sort, err := sortFrom(cmd, prColumns)
+	if err != nil {
+		return store.PRFilter{}, err
+	}
 	return store.PRFilter{
-		Stacked: stacked, Frozen: frozen, State: state, Because: because, Since: since,
+		Stacked: stacked, Frozen: frozen, State: state,
+		Because: because, Since: since, Sort: sort,
 	}, nil
 }
 

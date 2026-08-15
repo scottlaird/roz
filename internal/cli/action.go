@@ -665,7 +665,7 @@ func newActionListCmd() *cobra.Command {
 	f.String(flagStatus, "", "filter to one state")
 	f.String(flagVerb, "", "filter to one verb")
 	f.String(flagProject, "", "filter to one project")
-	addSortFlag(cmd)
+	addSortFlag(cmd, actionColumns)
 	addListingFlags(cmd, actionColumns)
 	return cmd
 }
@@ -723,6 +723,7 @@ var actionColumns = columnSet[*store.Action]{
 		},
 	},
 	defaults: []string{"id", "state", "verb", "project_id", "snooze_until", "late", "title"},
+	rankings: queueRankings,
 	empty:    "no actions",
 }
 
@@ -761,14 +762,14 @@ func actionFilterFrom(cmd *cobra.Command) (store.ActionFilter, error) {
 	if err != nil {
 		return store.ActionFilter{}, err
 	}
-	order, err := sortFrom(cmd)
+	order, sort, err := sortFrom(cmd, actionColumns)
 	if err != nil {
 		return store.ActionFilter{}, err
 	}
 	return store.ActionFilter{
 		State: state, Verb: verb, Project: project,
 		Open: open, Unblocked: unblocked, Waiting: waiting,
-		Expired: expired, Stale: stale, Order: order,
+		Expired: expired, Stale: stale, Order: order, Sort: sort,
 	}, nil
 }
 

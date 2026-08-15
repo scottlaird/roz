@@ -655,7 +655,7 @@ func newProjectListCmd() *cobra.Command {
 	f.String("status", "", "filter to one status")
 	f.Bool(flagTree, false,
 		"draw the hierarchy, indenting each project under the one it is part of")
-	addSortFlag(cmd)
+	addSortFlag(cmd, projectColumns)
 	addListingFlags(cmd, projectColumns)
 	return cmd
 }
@@ -732,6 +732,7 @@ var projectColumns = columnSet[store.TreeNode]{
 		},
 	},
 	defaults: []string{"id", "status", "priority", "effort", "snooze_until", "title"},
+	rankings: queueRankings,
 	empty:    "no projects",
 }
 
@@ -750,12 +751,12 @@ func projectFilterFrom(cmd *cobra.Command) (store.ProjectFilter, error) {
 	if err != nil {
 		return store.ProjectFilter{}, err
 	}
-	order, err := sortFrom(cmd)
+	order, sort, err := sortFrom(cmd, projectColumns)
 	if err != nil {
 		return store.ProjectFilter{}, err
 	}
 	return store.ProjectFilter{
-		Status: status, Expired: expired, Orphaned: orphaned, Order: order,
+		Status: status, Expired: expired, Orphaned: orphaned, Order: order, Sort: sort,
 	}, nil
 }
 

@@ -478,6 +478,10 @@ it.
 There is a third order, `--sort staleness`, which answers a different
 question and is covered under [Staleness](#staleness).
 
+Those three are rankings rather than columns. `--sort` also takes the
+listing's own columns — see
+[Ordering by them too](#ordering-by-them-too).
+
 **Projects** sort on one field, `project.priority`, an integer from 1 to 9.
 Fewer bands than that are normally in use; the range is wide so that reserving
 one — a band for whatever is on fire, say — is a renumber rather than a
@@ -925,10 +929,49 @@ does — `pr list` grows a `MERGED` column when something in it has merged, and
 `BECAUSE` when something says why it is tracked. Asking for one by name shows
 it whatever is in it, because asking is the answer to whether it is relevant.
 
-`--sort` over the same columns is what is left, and is
-[#169](https://github.com/scottlaird/roz/issues/169). `created`, `priority`
-and `staleness` will stay reserved words there, because they are rankings
-rather than columns.
+### Ordering by them too
+
+`--sort` takes the same column names, primary key first, and a `-` reverses
+one:
+
+```console
+$ roz pr list --since 2026-08-06 --sort -merged_at
+$ roz project list --sort status,title
+```
+
+**NULLs sort last whichever way a key runs.** SQLite leads with them going up
+and trails them coming down, which would open "sort by when it merged" with
+everything that never did. Absence is not a small value and it is not a large
+one; it is the least interesting thing in the column.
+
+**`created`, `priority` and `staleness` are reserved words**, not columns.
+`priority` is a CTE, two joins and an expression over three tables; `staleness`
+is a computed date. They live in the same flag because they are what somebody
+actually types — splitting them off would mean remembering which flag a given
+ordering is behind — but they cannot be *keys* in a list of them, since a
+ranking is the whole ordering rather than the first term of one:
+
+```console
+$ roz action list --sort priority,title
+Error: --sort priority is an ordering of its own and takes no further keys;
+sort by columns instead, or by priority alone
+```
+
+**Only real columns sort.** A derived column has nothing behind it to order on,
+and the error says what there was rather than leaving you to guess:
+
+```console
+$ roz action list --sort late
+Error: --sort "late" is not a column to sort on: use id, kind, n, title, verb,
+… ; or one of created, priority, staleness
+```
+
+That check is also what keeps the names safe. SQLite cannot bind a column name
+as a query parameter, so an ordering is text going into an `ORDER BY` — and the
+only text that gets there came off a record's own struct tags.
+
+`--sort` works with `--tree`, where it orders the roots and each parent's
+children without flattening the shape.
 
 ## For an agent
 

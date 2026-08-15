@@ -142,7 +142,7 @@ func (p *Pipeline) extraJSON() map[string]any {
 // LoadPipeline reads one pipeline and its steps, returning sql.ErrNoRows if
 // there is no such pipeline.
 func (t *Tx) LoadPipeline(ctx context.Context, name string) (*Pipeline, error) {
-	pipelines, err := readPipelines(ctx, t.tx, "WHERE name = ?", name)
+	pipelines, err := readPipelines(ctx, t.tx, Sort{}, "WHERE name = ?", name)
 	if err != nil {
 		return nil, err
 	}
@@ -156,12 +156,12 @@ func (t *Tx) LoadPipeline(ctx context.Context, name string) (*Pipeline, error) {
 //
 // activeOnly drops retired ones. Like verbs they are deactivated rather than
 // deleted, since a repository may still name one.
-func (s *Store) ListPipelines(ctx context.Context, activeOnly bool) ([]*Pipeline, error) {
+func (s *Store) ListPipelines(ctx context.Context, activeOnly bool, sort Sort) ([]*Pipeline, error) {
 	where := ""
 	if activeOnly {
 		where = "WHERE active = 1"
 	}
-	return readPipelines(ctx, s.db, where)
+	return readPipelines(ctx, s.db, sort, where)
 }
 
 // DefaultPipeline returns the lowest-numbered active pipeline, which is what
@@ -171,7 +171,7 @@ func (s *Store) ListPipelines(ctx context.Context, activeOnly bool) ([]*Pipeline
 // database someone has emptied deliberately, and guessing on its behalf would
 // be worse than saying so.
 func (s *Store) DefaultPipeline(ctx context.Context) (*Pipeline, error) {
-	pipelines, err := readPipelines(ctx, s.db,
+	pipelines, err := readPipelines(ctx, s.db, Sort{},
 		"WHERE n = (SELECT min(n) FROM action_pipeline WHERE active = 1)")
 	if err != nil {
 		return nil, err
@@ -190,7 +190,7 @@ type querier interface {
 
 // readPipelines runs one query for the pipelines and a second for every
 // step belonging to them, rather than a join returning a row per step.
-func readPipelines(ctx context.Context, q querier, where string, args ...any) ([]*Pipeline, error) {
+func readPipelines(ctx context.Context, q querier, sort Sort, where string, args ...any) ([]*Pipeline, error) {
 	fields, err := fieldsOfStruct(&Pipeline{})
 	if err != nil {
 		return nil, err
@@ -200,7 +200,11 @@ func readPipelines(ctx context.Context, q querier, where string, args ...any) ([
 		columns[i] = f.column
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM action_pipeline %s ORDER BY n",
+	order := sort.SQL("")
+	if order == "" {
+		order = "n"
+	}
+	query := fmt.Sprintf("SELECT %s FROM action_pipeline %s ORDER BY "+order,
 		strings.Join(columns, ", "), where)
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {

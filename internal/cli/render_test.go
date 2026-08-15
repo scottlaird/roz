@@ -328,8 +328,13 @@ func TestListSortRejectsAnUnknownOrder(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%v accepted an unknown order, want an error", args)
 		}
-		if !strings.Contains(err.Error(), "is not an order") {
+		if !strings.Contains(err.Error(), "is not a column to sort on") {
 			t.Errorf("error = %v", err)
+		}
+		// The rankings are still valid values, so the error has to offer them
+		// as well as the columns.
+		if !strings.Contains(err.Error(), sortPriority) {
+			t.Errorf("error does not offer the rankings: %v", err)
 		}
 	}
 }

@@ -262,6 +262,10 @@ type PRFilter struct {
 	//
 	// Compared as text, which is correct because both sides are ISO-8601 UTC.
 	Since string
+	// Sort orders by columns instead, when one was asked for. It wins over
+	// the ranking, which cannot be combined with it: a ranking is not a key
+	// to break a tie in, it is the whole ordering.
+	Sort Sort
 }
 
 // mergeOrdered reports whether this filter is asking about merges, which is
@@ -293,12 +297,15 @@ func (s *Store) ListPRs(ctx context.Context, filter PRFilter) ([]*PR, error) {
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	if filter.mergeOrdered() {
+	switch {
+	case !filter.Sort.Empty():
+		query += " ORDER BY " + filter.Sort.SQL("")
+	case filter.mergeOrdered():
 		// Anything merged without a time goes last rather than first, which is
 		// where SQLite puts NULL on its own. A pull request merged before
 		// merged_at existed is the case, and it is not news from any week.
 		query += " ORDER BY merged_at IS NULL, merged_at, repo, number"
-	} else {
+	default:
 		query += " ORDER BY repo, number"
 	}
 

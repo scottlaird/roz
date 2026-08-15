@@ -34,6 +34,7 @@ func newPipelineListCmd() *cobra.Command {
 		RunE:  runPipelineList,
 	}
 	cmd.Flags().Bool("all", false, "include retired pipelines")
+	addSortFlag(cmd, pipelineColumns)
 	addListingFlags(cmd, pipelineColumns)
 	return cmd
 }
@@ -69,7 +70,11 @@ func runPipelineList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	pipelines, err := st.ListPipelines(ctx, !all)
+	_, sort, err := sortFrom(cmd, pipelineColumns)
+	if err != nil {
+		return err
+	}
+	pipelines, err := st.ListPipelines(ctx, !all, sort)
 	if err != nil {
 		return err
 	}

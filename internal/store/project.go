@@ -155,13 +155,20 @@ type ProjectFilter struct {
 	Orphaned bool
 	// Order is how the results come back. Empty is creation order.
 	Order string
+	// Sort orders by columns instead, when one was asked for. It wins over
+	// the ranking, which cannot be combined with it: a ranking is not a key
+	// to break a tie in, it is the whole ordering.
+	Sort Sort
 }
 
 // projectOrder is the ORDER BY for a listing. Under OrderPriority the
 // unprioritised sort last: unstated is not the same as low, but it has to go
 // somewhere, and behind the stated ones is the reading that does no harm.
-func projectOrder(order string) string {
-	switch order {
+func projectOrder(filter ProjectFilter) string {
+	if sql := filter.Sort.SQL(""); sql != "" {
+		return sql
+	}
+	switch filter.Order {
 	case OrderPriority:
 		return "priority IS NULL, priority, n"
 	case OrderStaleness:
@@ -190,7 +197,7 @@ func (s *Store) ListProjects(ctx context.Context, filter ProjectFilter) ([]*Proj
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY " + projectOrder(filter.Order)
+	query += " ORDER BY " + projectOrder(filter)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

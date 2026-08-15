@@ -94,7 +94,7 @@ func TestNothingIsDoneBeforeSync(t *testing.T) {
 func TestEveryVerbPredicateIsRegistered(t *testing.T) {
 	st := newStore(t)
 
-	verbs, err := st.ListVerbs(context.Background(), true)
+	verbs, err := st.ListVerbs(context.Background(), true, Sort{})
 	if err != nil {
 		t.Fatalf("ListVerbs() returned error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestEveryVerbPredicateIsRegistered(t *testing.T) {
 func TestVocabularyMatchesTheSchemasRule(t *testing.T) {
 	st := newStore(t)
 
-	verbs, err := st.ListVerbs(context.Background(), false)
+	verbs, err := st.ListVerbs(context.Background(), false, Sort{})
 	if err != nil {
 		t.Fatalf("ListVerbs() returned error: %v", err)
 	}

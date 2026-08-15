@@ -324,6 +324,7 @@ func newRefListCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: runRefList,
 	}
+	addSortFlag(cmd, refColumns)
 	addListingFlags(cmd, refColumns)
 	return cmd
 }
@@ -340,7 +341,11 @@ func runRefList(cmd *cobra.Command, args []string) error {
 	}
 	defer st.Close()
 
-	refs, err := st.ListRefs(cmd.Context(), repo)
+	_, sort, err := sortFrom(cmd, refColumns)
+	if err != nil {
+		return err
+	}
+	refs, err := st.ListRefs(cmd.Context(), repo, sort)
 	if err != nil {
 		return err
 	}

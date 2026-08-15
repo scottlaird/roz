@@ -158,6 +158,9 @@ func (w *CalendarWindow) Covers(day string) bool {
 // WindowFilter narrows ListCalendarWindows. The zero value selects
 // everything.
 type WindowFilter struct {
+	// Sort orders by columns instead of the usual earliest-first.
+	Sort Sort
+
 	// On keeps windows covering one day, inclusive.
 	On string
 	// Current keeps windows covering today.
@@ -189,7 +192,11 @@ func (s *Store) ListCalendarWindows(ctx context.Context, filter WindowFilter) ([
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY starts_on, ends_on, id"
+	if by := filter.Sort.SQL(""); by != "" {
+		query += " ORDER BY " + by
+	} else {
+		query += " ORDER BY starts_on, ends_on, id"
+	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

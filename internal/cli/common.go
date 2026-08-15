@@ -167,39 +167,82 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 	return st, nil
 }
 
-// Sort orders a list command accepts. The default everywhere is creation
-// order, which is honest about being arbitrary; asking for priority is a
-// choice the caller makes.
+// The rankings a listing may offer, beyond ordering by its own columns.
+//
+// They are reserved words in --sort rather than a second flag: they are the
+// orderings somebody actually types, and splitting them off would mean
+// learning which flag a given ordering lives behind. What they are not is
+// columns — priority is a CTE, two joins and an expression over three tables,
+// and staleness is a computed date — so they cannot be keys in a list of them.
 const (
 	sortFlag      = "sort"
 	sortCreated   = "created"
 	sortPriority  = "priority"
 	sortStaleness = "staleness"
+	// descendingPrefix reverses one key: --sort -merged_at is newest first.
+	descendingPrefix = "-"
 )
 
-// addSortFlag registers --sort on a list command.
-func addSortFlag(cmd *cobra.Command) {
-	cmd.Flags().String(sortFlag, sortCreated,
-		"order: created, priority, or staleness — longest un-verified first")
+// queueRankings are what `action list` and `project list` accept besides
+// their columns.
+var queueRankings = []string{sortCreated, sortPriority, sortStaleness}
+
+// addSortFlag registers --sort on a listing that declares its columns.
+func addSortFlag[T any](cmd *cobra.Command, set columnSet[T]) {
+	usage := "order by columns, comma-separated, - for descending: title,-created_at"
+	if len(set.rankings) > 0 {
+		usage += "; or one of " + strings.Join(set.rankings, ", ")
+	}
+	cmd.Flags().String(sortFlag, "", usage)
 }
 
-// sortFrom resolves --sort into the store's ordering.
-func sortFrom(cmd *cobra.Command) (string, error) {
+// sortFrom resolves --sort into either one of the listing's rankings or an
+// ordering by its columns.
+//
+// Empty and empty is "however this listing has always come back", which is
+// what leaves each one its own default rather than restating nine of them
+// here.
+func sortFrom[T any](cmd *cobra.Command, set columnSet[T]) (ranking string, order store.Sort, err error) {
 	value, err := cmd.Flags().GetString(sortFlag)
 	if err != nil {
-		return "", err
+		return "", store.Sort{}, err
 	}
-	switch value {
-	case sortCreated:
-		return store.OrderCreated, nil
-	case sortPriority:
-		return store.OrderPriority, nil
-	case sortStaleness:
-		return store.OrderStaleness, nil
-	default:
-		return "", fmt.Errorf("--%s %q is not an order: use %s, %s or %s",
-			sortFlag, value, sortCreated, sortPriority, sortStaleness)
+	if strings.TrimSpace(value) == "" {
+		return "", store.Sort{}, nil
 	}
+
+	var names []string
+	for _, part := range strings.Split(value, ",") {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			// A trailing comma is a typo rather than a key with no name.
+			return "", store.Sort{}, fmt.Errorf("--%s %q has an empty key in it", sortFlag, value)
+		}
+		names = append(names, name)
+	}
+
+	for _, ranking := range set.rankings {
+		if names[0] != ranking {
+			continue
+		}
+		// A ranking is the whole ordering rather than the first key of one:
+		// it is already several terms deep, and what a tie in it would even
+		// mean is not a question this should answer by guessing.
+		if len(names) > 1 {
+			return "", store.Sort{}, fmt.Errorf(
+				"--%s %s is an ordering of its own and takes no further keys; "+
+					"sort by columns instead, or by %s alone",
+				sortFlag, ranking, ranking)
+		}
+		return ranking, store.Sort{}, nil
+	}
+
+	keys, err := set.sortKeys(names)
+	if err != nil {
+		return "", store.Sort{}, err
+	}
+	sort, err := store.NewSort(set.recordOf(set.blank), keys)
+	return "", sort, err
 }
 
 // snoozeCell renders a snooze date, saying so when it has arrived.

@@ -32,14 +32,18 @@ func newPRAnnounceCmd() *cobra.Command {
 			"something that was typed in.\n\n" +
 			"Recording the announcement closes any send_for_review step waiting on\n" +
 			"it, and whatever that frees, straight away rather than at the next\n" +
-			"poll. What closed is printed.",
+			"poll. What closed is printed.\n\n" +
+			"Without --channel, the channel is looked up from the owner this pull\n" +
+			"request is actually going to — see `roz owner` — and the command says\n" +
+			"which one it used and why. Naming a channel explicitly still works:\n" +
+			"announcing somewhere unusual is a real thing to do.",
 		Args: cobra.ExactArgs(1),
 		RunE: runPRAnnounce,
 	}
 	f := cmd.Flags()
-	f.String(flagChannel, "", "the Slack channel it was announced in (required)")
+	f.String(flagChannel, "",
+		"the Slack channel it was announced in; looked up from the owner when not given")
 	f.String(flagAt, "", "when, as a date or timestamp; defaults to now")
-	_ = cmd.MarkFlagRequired(flagChannel)
 	return cmd
 }
 
@@ -51,7 +55,7 @@ func runPRAnnounce(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if channel == "" {
+	if f.Changed(flagChannel) && channel == "" {
 		return fmt.Errorf("--%s cannot be empty", flagChannel)
 	}
 	at, err := announcedAt(cmd)
@@ -67,6 +71,17 @@ func runPRAnnounce(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer st.Close()
+
+	// Looked up only when nobody said, so an explicit channel never has to
+	// agree with the configuration — announcing somewhere unusual is a real
+	// thing to do, and it is recorded as what happened either way.
+	if channel == "" {
+		var why string
+		if channel, why, err = resolveChannel(ctx, st, args[0]); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s → %s (%s)\n", args[0], channel, why)
+	}
 
 	// The actor is fixed by the command, not taken from a flag: this is the
 	// one place a person may write observed columns, and it should be

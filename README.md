@@ -61,13 +61,14 @@ directory.
 | `roz pr track` | Start tracking a pull request, keyed `owner/repo#number`. `--pipeline` if this one reaches merge differently from its repository. |
 | `roz pr set` | Change the pipeline or the tracking reason, or clear either. The two authored columns a pull request has. |
 | `roz pr show` / `list` | Read tracked pull requests; `--because reviewing` for what you owe a review on. |
-| `roz pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync, and closes the `send_for_review` step waiting on it. |
+| `roz pr announce` | Record by hand that it was announced in Slack. Stands in for Slack sync, and closes the `send_for_review` step waiting on it. Works out the channel when you do not give one. |
 | `roz sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
 | `roz syncer` | The same on a loop, backing off as rate limit heads down. |
 | `roz mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
 | `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
 | **vocabulary** | |
 | `roz codeowners` | Who has to approve a set of changed files, and who is still worth asking. |
+| `roz owner set` / `list` | Where a group is reached, which is what `roz pr announce` looks up. Groups only. |
 | `roz verb set` | Change a verb's `wait_days` or `rank_class`. Settings, not definitions. |
 | `roz verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
 | `roz pipeline add` / `set` / `retire` | Define a chain, change its steps, take it out of use for new repositories. |
@@ -1680,6 +1681,74 @@ default from CODEOWNERS — the owners of the files carrying the *substance* of
 the change, as against the ones pulled in by incidental paths — is the
 eventual automation, and it will populate this rather than replace it. A
 derived answer can still be wrong, which is what an authored column is for.
+
+## Where to tell them
+
+`roz pr announce` needed `--channel` on every invocation, so the channel was
+retyped every time. The obvious fix — default it from the repository — is the
+wrong grain, which is why `github_repo.announce_channel` sat in the schema
+doing nothing for thirty migrations. **The channel belongs to the reviewer.** A
+change touching storage should reach the storage channel whichever repository
+it is in, and a monorepo has no single right answer at all.
+
+```console
+$ roz owner set @org/storage --channel '#storage-reviews'
+@org/storage → #storage-reviews
+
+$ roz pr announce scottlaird/roz#39
+scottlaird/roz#39 → #storage-reviews (@org/storage, the owner this is waiting for)
+scottlaird/roz#39 announced_at: "" → "2026-08-15T19:15:26.071Z"
+scottlaird/roz#39 announced_channel: "" → "#storage-reviews"
+```
+
+Saying *which* channel and *why* is as much the feature as the lookup. What
+this replaces is announcing somewhere by habit, and a default that does not
+show its working is the same habit with fewer keystrokes.
+
+It is a **lookup, not a rules engine**. Deciding who to ask is the section
+above; once that is decided, the channel is a table read. What it reads, in
+order:
+
+1. the owner an open wait names with `--waiting-for` — the most direct answer
+   there is, since it is the judgement the routing is trying to reconstruct;
+2. a preferred owner from `roz repo prefer`, but only one this change actually
+   requires — a hint with no stake in the pull request is skipped, exactly as
+   routing skips it;
+3. the owners CODEOWNERS requires, in a stable order — an announcement that
+   moved between two equally good channels run to run would be worse than one
+   that is merely arbitrary;
+4. the repository's own channel, last.
+
+**Groups only.** A channel is how you reach a group; an individual is reached
+by naming them, and giving a person a channel is a different concept wearing
+the same word. Where routing lands on a person there is no channel, and the
+lookup falls through rather than inventing one.
+
+Nothing is derived from the name. `@org/storage` and `#storage-reviews` are
+different namespaces that happen to correlate, and turning one into the other
+by string manipulation is the kind of rule that works for eleven teams and then
+quietly does not.
+
+An owner with no channel is passed over rather than being an error, and when
+nothing knows, the message names what it looked at:
+
+```console
+$ roz pr announce scottlaird/roz#41
+Error: nothing says where scottlaird/roz#41 should be announced: no channel for
+@org/api. Record one with `roz owner set @org/api --channel '#somewhere'`, or
+pass --channel
+```
+
+`--channel` still works and still wins: announcing somewhere unusual is a real
+thing to do. What gets recorded on the pull request is where it actually went —
+`announced_channel` is an observation of an act, and the table above is policy,
+which may have changed since.
+
+`github_repo.announce_channel` survives as the last resort. The grain is wrong
+— it cannot tell a storage change from a docs one — but plenty of repositories
+do have one right answer, and one announced by habit is better recorded than
+retyped. An owner channel takes precedence as soon as one exists, which is what
+makes it a fallback rather than a default.
 
 ## When a pull request falls out of the merge queue
 

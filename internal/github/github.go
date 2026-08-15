@@ -5,10 +5,10 @@
 // here writes to GitHub, and nothing here knows about the database.
 //
 // Queries are batched with GraphQL aliases: one request carries many pull
-// requests. Measured against the real API, a batch of 100 costs 4 points of
-// the 5000 per hour, so the budget is not the constraint — the request size
-// is. Batches beyond roughly 150 fail with an opaque HTTP 502 rather than a
-// useful error, hence BatchSize.
+// requests. Points are not the constraint — a batch of 100 costs 4 of the
+// 5000 per hour — and neither, it turns out, is request size. What fails is
+// request *time*: GitHub declines to serve a query it cannot answer quickly
+// enough. See the batch size constants.
 package github
 
 import (
@@ -31,11 +31,47 @@ import (
 // GraphQL budget is spent. A caller should wait rather than retry.
 var ErrRateLimited = errors.New("rate limited by GitHub")
 
-// BatchSize is how many pull requests go into one query.
+// How many entities go into one query, per kind of read.
 //
-// Deliberately well under where the API starts failing: 150 works and 250
-// returns a 502 with no explanation, so there is no signal to back off on.
-const BatchSize = 50
+// One number per read rather than one shared, because the reads do not cost
+// the same thing. A pull request carries the largest field set here — reviews,
+// threads, checks, timeline — and a ref query is a repository and a namespace
+// that then pages internally, so its per-entity cost is not comparable to
+// either. Retuning for pull requests used to retune ref polling with it, which
+// was not failing.
+//
+// **Tuned against time, not size.** The original numbers came from finding
+// where a request got too large: 150 pull requests worked and 250 returned an
+// opaque 502. That is not what fails now. A batch of 42 fails three different
+// ways — an HTTP 502, a stream CANCEL, and a 200 whose body says "We couldn't
+// respond to your request in time" — all of them GitHub giving up on a query
+// that takes too long. The ceiling that matters is somewhere below 42, not at
+// 150.
+//
+// So the number moves when the *query* grows, not only when the tracked set
+// does. Adding a field to prFields makes every entity in a batch cost more
+// time, which lowers the ceiling — treat a new field as a reason to revisit
+// this, and prefer measuring to reasoning about it. Points are not the
+// constraint, so a smaller batch costs one more round trip and nothing else.
+//
+// Narrowing the poll set to what can still move (see store.PRsToPoll) is the
+// other half of this, and neither replaces the other: that took the failing
+// case from 42 entities to about 12, and this is what stops it coming back as
+// the tracked set grows or the query gets richer.
+const (
+	// PRBatchSize is the one that was failing. Well under the observed
+	// ceiling rather than just below it, since the ceiling moves with the
+	// field set and there is no signal to back off on when it is crossed.
+	PRBatchSize = 20
+	// IssueBatchSize is larger because an issue is four fields and a
+	// milestone. Nothing has been observed to fail here.
+	IssueBatchSize = 50
+	// RefBatchSize counts repository-and-namespace queries, each of which
+	// pages internally to a bound. The pagination is what governs its cost,
+	// so this is not comparable to the two above and is not retuned with
+	// them.
+	RefBatchSize = 50
+)
 
 // What each kind of request reads, for the message a failure carries.
 const (
@@ -70,8 +106,8 @@ func (b batch) String() string {
 	return s + ")"
 }
 
-// batches is how many rounds of BatchSize a set of n takes.
-func batches(n int) int { return (n + BatchSize - 1) / BatchSize }
+// batches is how many rounds of size a set of n takes.
+func batches(n, size int) int { return (n + size - 1) / size }
 
 // fail attaches the request's identity to whatever went wrong with it. The
 // cause is wrapped, so a rate limit is still recognisable as one.
@@ -223,11 +259,11 @@ type Result struct {
 func (c *Client) Fetch(ctx context.Context, keys []string) (Result, error) {
 	result := Result{Missing: map[string]string{}}
 
-	for start := 0; start < len(keys); start += BatchSize {
-		keyBatch := keys[start:min(start+BatchSize, len(keys))]
+	for start := 0; start < len(keys); start += PRBatchSize {
+		keyBatch := keys[start:min(start+PRBatchSize, len(keys))]
 		b := batch{
 			op: opPullRequests, entities: len(keyBatch),
-			index: start/BatchSize + 1, total: batches(len(keys)),
+			index: start/PRBatchSize + 1, total: batches(len(keys), PRBatchSize),
 		}
 
 		query, aliases, err := buildQuery(keyBatch)

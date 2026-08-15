@@ -115,8 +115,8 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 		return result, nil
 	}
 
-	for start := 0; start < len(queries); start += BatchSize {
-		queryBatch := queries[start:min(start+BatchSize, len(queries))]
+	for start := 0; start < len(queries); start += RefBatchSize {
+		queryBatch := queries[start:min(start+RefBatchSize, len(queries))]
 
 		// cursors carries where each query has read up to; a query leaves the
 		// map when it is exhausted or has failed.
@@ -140,7 +140,7 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 			// asked about.
 			b := batch{
 				op: opRefs, entities: len(cursors),
-				index: start/BatchSize + 1, total: batches(len(queries)),
+				index: start/RefBatchSize + 1, total: batches(len(queries), RefBatchSize),
 				page: page + 1,
 			}
 

@@ -290,6 +290,20 @@ GraphQL budget, so carrying on after one has been refused spends against a
 limit already hit. Attempting all of them is the rule for faults; a limit is
 not a fault.
 
+**Requests are batched by how long they take, not only how large they are.**
+The original number came from finding where a request got too big: 150 pull
+requests worked and 250 returned an opaque 502. That is not what fails now — a
+batch of 42 fails three different ways, an HTTP 502, a stream CANCEL, and a
+200 whose body says *"We couldn't respond to your request in time"*, all of
+them GitHub giving up on a query that takes too long.
+
+So the size is per read — pull requests carry the largest field set, and a ref
+query pages internally and is not comparable — and it moves when the *query*
+grows, not only when the tracked set does. Adding a field to the pull request
+query makes every entity in a batch cost more time, which lowers the ceiling.
+Points are not the constraint, so a smaller batch costs one more round trip
+and nothing else.
+
 **A partly-read cycle does not count towards giving up.** It is a working
 cycle, and counting it would eventually stop a process doing most of its job —
 taking the services sharing it down too. What that trades away is the

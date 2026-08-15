@@ -32,6 +32,9 @@ type CloseResult struct {
 	// Unhidden are the actions that were folded out of the queue behind this
 	// one and are now back in it.
 	Unhidden []*Action
+	// StoodDown are the actions an exception raised about this one, closed
+	// because what they were about is over.
+	StoodDown []*Action
 	// Pipeline is the chain that was instantiated, empty if none was.
 	Pipeline string
 }
@@ -293,6 +296,9 @@ func (s *Store) applyClose(ctx context.Context, actor Actor, plan *closePlan, st
 	if result.Unhidden, err = tx.unhide(ctx, a.ID); err != nil {
 		return nil, err
 	}
+	if result.StoodDown, err = tx.standDownChases(ctx, a.ID); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -385,6 +391,44 @@ func (t *Tx) instantiate(ctx context.Context, steps []*Action, planned []planned
 		}
 	}
 	return steps, nil
+}
+
+// standDownChases closes the actions an exception raised about this one.
+//
+// A chase is derived from another action's state, so it must not be able to
+// outlive it: a `decide` raised because a wait went past its allowance is
+// still telling somebody to nudge a reviewer about a pull request that has
+// since been approved. It is a dead item in the queue that has to be read and
+// ruled out by hand, which is the cost the queue exists to avoid.
+//
+// In the same cascade that frees dependents, and for the same reason: closing
+// is where everything that follows from closing happens, and a second command
+// to tidy up after it is a second command somebody has to remember.
+//
+// Obsolete rather than completed. The chase records a nudge that never
+// happened, and calling it completed would quietly inflate any count of how
+// often chasing was needed. Whatever the chase carries — its title, its why,
+// anything it later grows — is kept: closing an action does not discard it.
+//
+// The raised_action row stays. The condition cannot recur for an action that
+// is closed, so there is nothing for it to guard against, and it is a record
+// of what the queue once said.
+func (t *Tx) standDownChases(ctx context.Context, id string) ([]*Action, error) {
+	chases, err := t.loadActions(ctx, `
+		SELECT %s FROM action a
+		JOIN raised_action r ON r.action_id = a.id
+		WHERE a.closed_at IS NULL
+		  AND r.subject_type = 'action' AND r.subject_id = ?
+		ORDER BY a.n`, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, chase := range chases {
+		if err := closeRecord(ctx, t, chase, ClosedObsolete); err != nil {
+			return nil, err
+		}
+	}
+	return chases, nil
 }
 
 // freeDependents returns the actions that became ready because this one
@@ -559,6 +603,11 @@ func (t *Tx) dropOpenActions(ctx context.Context, projectID string) (dropped, fr
 		}
 		unhidden, err := t.unhide(ctx, a.ID)
 		if err != nil {
+			return nil, nil, err
+		}
+		// A chase about an action being dropped with its project is as stale
+		// as one about an action that finished.
+		if _, err := t.standDownChases(ctx, a.ID); err != nil {
 			return nil, nil, err
 		}
 		freed = append(freed, unblocked...)

@@ -1115,5 +1115,8 @@ func writeCloseResult(out io.Writer, r *store.CloseResult) error {
 	for _, a := range r.Unhidden {
 		fmt.Fprintf(out, "  %s is no longer hidden\n", a.ID)
 	}
+	for _, a := range r.StoodDown {
+		fmt.Fprintf(out, "  %s stood down: %s\n", a.ID, a.Title)
+	}
 	return nil
 }

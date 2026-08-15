@@ -377,11 +377,15 @@ func newProjectSetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <project>",
 		Short: "Change authored columns on an existing project",
-		Long: "Takes the same flags as add, plus --json. Only the columns given are\n" +
+		Long: "Takes the same columns as add, plus --json. Only the columns given are\n" +
 			"touched, and one event is logged per column that actually moved — so\n" +
 			"setting a value it already has writes nothing.\n\n" +
-			"An empty value clears a nullable column: --jira-key \"\" removes it. To\n" +
+			"An empty value clears a nullable column: --summary \"\" removes it. To\n" +
 			"clear a number, use --json '{\"priority\":null}'.\n\n" +
+			"Which issues a project tracks is not among them. That is a link\n" +
+			"rather than a column — a project may track several, from more than\n" +
+			"one tracker — so `project link-issue` and `project unlink-issue` are\n" +
+			"what change it, one at a time and each saying which way it went.\n\n" +
 			"Observed columns cannot be set here; they are sync's to write. Use\n" +
 			"`project snooze` and `project supersede` for the pairs those verbs\n" +
 			"keep consistent.",
@@ -389,11 +393,53 @@ func newProjectSetCmd() *cobra.Command {
 		RunE: runProjectSet,
 	}
 	addProjectFieldFlags(cmd)
+	// The same flag means something different here. On `add` it links the
+	// issues a new project tracks; on `set` there is nothing for it to do, so
+	// its replacement is a command rather than another flag.
+	_ = cmd.Flags().MarkDeprecated(flagJiraKeyOld, "use `roz project link-issue`")
 	addActorFlag(cmd)
 	return cmd
 }
 
+// issueFlagsOnSet refuses the two flags that look settable and are not,
+// naming the command that does the job.
+//
+// Rejecting a flag and being given no flags at all are different failures, and
+// "nothing to set" for an invocation that plainly asked for something is the
+// answer to the wrong question — the flag was the problem, not its absence.
+//
+// Refused rather than implemented, because a project may track several issues
+// from more than one tracker. `set` assigns columns, and a flag that looked
+// like one would have to decide silently whether it added or replaced. Replace
+// is the more dangerous default and add is not what `set` means anywhere else.
+func issueFlagsOnSet(cmd *cobra.Command, project string) error {
+	f := cmd.Flags()
+	for _, name := range []string{flagIssueKey, flagJiraKeyOld} {
+		if !f.Changed(name) {
+			continue
+		}
+		keys, err := f.GetStringArray(name)
+		if err != nil {
+			return err
+		}
+		key := "CDSS-1744"
+		if len(keys) > 0 && keys[0] != "" {
+			key = keys[0]
+		}
+		return fmt.Errorf(
+			"--%s does not set a column: which issues a project tracks is a link, "+
+				"since one project may track several. Use `roz project link-issue "+
+				"--project %s --issue %s` (and --tracker if it is not Jira), or "+
+				"`unlink-issue` to remove one",
+			name, project, key)
+	}
+	return nil
+}
+
 func runProjectSet(cmd *cobra.Command, args []string) error {
+	if err := issueFlagsOnSet(cmd, args[0]); err != nil {
+		return err
+	}
 	if !anyProjectFieldGiven(cmd) {
 		return fmt.Errorf("nothing to set: pass a column flag or --%s", flagJSON)
 	}

@@ -270,7 +270,7 @@ func (c *Client) Fetch(ctx context.Context, keys []string) (Result, error) {
 		if err != nil {
 			return Result{}, b.fail(err)
 		}
-		body, err := c.run(ctx, query)
+		body, err := c.request(ctx, ReadPullRequests, query)
 		if err != nil {
 			return Result{}, b.fail(err)
 		}
@@ -340,6 +340,11 @@ func decodeRateLimit(raw json.RawMessage) RateLimit {
 	if resetAt, err := time.Parse(time.RFC3339, w.ResetAt); err == nil {
 		limit.ResetAt = resetAt
 	}
+	// Recorded here rather than at each of the four callers, because this is
+	// where every reading passes through: a budget gauge that four places had
+	// to remember to update is a gauge that goes stale the first time a fifth
+	// read is added.
+	observeRateLimit(limit)
 	return limit
 }
 

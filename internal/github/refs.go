@@ -144,7 +144,7 @@ func (c *Client) Refs(ctx context.Context, queries []RefQuery) (RefResult, error
 				page: page + 1,
 			}
 
-			body, err := c.run(ctx, query)
+			body, err := c.request(ctx, ReadRefs, query)
 			if err == nil {
 				var pageResult refPage
 				pageResult, err = decodeRefsInto(body, aliases, &result)

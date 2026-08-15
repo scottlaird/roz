@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/scottlaird/roz/internal/ghsync"
+	"github.com/scottlaird/roz/internal/metrics"
 	"github.com/scottlaird/roz/internal/server"
 	"github.com/scottlaird/roz/internal/service"
 	"github.com/scottlaird/roz/internal/store"
@@ -64,6 +65,15 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer st.Close()
+
+	// Recorded once, at startup, because that is what it means: a serve reads
+	// the schema when it opens the database and keeps serving that schema
+	// until it is restarted. A gauge that re-read the file would report the
+	// database's version rather than this process's, which is the opposite of
+	// the question — "is what is running still current" — that it is for.
+	if version, err := st.SchemaVersion(cmd.Context()); err == nil {
+		metrics.SchemaVersion(version)
+	}
 
 	// Ctrl-C stops every service cleanly, the way `roz watch` does.
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)

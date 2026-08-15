@@ -91,6 +91,21 @@ func migrate(ctx context.Context, db *sql.DB) (from, to int, err error) {
 	return from, highest(applied), nil
 }
 
+// SchemaVersion is the highest migration this database has run.
+//
+// Read from applied_migration rather than from PRAGMA user_version, which is
+// only a high-water mark: the two disagree exactly when two branches each add
+// a migration and land in the other order, which is the case worth being able
+// to see from outside the process.
+func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
+	var version sql.NullInt64
+	err := s.db.QueryRowContext(ctx, "SELECT max(version) FROM applied_migration").Scan(&version)
+	if err != nil {
+		return 0, fmt.Errorf("reading the schema version: %w", err)
+	}
+	return int(version.Int64), nil
+}
+
 // ensureBookkeeping creates the applied_migration table and, for a database
 // that predates it, records what must already have run.
 //

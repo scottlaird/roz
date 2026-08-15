@@ -490,3 +490,24 @@ func TestStoppingWithAStreamOpenIsPrompt(t *testing.T) {
 		t.Errorf("stopping took %v, which is most of the %v grace", waited, shutdownGrace)
 	}
 }
+
+// TestMetricsAreServed: the exposition sits on the same listener as the page,
+// which is loopback and unauthenticated. That is the right trade and worth a
+// test — what it carries is less sensitive than the page beside it, so making
+// it harder to reach than the thing it describes would gain nothing.
+func TestMetricsAreServed(t *testing.T) {
+	base := running(t, func(context.Context) ([]byte, error) {
+		return []byte("the page"), nil
+	}, nil)
+
+	resp, body := get(t, base+"/metrics")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.Contains(body, "go_goroutines") {
+		t.Errorf("the exposition is missing the runtime:\n%s", body)
+	}
+	if strings.Contains(body, "the page") {
+		t.Error("the page was served under /metrics")
+	}
+}

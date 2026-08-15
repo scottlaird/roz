@@ -72,7 +72,7 @@ func (c *Client) Issues(ctx context.Context, keys []string) (IssueResult, error)
 		if err != nil {
 			return IssueResult{}, b.fail(err)
 		}
-		body, err := c.run(ctx, query)
+		body, err := c.request(ctx, ReadIssues, query)
 		if err != nil {
 			return IssueResult{}, b.fail(err)
 		}

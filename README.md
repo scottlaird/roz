@@ -66,7 +66,7 @@ directory.
 | `roz sync github` | Refresh observed columns from GitHub, and close the steps GitHub has finished. Read-only against GitHub. |
 | `roz syncer` | The same on a loop, backing off as rate limit heads down. |
 | `roz mcp` | Serve the commands over MCP on stdio, for an agent. Writes are recorded as `agent:<client>`. |
-| `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves. Loopback, no authentication. |
+| `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves, and `/metrics` says what roz is doing. Loopback, no authentication. |
 | **vocabulary** | |
 | `roz codeowners` | Who has to approve a set of changed files, and who is still worth asking. |
 | `roz owner set` / `list` | Where a group is reached, which is what `roz pr announce` looks up. Groups only. |
@@ -2291,6 +2291,50 @@ They exit rather than reload, because a restart is cheap and a process serving
 a schema it does not understand is not. Migration `0008` dropped five columns
 from `project`, which is the shape that breaks a server left running from the
 morning — and it would have surfaced as whichever query ran first, not as this.
+
+## What it says about itself
+
+`roz serve` exposes Prometheus metrics on the same listener as the page:
+
+```console
+$ curl -s localhost:8737/metrics | grep ^roz_
+roz_github_rate_limit_remaining 4832
+roz_github_rate_limit_total 5000
+roz_github_requests_total{outcome="ok",read="pull_requests"} 41
+roz_github_requests_total{outcome="ok",read="refs"} 12
+roz_github_requests_total{outcome="rate_limited",read="refs"} 2
+roz_schema_version 34
+```
+
+Three things, which are the three worth having when a long-running `serve` is
+behaving oddly: what roz asked GitHub for and how it went, what is left of the
+budget, and which schema this process opened. Plus the Go runtime — goroutines,
+heap, file descriptors — which is most of why this uses `client_golang` rather
+than printing the text format by hand.
+
+`read` is the same division the partial-failure reporting uses, so "which read
+is failing" has one answer whether it is asked of a log line or of a scrape.
+`outcome` is `ok`, `rate_limited` or `error` rather than an HTTP status: every
+request goes through `gh api graphql`, which reports an exit status and a
+message, and a status code derived from prose would be a label that looks
+precise and is guessed. Rate limiting is separated out because it means "wait"
+rather than "something is wrong".
+
+**A gauge nobody has set is absent, not zero.** For all three of these, zero is
+a real and alarming value — no budget left, a database at no migration — so
+reporting it before anything is known would be a lie in the worrying direction,
+and an alert on it would fire on every start. A failed request carries no
+budget either, and leaves the last real reading alone.
+
+`roz_schema_version` is read once, at startup, because that is what it means: a
+`serve` reads the schema when it opens the database and keeps serving it until
+restarted. Re-reading the file would report the database's version rather than
+this process's, which is the opposite of the question it is for — see
+[upgrading while something is running](#upgrading-while-something-is-running).
+
+The endpoint is loopback and unauthenticated, like the page. What it carries is
+less sensitive than the queue beside it, so nothing is gained by making it
+harder to reach than the thing it describes.
 
 ## Backing it up
 

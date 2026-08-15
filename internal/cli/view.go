@@ -347,7 +347,7 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	if err != nil {
 		return nil, err
 	}
-	verbs, err := st.ListVerbs(ctx, false)
+	verbs, err := st.ListVerbs(ctx, false, store.Sort{})
 	if err != nil {
 		return nil, err
 	}

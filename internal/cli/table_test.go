@@ -2,10 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // seedRefs records two tags, which is what a listing needs to have something
@@ -413,5 +417,201 @@ func TestBooleansReadAsTheTableSpeltThem(t *testing.T) {
 	}
 	if !strings.Contains(out, "true") {
 		t.Errorf("CSV does not carry a boolean as one:\n%s", out)
+	}
+}
+
+// equalStrings compares two lists, since a listing's whole answer is the
+// order it came back in.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestSortByColumns is what #169 asked for: several keys, primary first.
+func TestSortByColumns(t *testing.T) {
+	db := initDB(t)
+	for _, title := range []string{"Zebra", "Apple", "Mango"} {
+		addProject(t, db, title)
+	}
+
+	titles := func(args ...string) []string {
+		t.Helper()
+		out, err := runCLI(t, append([]string{
+			"project", "list", "--db", db, "--fields", "title", "-o", "csv",
+		}, args...)...)
+		if err != nil {
+			t.Fatalf("project list returned error: %v", err)
+		}
+		rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+		if err != nil {
+			t.Fatalf("the output is not CSV: %v\n%s", err, out)
+		}
+		var got []string
+		for _, row := range rows[1:] {
+			got = append(got, row[0])
+		}
+		return got
+	}
+
+	// Creation order is what a listing has always come back in, and is what
+	// --sort unset still means.
+	if got := titles(); !equalStrings(got, []string{"Zebra", "Apple", "Mango"}) {
+		t.Errorf("unsorted = %v, want creation order", got)
+	}
+	if got := titles("--sort", "title"); !equalStrings(got, []string{"Apple", "Mango", "Zebra"}) {
+		t.Errorf("--sort title = %v", got)
+	}
+	if got := titles("--sort", "-title"); !equalStrings(got, []string{"Zebra", "Mango", "Apple"}) {
+		t.Errorf("--sort -title = %v", got)
+	}
+	// Two keys: everything shares a status here, so the second decides.
+	if got := titles("--sort", "status,title"); !equalStrings(got, []string{"Apple", "Mango", "Zebra"}) {
+		t.Errorf("--sort status,title = %v", got)
+	}
+}
+
+// TestSortKeepsTheRankings: priority and staleness are not columns — one is a
+// CTE and two joins, the other a computed date — so they stay reserved words
+// in the same flag rather than moving to one of their own.
+func TestSortKeepsTheRankings(t *testing.T) {
+	db := initDB(t)
+	addProject(t, db, "Later", "--priority", "4")
+	addProject(t, db, "Now", "--priority", "1")
+
+	out, err := runCLI(t, "project", "list", "--db", db, "--sort", "priority", "--fields", "title")
+	if err != nil {
+		t.Fatalf("project list --sort priority returned error: %v", err)
+	}
+	if before, after := strings.Index(out, "Now"), strings.Index(out, "Later"); before > after {
+		t.Errorf("--sort priority did not rank:\n%s", out)
+	}
+
+	// A ranking is the whole ordering, not the first key of one.
+	_, err = runCLI(t, "project", "list", "--db", db, "--sort", "priority,title")
+	if err == nil {
+		t.Fatal("a ranking was accepted as a sort key")
+	}
+	if !strings.Contains(err.Error(), "takes no further keys") {
+		t.Errorf("error does not explain why: %v", err)
+	}
+}
+
+// TestSortRefusesWhatIsNotAColumn covers the derived columns, which have
+// nothing behind them to sort on, and anything shaped like SQL.
+func TestSortRefusesWhatIsNotAColumn(t *testing.T) {
+	db := initDB(t)
+	addAction(t, db, "--title", "Write it", "--verb", "write")
+
+	for _, spec := range []string{
+		"late",                     // derived: how late lives in a map, not a column
+		"nope",                     //
+		"title; DROP TABLE action", // the reason the names are checked at all
+		"title DESC",               // direction is the - prefix, not SQL
+		"title,",                   // a trailing comma is a typo
+	} {
+		if _, err := runCLI(t, "action", "list", "--db", db, "--sort", spec); err == nil {
+			t.Errorf("action list accepted --sort %q", spec)
+		}
+	}
+
+	// And the table is still there, which is the point of the whitelist.
+	if _, err := runCLI(t, "action", "list", "--db", db); err != nil {
+		t.Fatalf("action list returned error after the attempts: %v", err)
+	}
+}
+
+// TestSortOrdersTheTreeWithoutFlatteningIt: the ordering decides roots and
+// siblings, and the hierarchy still holds — Tree walks its input in order, so
+// this falls out rather than being arranged.
+func TestSortOrdersTheTreeWithoutFlatteningIt(t *testing.T) {
+	db := initDB(t)
+	parent := addProject(t, db, "Apple")
+	addProject(t, db, "Mango", "--parent", parent)
+	addProject(t, db, "Beta", "--parent", parent)
+	addProject(t, db, "Zebra")
+
+	out, err := runCLI(t, "project", "list", "--db", db, "--tree", "--sort", "title", "--fields", "title")
+	if err != nil {
+		t.Fatalf("project list --tree --sort returned error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")[1:]
+	want := []string{"Apple", "  Beta", "  Mango", "Zebra"}
+	for i, line := range lines {
+		if i >= len(want) {
+			break
+		}
+		if strings.TrimRight(line, " ") != want[i] {
+			t.Errorf("line %d = %q, want %q\n%s", i, line, want[i], out)
+		}
+	}
+}
+
+// TestSortBeatsAListingsOwnDefault: --since orders by when something merged,
+// and asking for an order says which one wins.
+func TestSortBeatsAListingsOwnDefault(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "acme/api")
+	for _, n := range []string{"1", "2"} {
+		if _, err := runCLI(t, "pr", "track", "--db", db, "acme/api#"+n); err != nil {
+			t.Fatalf("pr track returned error: %v", err)
+		}
+	}
+	mergePRAt(t, db, "acme/api#1", "2026-08-05T09:00:00.000Z")
+	mergePRAt(t, db, "acme/api#2", "2026-08-07T09:00:00.000Z")
+
+	oldest, err := runCLI(t, "pr", "list", "--db", db, "--since", "2026-08-01", "--fields", "id")
+	if err != nil {
+		t.Fatalf("pr list --since returned error: %v", err)
+	}
+	if strings.Index(oldest, "#1") > strings.Index(oldest, "#2") {
+		t.Errorf("--since is not oldest first:\n%s", oldest)
+	}
+
+	newest, err := runCLI(t, "pr", "list", "--db", db,
+		"--since", "2026-08-01", "--sort", "-merged_at", "--fields", "id")
+	if err != nil {
+		t.Fatalf("pr list --sort returned error: %v", err)
+	}
+	if strings.Index(newest, "#2") > strings.Index(newest, "#1") {
+		t.Errorf("--sort did not override the window's own order:\n%s", newest)
+	}
+}
+
+// mergePRAt records a merge the way sync would.
+func mergePRAt(t *testing.T, db, id, at string) {
+	t.Helper()
+
+	st, err := store.OpenStore(db)
+	if err != nil {
+		t.Fatalf("opening the store: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("beginning a transaction: %v", err)
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadPR(ctx, id)
+	if err != nil {
+		t.Fatalf("loading %s: %v", id, err)
+	}
+	after := before.Clone()
+	after.State = sql.NullString{String: store.PRStateMerged, Valid: true}
+	after.MergedAt = sql.NullString{String: at, Valid: true}
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("recording the merge: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("committing: %v", err)
 	}
 }

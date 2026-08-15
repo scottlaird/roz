@@ -374,6 +374,7 @@ func newCalendarListCmd() *cobra.Command {
 	f.Bool("upcoming", false, "not yet over — what the weekly review looks at")
 	f.String("on", "", "covering one day, YYYY-MM-DD")
 	f.String(flagKind, "", "one of "+strings.Join(store.WindowKinds, ", "))
+	addSortFlag(cmd, calendarColumns)
 	addListingFlags(cmd, calendarColumns)
 	return cmd
 }
@@ -436,6 +437,11 @@ func calendarFilterFrom(cmd *cobra.Command) (store.WindowFilter, error) {
 		}
 		filter.On = day
 	}
+	_, sort, err := sortFrom(cmd, calendarColumns)
+	if err != nil {
+		return store.WindowFilter{}, err
+	}
+	filter.Sort = sort
 	return filter, nil
 }
 

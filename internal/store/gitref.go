@@ -380,7 +380,7 @@ func (t *Tx) RefsIn(ctx context.Context, repo, kind string) ([]*GitRef, error) {
 }
 
 // ListRefs returns observed refs, optionally narrowed to one repository.
-func (s *Store) ListRefs(ctx context.Context, repo string) ([]*GitRef, error) {
+func (s *Store) ListRefs(ctx context.Context, repo string, sort Sort) ([]*GitRef, error) {
 	fields, err := fieldsOfStruct(&GitRef{})
 	if err != nil {
 		return nil, err
@@ -396,7 +396,11 @@ func (s *Store) ListRefs(ctx context.Context, repo string) ([]*GitRef, error) {
 		query += " WHERE repo_id = ?"
 		args = append(args, repo)
 	}
-	query += " ORDER BY repo_id, kind, name"
+	if by := sort.SQL(""); by != "" {
+		query += " ORDER BY " + by
+	} else {
+		query += " ORDER BY repo_id, kind, name"
+	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

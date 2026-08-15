@@ -109,7 +109,7 @@ func (r *GitHubRepo) Clone() *GitHubRepo {
 }
 
 // ListGitHubRepos returns tracked repositories, ordered by owner then name.
-func (s *Store) ListGitHubRepos(ctx context.Context) ([]*GitHubRepo, error) {
+func (s *Store) ListGitHubRepos(ctx context.Context, sort Sort) ([]*GitHubRepo, error) {
 	fields, err := fieldsOfStruct(&GitHubRepo{})
 	if err != nil {
 		return nil, err
@@ -119,7 +119,12 @@ func (s *Store) ListGitHubRepos(ctx context.Context) ([]*GitHubRepo, error) {
 		columns[i] = f.column
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM github_repo ORDER BY owner, name", strings.Join(columns, ", "))
+	order := sort.SQL("")
+	if order == "" {
+		order = "owner, name"
+	}
+	query := fmt.Sprintf("SELECT %s FROM github_repo ORDER BY %s",
+		strings.Join(columns, ", "), order)
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("listing repositories: %w", err)

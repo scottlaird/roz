@@ -232,6 +232,10 @@ type ActionFilter struct {
 	Unblocked bool
 	// Order is how the results come back. Empty is creation order.
 	Order string
+	// Sort orders by columns instead, when one was asked for. It wins over
+	// Order, which cannot be combined with it — a ranking is not a key to
+	// break a tie in, it is the whole ordering.
+	Sort Sort
 	// Waiting keeps what the queue leaves out because it is waiting on
 	// somebody: ready, unhidden, and a verb whose rank class says so. It is
 	// the complement of Unblocked over the same set, which is why the two are
@@ -325,7 +329,7 @@ func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY " + actionOrder(filter.Order)
+	query += " ORDER BY " + actionOrder(filter)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -351,9 +355,13 @@ func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action
 	return actions, nil
 }
 
-// actionOrder is the ORDER BY for a listing: creation order, or the ranking.
-func actionOrder(order string) string {
-	switch order {
+// actionOrder is the ORDER BY for a listing: the columns asked for, else
+// creation order or the ranking.
+func actionOrder(filter ActionFilter) string {
+	if sql := filter.Sort.SQL("a."); sql != "" {
+		return sql
+	}
+	switch filter.Order {
 	case OrderPriority:
 		return rankOrder()
 	case OrderStaleness:

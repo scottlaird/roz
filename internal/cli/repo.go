@@ -355,6 +355,7 @@ func newRepoListCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE:  runRepoList,
 	}
+	addSortFlag(cmd, repoColumns)
 	addListingFlags(cmd, repoColumns)
 	return cmd
 }
@@ -385,7 +386,11 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	repos, err := st.ListGitHubRepos(ctx)
+	_, sort, err := sortFrom(cmd, repoColumns)
+	if err != nil {
+		return err
+	}
+	repos, err := st.ListGitHubRepos(ctx, sort)
 	if err != nil {
 		return err
 	}

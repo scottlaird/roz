@@ -97,6 +97,14 @@ type columnSet[T any] struct {
 	// defaults names the default view, in order. Everything else is
 	// reachable only by asking for it.
 	defaults []string
+	// rankings are orderings this listing has that are not columns, and are
+	// what --sort accepts besides a column list.
+	//
+	// The queue's are the case: priority is a CTE, two joins and an
+	// expression over three tables, and staleness is a computed date. Neither
+	// is a column, so neither can be a key in a list of them — and both are
+	// what somebody actually types, so they keep their names.
+	rankings []string
 	// empty is what a table says when there is nothing, e.g. "no refs".
 	empty string
 }
@@ -471,6 +479,59 @@ func runListing[T any](cmd *cobra.Command, set columnSet[T], rows []T, ctx rende
 		return err
 	}
 	return writeRecords(cmd.OutOrStdout(), format, set, fields, rows, ctx)
+}
+
+// sortKeys resolves --sort names into columns to order by.
+//
+// A name has to reach a column of the record. A derived column — how late an
+// action is, the indentation of a title — has nothing to sort on, and a
+// listing's own column names are what the error offers instead of leaving
+// somebody to guess.
+func (s columnSet[T]) sortKeys(names []string) ([]store.SortKey, error) {
+	all, err := s.all()
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]column[T], len(all))
+	for _, c := range all {
+		byName[c.name] = c
+	}
+	sortable, err := store.Columns(s.recordOf(s.blank))
+	if err != nil {
+		return nil, err
+	}
+	isColumn := make(map[string]bool, len(sortable))
+	for _, name := range sortable {
+		isColumn[name] = true
+	}
+
+	keys := make([]store.SortKey, 0, len(names))
+	for _, name := range names {
+		key := store.SortKey{Column: strings.TrimPrefix(name, descendingPrefix)}
+		key.Desc = key.Column != name
+
+		c, ok := byName[key.Column]
+		if ok && c.field != "" {
+			// A column shown differently from what it holds still sorts on
+			// what it holds: `pipeline list --sort steps` would otherwise ask
+			// SQLite for a column that is not in the table.
+			key.Column = c.field
+		}
+		if !isColumn[key.Column] {
+			// The rankings belong in this error too. They are what --sort
+			// accepts besides a column, so an error that names only the
+			// columns would read as though `--sort priority` had stopped
+			// working.
+			offer := strings.Join(sortable, ", ")
+			if len(s.rankings) > 0 {
+				offer += "; or one of " + strings.Join(s.rankings, ", ")
+			}
+			return nil, fmt.Errorf("--%s %q is not a column to sort on: use %s",
+				sortFlag, name, offer)
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
 }
 
 // Field selection.

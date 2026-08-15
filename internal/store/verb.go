@@ -101,7 +101,7 @@ func (v *ActionVerb) Predicate() (Predicate, bool) {
 //
 // activeOnly drops retired verbs. They are never deleted — closed actions and
 // log rows still reference them — so retired ones stay readable.
-func (s *Store) ListVerbs(ctx context.Context, activeOnly bool) ([]*ActionVerb, error) {
+func (s *Store) ListVerbs(ctx context.Context, activeOnly bool, sort Sort) ([]*ActionVerb, error) {
 	fields, err := fieldsOfStruct(&ActionVerb{})
 	if err != nil {
 		return nil, err
@@ -115,7 +115,11 @@ func (s *Store) ListVerbs(ctx context.Context, activeOnly bool) ([]*ActionVerb, 
 	if activeOnly {
 		query += " WHERE active = 1"
 	}
-	query += " ORDER BY closes, verb"
+	if by := sort.SQL(""); by != "" {
+		query += " ORDER BY " + by
+	} else {
+		query += " ORDER BY closes, verb"
+	}
 
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {

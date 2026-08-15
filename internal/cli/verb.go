@@ -31,6 +31,7 @@ func newVerbListCmd() *cobra.Command {
 		RunE:  runVerbList,
 	}
 	cmd.Flags().Bool("all", false, "include retired verbs")
+	addSortFlag(cmd, verbColumns)
 	addListingFlags(cmd, verbColumns)
 	return cmd
 }
@@ -68,7 +69,11 @@ func runVerbList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	verbs, err := st.ListVerbs(ctx, !all)
+	_, sort, err := sortFrom(cmd, verbColumns)
+	if err != nil {
+		return err
+	}
+	verbs, err := st.ListVerbs(ctx, !all, sort)
 	if err != nil {
 		return err
 	}

@@ -147,6 +147,7 @@ func newIssueListCmd() *cobra.Command {
 	f.String(flagTracker, "", "keep only one tracker's issues")
 	f.Bool(flagClosed, false, "keep only issues the tracker has said closed")
 	f.String(flagSince, "", "closed on or after this date or timestamp; implies --closed")
+	addSortFlag(cmd, issueColumns)
 	addListingFlags(cmd, issueColumns)
 	return cmd
 }
@@ -204,7 +205,13 @@ func issueFilterFrom(cmd *cobra.Command) (store.IssueFilter, error) {
 			return store.IssueFilter{}, err
 		}
 	}
-	return store.IssueFilter{Tracker: tracker, Closed: closed, Since: since}, nil
+	_, sort, err := sortFrom(cmd, issueColumns)
+	if err != nil {
+		return store.IssueFilter{}, err
+	}
+	return store.IssueFilter{
+		Tracker: tracker, Closed: closed, Since: since, Sort: sort,
+	}, nil
 }
 
 func runIssueList(cmd *cobra.Command, _ []string) error {

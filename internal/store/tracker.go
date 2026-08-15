@@ -388,6 +388,10 @@ type IssueFilter struct {
 	// Since keeps issues closed at or after a timestamp, and selects closed
 	// ones for the same reason PRFilter.Since selects merged ones.
 	Since string
+	// Sort orders by columns instead, when one was asked for. It wins over
+	// the ranking, which cannot be combined with it: a ranking is not a key
+	// to break a tie in, it is the whole ordering.
+	Sort Sort
 }
 
 // aboutClosures reports whether the filter is asking what finished, which is
@@ -430,9 +434,12 @@ func (s *Store) ListTrackerIssues(ctx context.Context, filter IssueFilter) ([]*T
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	if filter.aboutClosures() {
+	switch {
+	case !filter.Sort.Empty():
+		query += " ORDER BY " + filter.Sort.SQL("")
+	case filter.aboutClosures():
 		query += " ORDER BY closed_at, id"
-	} else {
+	default:
 		query += " ORDER BY id"
 	}
 

@@ -163,18 +163,21 @@ var errNotEquivalent = errors.New("SQL would not answer this the way CEL does")
 //
 // The rule is equivalence, checked rather than assumed: a filter is written in
 // CEL, so CEL decides what it means, and a fragment that would answer
-// differently is an optimisation that changed an answer. NULL is where they
-// part company — `state != "OPEN"` keeps a NULL row in CEL and drops it in
-// SQL — and it is the only place, because everything else in a converted term
-// is a comparison of values both engines have.
+// differently is an optimisation that changed an answer.
+//
+// NULL is where they most obviously part company — `state != "OPEN"` keeps a
+// NULL row in CEL and drops it in SQL — but not the only place. SQLite coerces
+// types where CEL refuses to: `!merged_at` becomes `NOT merged_at`, which is
+// true of any text that reads as zero, while CEL calls it an error. So the
+// check is a handful of sample rows rather than one, and it is still samples
+// rather than a proof.
 func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	columns []store.ColumnType, fragment string, args []any) (bool, error) {
 
-	if nullableCount(term, columns) == 0 {
-		// Nothing in it can be absent, so there is no row shape the two could
-		// disagree about.
-		return true, nil
-	}
+	// More than one column that may be absent has row shapes the samples never
+	// build — NULL in the first with a value in the second — so it is not
+	// pushed down on a partial check. Rare, and cheap to be wrong about in
+	// this direction.
 	if nullableCount(term, columns) > 1 {
 		return false, nil
 	}
@@ -183,7 +186,7 @@ func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	if err != nil {
 		return false, fmt.Errorf("planning --filter %q: %w", term, err)
 	}
-	return probe.agrees(fragment, args, program)
+	return probe.agrees(fragment, args, program, referencedBy(term, columns))
 }
 
 // compileTerm parses and checks one term, reporting CEL's own diagnostic.

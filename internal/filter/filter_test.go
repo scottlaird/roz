@@ -315,3 +315,57 @@ func TestSplittingIsConservative(t *testing.T) {
 		}
 	}
 }
+
+// TestCoercionIsCaughtToo is the case one probe row missed.
+//
+// `!merged_at` converts to `NOT merged_at`, which SQLite reads as "coerces to
+// zero" — true of the text '0', and of any word, since a non-numeric string
+// coerces to 0. CEL calls `!"abc"` an error and matches nothing. Both answer
+// no to a row of NULLs, so a single all-NULL probe called them equivalent and
+// pushed down a fragment that means something else entirely.
+func TestCoercionIsCaughtToo(t *testing.T) {
+	f := compile(t, `!merged_at`)
+
+	if where, _ := f.SQL(); where != "" {
+		t.Errorf("a coercing fragment was pushed down as %q", where)
+	}
+
+	// And what it means is CEL's answer, which is that it matches nothing:
+	// `!` wants a bool and a timestamp column never holds one.
+	for _, r := range []*row{
+		{},
+		{MergedAt: sql.NullString{String: "0", Valid: true}},
+		{MergedAt: sql.NullString{String: "2026-08-15", Valid: true}},
+	} {
+		keep, err := f.Keep(r)
+		if err != nil {
+			t.Fatalf("Keep() returned error: %v", err)
+		}
+		if keep {
+			t.Errorf("Keep(%+v) = true; ! wants a bool", r.MergedAt)
+		}
+	}
+}
+
+// TestTheWayToAskForNullIsCheap: `merged_at == null` is the expression that
+// says it, and it converts to IS NULL — which an index can serve, and which
+// roz's own partial indexes are built on.
+func TestTheWayToAskForNullIsCheap(t *testing.T) {
+	f := compile(t, `merged_at == null`)
+
+	where, args := f.SQL()
+	if want := "(merged_at IS NULL)"; where != want {
+		t.Errorf("SQL = %q, want %q", where, want)
+	}
+	if len(args) != 0 {
+		t.Errorf("args = %v, want none: IS NULL takes no value", args)
+	}
+
+	keep, err := f.Keep(&row{})
+	if err != nil {
+		t.Fatalf("Keep() returned error: %v", err)
+	}
+	if !keep {
+		t.Error("the null row did not match merged_at == null")
+	}
+}

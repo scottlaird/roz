@@ -52,47 +52,123 @@ func newNullProbe(columns []store.ColumnType) (*nullProbe, error) {
 func (p *nullProbe) Close() error { return p.db.Close() }
 
 // agrees reports whether the SQL fragment and the CEL program answer the same
-// way for a row whose columns are all NULL.
+// way for every sample row.
 //
 // A term they disagree about is not pushed down: it runs in Go, where CEL
 // decides, and the answer stops depending on which half of the plan saw the
 // row.
-func (p *nullProbe) agrees(fragment string, args []any, program cel.Program) (bool, error) {
-	inSQL, err := p.sqlAnswer(fragment, args)
-	if err != nil {
-		return false, err
+//
+// More than one row, and the reason is a case the all-NULL row alone let
+// through. `!merged_at` converts to `NOT merged_at`, which in SQLite means
+// "coerces to zero" — true of the text '0' and of anything non-numeric — while
+// CEL calls `!"abc"` an error and matches nothing. Both answer no to a row of
+// NULLs, so a single probe called them equivalent and pushed down a fragment
+// that means something else entirely.
+//
+// The samples are not a proof. They are a handful of values per column chosen
+// because they are where SQLite's type coercion and CEL's type checking part
+// company: empty against absent, a numeric-looking string against a word,
+// zero against one. Being unsure costs a pushdown.
+func (p *nullProbe) agrees(fragment string, args []any, program cel.Program, referenced []store.ColumnType) (bool, error) {
+	for _, row := range p.samples(referenced) {
+		inSQL, err := p.sqlAnswer(fragment, args, row)
+		if err != nil {
+			return false, err
+		}
+		if inSQL != celAnswer(program, p.celRow(row)) {
+			return false, nil
+		}
 	}
-	return inSQL == celAnswer(program, p.nullRow()), nil
+	return true, nil
 }
 
-// sqlAnswer evaluates the fragment against one all-NULL row.
+// samples are the rows to compare on: a base row, and then each referenced
+// column in turn given each value worth trying.
+//
+// A column the record declares non-nullable is never NULL in the base row.
+// Nulling one builds a row the database cannot produce, and rejecting a
+// pushdown because the two engines disagree about an impossible row is a cost
+// with nothing bought — `title != "x"` was demoted by exactly that until the
+// base row stopped inventing a NULL title.
+func (p *nullProbe) samples(referenced []store.ColumnType) []map[string]any {
+	base := map[string]any{}
+	for _, c := range p.columns {
+		if c.Nullable {
+			continue
+		}
+		base[c.Name] = samplesFor(c.Kind)[0]
+	}
+
+	rows := []map[string]any{base}
+	for _, c := range referenced {
+		for _, value := range samplesFor(c.Kind) {
+			row := make(map[string]any, len(base)+1)
+			for name, v := range base {
+				row[name] = v
+			}
+			row[c.Name] = value
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// samplesFor is where the two engines are most likely to differ, by kind.
+func samplesFor(kind string) []any {
+	switch kind {
+	case "integer":
+		return []any{int64(0), int64(1), int64(-1)}
+	case "boolean":
+		return []any{false, true}
+	case "real":
+		return []any{0.0, 1.5}
+	default:
+		// "" and "0" are the values SQLite reads as false and CEL reads as a
+		// string; "abc" is the one that coerces to zero without looking like
+		// it; a timestamp is what these columns actually hold.
+		return []any{"", "0", "abc", "2026-08-15T10:00:00Z"}
+	}
+}
+
+// celRow turns a sample into an activation, with a null for every column the
+// sample did not set.
+func (p *nullProbe) celRow(sample map[string]any) map[string]any {
+	names := make([]string, 0, len(p.columns))
+	for _, c := range p.columns {
+		names = append(names, c.Name)
+	}
+	return nullFilled(sample, names)
+}
+
+// sqlAnswer evaluates the fragment against one sample row, with every column
+// the sample did not set left NULL.
 //
 // A fragment that comes out NULL is "does not match": a WHERE clause that is
 // neither true nor false excludes the row, which is the answer a listing would
 // have seen.
-func (p *nullProbe) sqlAnswer(fragment string, args []any) (bool, error) {
+func (p *nullProbe) sqlAnswer(fragment string, args []any, sample map[string]any) (bool, error) {
 	names := make([]string, 0, len(p.columns))
+	values := make([]any, 0, len(p.columns))
 	for _, c := range p.columns {
+		if value, ok := sample[c.Name]; ok {
+			names = append(names, "? AS "+quoteIdent(c.Name))
+			values = append(values, value)
+			continue
+		}
 		names = append(names, "NULL AS "+quoteIdent(c.Name))
 	}
+	// The fragment appears first in the text, so its placeholders bind first
+	// — SQLite numbers them by position in the statement, not by which
+	// subquery they sit in.
 	query := fmt.Sprintf("SELECT (%s) FROM (SELECT %s)", fragment, strings.Join(names, ", "))
 
 	var answer sql.NullBool
-	if err := p.db.QueryRow(query, args...).Scan(&answer); err != nil {
+	if err := p.db.QueryRow(query, append(append([]any{}, args...), values...)...).Scan(&answer); err != nil {
 		// A fragment SQLite will not even parse is not a pushdown worth
 		// having, whatever it would have meant.
 		return false, nil
 	}
 	return answer.Valid && answer.Bool, nil
-}
-
-// nullRow is the same row as the CEL side sees it.
-func (p *nullProbe) nullRow() map[string]any {
-	names := make([]string, 0, len(p.columns))
-	for _, c := range p.columns {
-		names = append(names, c.Name)
-	}
-	return nullFilled(nil, names)
 }
 
 // celAnswer runs a program, treating anything that is not a plain yes as a no.
@@ -114,6 +190,20 @@ func celAnswer(program cel.Program, row map[string]any) bool {
 // the habit is worth keeping.
 func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+// referencedBy is the columns a term names.
+//
+// Textual containment, which is crude: a string literal holding a column name
+// counts. Over-counting costs probe rows rather than an answer.
+func referencedBy(term string, columns []store.ColumnType) []store.ColumnType {
+	var found []store.ColumnType
+	for _, c := range columns {
+		if strings.Contains(term, c.Name) {
+			found = append(found, c)
+		}
+	}
+	return found
 }
 
 // nullableCount is how many of a term's columns may be absent.

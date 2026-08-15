@@ -1674,6 +1674,32 @@ with no off switch is worse than none, because it teaches you to ignore the
 queue. The cost is that a condition recurring long after it was dealt with
 produces nothing new, and the log still has every firing.
 
+**A chase stands down when what it was about is over.** It is derived from
+another action's state, so it must not outlive it: the review arrives, the
+wait closes, and a `decide` telling you to nudge someone about an
+already-approved pull request is a dead item you have to read and rule out by
+hand.
+
+```console
+$ roz action close NA1
+NA1 done (completed)
+  NA3 stood down: chase NA1
+```
+
+In the same cascade that frees dependents, so there is no second command to
+remember, and whether the wait finished or was dropped makes no difference.
+
+It also stands down when the wait simply **stops being overdue** — a review
+re-requested resets the clock, and the condition is then no longer true. That
+one clears the record of having raised it, so the wait going overdue again
+raises a fresh chase rather than being silent. The record exists to stop a
+condition that re-fires every poll from becoming a nag; when the condition
+ends, so does the reason to remember it.
+
+Closed as `obsolete`, never `completed`: the chase records a nudge that never
+happened, and counting it as done would quietly inflate any answer to "how
+often did I have to chase".
+
 An overdue item gets a second one *only if the queue leaves it out*. A wait is
 excluded by design, so without a `decide` there would be nothing at all to see;
 anything else is already in the queue, and a second row about it would be two

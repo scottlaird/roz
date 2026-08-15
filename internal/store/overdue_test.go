@@ -701,3 +701,109 @@ func TestADeadlineMissedByAnHourIsStillLate(t *testing.T) {
 		t.Errorf("late by %d days, want 0 — it is late, and not by a day yet", days)
 	}
 }
+
+// TestAChaseStandsDownWhenTheWaitStopsBeingOverdue is the third way a chase
+// goes stale. A wait can leave the overdue band without closing — a review
+// re-requested resets the clock — and the chase is then about a condition
+// that is no longer true.
+func TestAChaseStandsDownWhenTheWaitStopsBeingOverdue(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	// Waiting since long enough ago to be past wait_review's allowance.
+	wait := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+	st.now = func() time.Time { return at(t, "2026-08-10T00:00:00.000Z") }
+
+	overdue, err := st.OverdueWaits(ctx, ActorPredicate)
+	if err != nil {
+		t.Fatalf("OverdueWaits() returned error: %v", err)
+	}
+	if len(overdue) != 1 || overdue[0].Raised == nil {
+		t.Fatalf("nothing was raised for an overdue wait: %+v", overdue)
+	}
+	chase := overdue[0].Raised.ID
+
+	// The clock resets, the way a re-requested review resets it.
+	resetWaitingSince(t, st, wait, "2026-08-10T00:00:00.000Z")
+
+	if _, err := st.OverdueWaits(ctx, ActorPredicate); err != nil {
+		t.Fatalf("OverdueWaits() returned error: %v", err)
+	}
+	stood := loadAction(t, st, chase)
+	if stood.ClosedAt.String == "" {
+		t.Fatal("the chase outlived the condition it was raised for")
+	}
+	if got := stood.ClosedReason.String; got != ClosedObsolete {
+		t.Errorf("the chase closed as %q, want %q", got, ClosedObsolete)
+	}
+
+	// And going overdue again raises a fresh chase, rather than being silent
+	// because something was once raised about it.
+	//
+	// The clock moves forward rather than back: a re-requested review pushes
+	// the deadline out, and the wait is late again once the new one passes.
+	// Winding it back would recreate the deadline the first exception was
+	// logged against, which OverdueWaits correctly reads as the same wait
+	// already reported.
+	st.now = func() time.Time { return at(t, "2026-08-20T00:00:00.000Z") }
+	again, err := st.OverdueWaits(ctx, ActorPredicate)
+	if err != nil {
+		t.Fatalf("OverdueWaits() returned error: %v", err)
+	}
+	if len(again) != 1 || again[0].Raised == nil {
+		t.Fatalf("a wait going overdue again raised nothing: %+v", again)
+	}
+	if again[0].Raised.ID == chase {
+		t.Error("the stood-down chase was reused rather than a new one raised")
+	}
+}
+
+// TestAChaseSurvivesWhileItsWaitIsStillOverdue: standing one down must not
+// mean closing it the moment somebody has not acted on it yet.
+func TestAChaseSurvivesWhileItsWaitIsStillOverdue(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+	st.now = func() time.Time { return at(t, "2026-08-10T00:00:00.000Z") }
+
+	overdue, err := st.OverdueWaits(ctx, ActorPredicate)
+	if err != nil {
+		t.Fatalf("OverdueWaits() returned error: %v", err)
+	}
+	chase := overdue[0].Raised.ID
+
+	// A second scan, with nothing having changed.
+	if _, err := st.OverdueWaits(ctx, ActorPredicate); err != nil {
+		t.Fatalf("OverdueWaits() returned error: %v", err)
+	}
+	if got := loadAction(t, st, chase); got.ClosedAt.String != "" {
+		t.Error("the chase was stood down while its wait was still overdue")
+	}
+}
+
+// resetWaitingSince moves the clock a wait is measured from, the way a
+// re-requested review does.
+func resetWaitingSince(t *testing.T, st *Store, a *Action, since string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadAction(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("LoadAction() returned error: %v", err)
+	}
+	after := before.Clone()
+	after.WaitingSince = sql.NullString{String: since, Valid: true}
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}

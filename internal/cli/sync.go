@@ -174,6 +174,9 @@ func reportSettled(out io.Writer, all []store.Settled) {
 		for _, back := range settled.Result.Unhidden {
 			fmt.Fprintf(out, "  %s is no longer hidden\n", back.ID)
 		}
+		for _, done := range settled.Result.StoodDown {
+			fmt.Fprintf(out, "  %s stood down: %s\n", done.ID, done.Title)
+		}
 	}
 }
 

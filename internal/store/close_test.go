@@ -738,3 +738,87 @@ func TestPRPipelineIsAuthored(t *testing.T) {
 		t.Error("sync wrote pr.pipeline, want the authored rule to refuse it")
 	}
 }
+
+// loadAction reads one back, for a test asserting on how it closed.
+func loadAction(t *testing.T, st *Store, id string) *Action {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	a, err := tx.LoadAction(ctx, id)
+	if err != nil {
+		t.Fatalf("LoadAction(%s) returned error: %v", id, err)
+	}
+	return a
+}
+
+// TestClosingAWaitStandsDownItsChase is scottlaird/roz#178. A chase is
+// derived from another action's state, so it must not be able to outlive it:
+// the review arrives, the wait closes, and the chase is still telling somebody
+// to nudge about a pull request that has already been approved.
+func TestClosingAWaitStandsDownItsChase(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	wait := addAction(t, st, "wait for review on owner/repo#123", "wait_review")
+	raised, err := st.RaiseAction(ctx, EventWaitedTooLong, wait,
+		"chase "+wait.ID, wait.ID+" has been waiting 4 days.")
+	if err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+	if raised == nil {
+		t.Fatal("RaiseAction() raised nothing")
+	}
+
+	result, err := st.CloseAction(ctx, ActorHuman, CloseRequest{ID: wait.ID})
+	if err != nil {
+		t.Fatalf("CloseAction() returned error: %v", err)
+	}
+	if len(result.StoodDown) != 1 || result.StoodDown[0].ID != raised.Action.ID {
+		t.Fatalf("StoodDown = %v, want the chase", result.StoodDown)
+	}
+
+	chase := loadAction(t, st, raised.Action.ID)
+	if chase.ClosedAt.String == "" {
+		t.Error("the chase is still open after its wait closed")
+	}
+	// Obsolete rather than completed: it records a nudge that never happened,
+	// and calling it completed would inflate any count of how often chasing
+	// was needed.
+	if got := chase.ClosedReason.String; got != ClosedObsolete {
+		t.Errorf("the chase closed as %q, want %q", got, ClosedObsolete)
+	}
+	if chase.State != ActionDropped {
+		t.Errorf("the chase is %q, want it not to pass for finished", chase.State)
+	}
+	// And what it carried is kept.
+	if chase.Title == "" || chase.Why == "" {
+		t.Errorf("closing the chase discarded what it said: %+v", chase)
+	}
+}
+
+// TestAChaseStandsDownWhenTheWaitIsDroppedToo: the requirement covers the
+// other ways a wait ends, not only the happy path.
+func TestAChaseStandsDownWhenTheWaitIsDroppedToo(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	wait := addAction(t, st, "wait for review on owner/repo#123", "wait_review")
+	raised, err := st.RaiseAction(ctx, EventWaitedTooLong, wait, "chase "+wait.ID, "waiting")
+	if err != nil {
+		t.Fatalf("RaiseAction() returned error: %v", err)
+	}
+
+	if _, err := st.CloseAction(ctx, ActorHuman,
+		CloseRequest{ID: wait.ID, Reason: ClosedDropped}); err != nil {
+		t.Fatalf("CloseAction() returned error: %v", err)
+	}
+	if got := loadAction(t, st, raised.Action.ID); got.ClosedAt.String == "" {
+		t.Error("a dropped wait left its chase open")
+	}
+}

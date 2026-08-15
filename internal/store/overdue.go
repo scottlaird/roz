@@ -220,7 +220,93 @@ func (s *Store) OverdueWaits(ctx context.Context, actor Actor) ([]Overdue, error
 			overdue[i].Raised = raised.Action
 		}
 	}
+
+	if err := s.standDownClearedChases(ctx, actor); err != nil {
+		return nil, err
+	}
 	return overdue, nil
+}
+
+// standDownClearedChases closes the chases whose wait is no longer overdue.
+//
+// A wait can leave the overdue band without closing: a review re-requested
+// resets the clock, and the chase raised against it is then telling somebody
+// to nudge about something nobody is waiting past its allowance for. Closing
+// with the wait covers the wait ending; this covers the condition simply
+// going away.
+//
+// Only for a subject that is still open. One that closed was dealt with by
+// the close cascade, in the same transaction that closed it.
+//
+// The raised_action row goes with it, which is the one place this deletes
+// bookkeeping rather than writing more. The row exists so a condition that
+// re-fires every poll produces one item rather than a nag with no off switch,
+// and that reasoning ends when the condition does: a wait that goes overdue
+// again is a new condition and deserves a fresh chase. Keeping the row would
+// mean the second time is silent. The log still has every firing.
+func (s *Store) standDownClearedChases(ctx context.Context, actor Actor) error {
+	// LateActions rather than what this scan just reported. OverdueWaits is
+	// idempotent — a wait already reported at or after its deadline is left
+	// out — so its result is what is *newly* late, and reading it as "still
+	// late" would stand every chase down on the second scan.
+	late, err := s.LateActions(ctx)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.Begin(ctx, actor)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	chases, err := tx.loadActions(ctx, `
+		SELECT %s FROM action a
+		JOIN raised_action r ON r.action_id = a.id
+		JOIN action subject ON subject.id = r.subject_id
+		WHERE a.closed_at IS NULL
+		  AND r.kind = ? AND r.subject_type = 'action'
+		  AND subject.closed_at IS NULL
+		ORDER BY a.n`, EventWaitedTooLong)
+	if err != nil {
+		return err
+	}
+
+	var cleared []*Action
+	for _, chase := range chases {
+		subject, err := tx.subjectOfRaised(ctx, chase.ID)
+		if err != nil {
+			return err
+		}
+		if _, stillLate := late[subject]; stillLate {
+			continue
+		}
+		if err := closeRecord(ctx, tx, chase, ClosedObsolete); err != nil {
+			return err
+		}
+		cleared = append(cleared, chase)
+	}
+	if len(cleared) == 0 {
+		return nil
+	}
+	for _, chase := range cleared {
+		if _, err := tx.tx.ExecContext(ctx,
+			"DELETE FROM raised_action WHERE action_id = ?", chase.ID); err != nil {
+			return fmt.Errorf("clearing what raised %s: %w", chase.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// subjectOfRaised names what an exception raised an action about.
+func (t *Tx) subjectOfRaised(ctx context.Context, actionID string) (string, error) {
+	var subject string
+	err := t.tx.QueryRowContext(ctx,
+		"SELECT subject_id FROM raised_action WHERE action_id = ?", actionID).Scan(&subject)
+	if err != nil {
+		return "", fmt.Errorf("reading what raised %s: %w", actionID, err)
+	}
+	return subject, nil
 }
 
 func (s *Store) reportOverdue(ctx context.Context, actor Actor, o Overdue) error {

@@ -478,8 +478,10 @@ it.
 There is a third order, `--sort staleness`, which answers a different
 question and is covered under [Staleness](#staleness).
 
-**Projects** sort on one field, `project.priority`, an integer from 1 to 4.
-Unprioritised sorts last — unstated is not the same as low, but it has to go
+**Projects** sort on one field, `project.priority`, an integer from 1 to 9.
+Fewer bands than that are normally in use; the range is wide so that reserving
+one — a band for whatever is on fire, say — is a renumber rather than a
+migration. Unprioritised sorts last — unstated is not the same as low, but it has to go
 somewhere, and behind the stated ones is the reading that does no harm.
 
 ```bash

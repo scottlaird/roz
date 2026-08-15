@@ -752,3 +752,45 @@ func initFromTemplate(t *testing.T) string {
 	}
 	return path
 }
+
+// TestPriorityRange pins the bound the schema enforces. 0028 widened it from
+// 1-4 to 1-9 by rewriting the CHECK in sqlite_schema rather than rebuilding
+// the table, so this is also the test that the rewrite landed: a no-op
+// migration leaves 5 rejected.
+func TestPriorityRange(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tt := range []struct {
+		priority int64
+		want     bool
+	}{
+		{1, true},
+		{4, true},
+		{5, true},
+		{9, true},
+		{10, false},
+		{0, false},
+	} {
+		st := newStore(t)
+		p := insertProject(t, st, "ranged")
+
+		tx, err := st.Begin(ctx, ActorHuman)
+		if err != nil {
+			t.Fatalf("Begin() returned error: %v", err)
+		}
+		after := p.Clone()
+		after.Priority = sql.NullInt64{Int64: tt.priority, Valid: true}
+		_, err = tx.Update(ctx, p, after)
+		if err == nil {
+			err = tx.Commit()
+		}
+		tx.Rollback()
+
+		switch {
+		case tt.want && err != nil:
+			t.Errorf("priority %d rejected, want accepted: %v", tt.priority, err)
+		case !tt.want && err == nil:
+			t.Errorf("priority %d accepted, want rejected", tt.priority)
+		}
+	}
+}

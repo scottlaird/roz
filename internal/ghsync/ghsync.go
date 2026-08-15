@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/scottlaird/roz/internal/github"
 	"github.com/scottlaird/roz/internal/store"
@@ -101,6 +102,10 @@ type Result struct {
 	// either onto a parent or off one.
 	Stacked []*store.PR
 
+	// Teams counts the team memberships refreshed this cycle, which is zero
+	// unless a step is waiting for a group and its answer had gone stale.
+	Teams int
+
 	// Failed lists the reads that did not happen this cycle. Empty is the
 	// ordinary case.
 	//
@@ -179,6 +184,18 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 		}
 	}
 
+	// Membership, for the groups an open step is waiting for a review from.
+	// Bounded by what is waiting rather than by the organisation, and only
+	// when the stored answer has aged out, so an ordinary cycle makes no
+	// request at all.
+	if reader, ok := client.(TeamReader); ok {
+		if err := syncTeams(ctx, st, reader, time.Now(), &result); err != nil {
+			if stop, err := noteFailure(&result, readTeams, err); stop {
+				return result, err
+			}
+		}
+	}
+
 	// After the state poll, so a head that moved this minute is derived
 	// against rather than against the one before it.
 	//
@@ -242,6 +259,7 @@ const (
 	readRefs   = "refs"
 	readIssues = "issues"
 	readPRs    = "pull requests"
+	readTeams  = "team membership"
 )
 
 // noteFailure records a read that did not happen, and says whether the cycle

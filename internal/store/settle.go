@@ -156,7 +156,19 @@ func (s *Store) satisfiedActions(ctx context.Context, scope map[string]bool) ([]
 // transaction, and a rule that can query is a rule that can be slow, or
 // wrong, in ways a test of the rule alone would not show.
 func (t *Tx) factsFor(ctx context.Context, c candidate) (Facts, error) {
-	var facts Facts
+	facts := Facts{Action: c.action}
+
+	// A step waiting for one group needs to know who is in it, and the
+	// predicate may not ask GitHub. Read here for the group this action names,
+	// rather than every group: what a predicate reads should be as narrow as
+	// what it asks.
+	if c.action.WaitingFor.Valid && c.action.WaitingFor.String != "" {
+		members, err := t.MembersOf(ctx, c.action.WaitingFor.String)
+		if err != nil {
+			return Facts{}, err
+		}
+		facts.Members = members
+	}
 	if c.pr != "" {
 		pr, err := t.LoadPR(ctx, c.pr)
 		if err != nil {

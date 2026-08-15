@@ -334,11 +334,25 @@ func (t *Tx) CheckPipelineSteps(ctx context.Context, steps []PipelineStep) error
 		case v.RequiresRef && step.Spec == "":
 			return &PipelineStepError{Verb: step.Verb,
 				Reason: "it waits for a ref, so the step has to say which: " + step.Verb + "(>=minor+2)"}
-		case !v.RequiresRef && step.Spec != "":
+		case v.RequiresOwner && step.Spec == "":
+			return &PipelineStepError{Verb: step.Verb,
+				Reason: "it waits for one group's review, so the step has to say whose: " +
+					step.Verb + "(@org/storage)"}
+		case !v.RequiresRef && !v.RequiresOwner && step.Spec != "":
 			return &PipelineStepError{Verb: step.Verb,
 				Reason: "it takes no spec, and was given " + step.Spec}
 		}
 		if step.Spec == "" {
+			continue
+		}
+		if v.RequiresOwner {
+			// An owner, not a version rule. The two specs share a syntax slot
+			// and nothing else, so a step written with the wrong one is caught
+			// where it is written rather than at the pull request that finds
+			// itself waiting for a group called ">=minor+1".
+			if err := checkOwnerSpec(step.Spec); err != nil {
+				return &PipelineStepError{Verb: step.Verb, Reason: err.Error()}
+			}
 			continue
 		}
 		// An absolute version is refused rather than accepted, even though the
@@ -358,6 +372,23 @@ func (t *Tx) CheckPipelineSteps(ctx context.Context, steps []PipelineStep) error
 		if _, err := ParseRelativeRef(step.Spec); err != nil {
 			return &PipelineStepError{Verb: step.Verb, Reason: err.Error()}
 		}
+	}
+	return nil
+}
+
+// checkOwnerSpec refuses what could not name a group.
+//
+// Shape only. Whether the team exists is GitHub's to say and changes without
+// the pipeline changing, so refusing an unknown one here would make writing a
+// pipeline depend on a network read — and a team created next week is a
+// legitimate thing to write down today.
+func checkOwnerSpec(spec string) error {
+	if strings.ContainsAny(spec, " ,") {
+		return fmt.Errorf("%q names more than one owner; a step waits for one group at a time, "+
+			"so write a step each", spec)
+	}
+	if !strings.HasPrefix(spec, "@") {
+		return fmt.Errorf("%q is not an owner: write it as CODEOWNERS does, e.g. @org/storage", spec)
 	}
 	return nil
 }

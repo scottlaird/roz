@@ -73,6 +73,13 @@ type ActionVerb struct {
 	// against `action wait-ref` — and an error naming the wrong one is its own
 	// small bug.
 	RequiresRef bool `db:"requires_ref"`
+
+	// RequiresOwner says the verb needs an owner to be able to close: which
+	// group's review this step waits for. A third flag for the same reason
+	// there are two — the remedies differ, and a step's spec means something
+	// different to each. A ref spec resolves to a release; an owner spec is
+	// the group being waited on, and lands on the action's waiting_for.
+	RequiresOwner bool `db:"requires_owner"`
 }
 
 func (v *ActionVerb) table() string       { return "actionverb" }

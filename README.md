@@ -1682,6 +1682,71 @@ the change, as against the ones pulled in by incidental paths — is the
 eventual automation, and it will populate this rather than replace it. A
 derived answer can still be wrong, which is what an authored column is for.
 
+## Several reviews, in order
+
+A real change can need three reviews, by different groups, in order: your own
+team, then the owners of code it happens to touch, then whoever guards the
+protected parts. `wait_review` cannot express any of that. It closes on
+`reviewDecision`, which is a single verdict for the pull request as a whole —
+`APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED` — so a pipeline can say
+"wait for review" once, and it closes the moment the whole thing is approved.
+For a three-stage review that is the wrong answer twice.
+
+A step is a verb plus a spec, and `wait_review_from` reads its spec as a group:
+
+```console
+$ roz pipeline add tiered \
+    --steps 'undraft,wait_review_from(@org/storage),wait_review_from(@org/security),merge'
+tiered: undraft → wait_review_from(@org/storage) → wait_review_from(@org/security) → merge
+
+$ roz action close NA1
+NA1 done (completed)
+  created NA2 un-draft scottlaird/roz#39
+  created NA3 wait for review from @org/storage on scottlaird/roz#39 (blocked by NA2)
+  created NA4 wait for review from @org/security on scottlaird/roz#39 (blocked by NA3)
+  created NA5 merge scottlaird/roz#39 (blocked by NA4)
+```
+
+They are ordinary actions, chained the ordinary way. There is no second notion
+of advancing a pipeline: closing a step frees the next through the same
+unblocking every action gets, and each carries its own group in the same
+`waiting_for` a person fills in by hand.
+
+**An approval arrives as a person, and a step waits for a group**, so the
+question is whether any approver stands for that group. That needs membership,
+and a predicate may not call GitHub — every one of them is a pure function of
+stored rows — so membership is cached:
+
+```console
+$ roz sync github
+polled 3, 1 changed, 1 closed, 1 team memberships read
+```
+
+Bounded by what is waiting, not by the organisation. Only groups an open step
+names are ever read, only when the stored answer is more than a day old, and a
+cycle with nothing stale makes no request at all. Fetching every team in an org
+to answer a question about three of them is the wrong shape.
+
+A group nothing has read is **not approved**, the same rule an unsynced column
+follows. A wait that stays open because membership was never read sits visibly
+in the queue; one that closed for that reason would not.
+
+Whether an approval survives a push is GitHub's business, not roz's:
+`latestOpinionatedReviews` already carries what still counts, which is a
+standing approval where branch protection does not dismiss stale ones and
+nothing where it does.
+
+A step may name a person rather than a team — a tier that resolves to one
+individual is real — and then their own approval is the answer. What a step may
+not do is name two groups: that is two steps, and saying so is refused where
+the pipeline is written rather than at the pull request that finds itself
+waiting for a group called `>=minor+1`.
+
+The pipeline still names its tiers explicitly. Deriving them from what a change
+touches — three reviews for one pull request and one for the next — would mean
+instantiating steps from a live CODEOWNERS read at track time, which is a
+different feature; this is the mechanism it would build on.
+
 ## Where to tell them
 
 `roz pr announce` needed `--channel` on every invocation, so the channel was

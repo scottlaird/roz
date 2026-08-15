@@ -50,8 +50,9 @@ func syncIssues(ctx context.Context, st *store.Store, reader IssueReader, result
 
 	fetched, err := reader.Issues(ctx, keys)
 	if err != nil {
-		return err
+		return &readError{err: err}
 	}
+	result.asked++
 	if fetched.RateLimit.Known() {
 		result.RateLimit = fetched.RateLimit
 	}

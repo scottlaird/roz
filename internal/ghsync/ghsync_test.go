@@ -3,6 +3,7 @@ package ghsync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -1335,5 +1336,113 @@ func TestSyncKeepsPollingWhatAnActionIsAbout(t *testing.T) {
 	}
 	if len(client.asked) != 1 {
 		t.Errorf("a pull request with an open action was not polled: %v", client.asked)
+	}
+}
+
+// failingRefs answers about pull requests but not about refs, which is the
+// shape scottlaird/roz#176 is about: refs are read first, so before this a
+// broken ref read meant pull requests were never polled at all.
+type failingRefs struct {
+	*fakeFetcher
+	refErr error
+}
+
+func (f *failingRefs) Refs(context.Context, []github.RefQuery) (github.RefResult, error) {
+	return github.RefResult{}, f.refErr
+}
+
+// TestOneReadFailingDoesNotCancelTheRest is the issue. Ordering decided who
+// went unread, and pull requests were last.
+func TestOneReadFailingDoesNotCancelTheRest(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+	addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.0",
+	})
+
+	inner := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{observed(key)}}}
+	client := &failingRefs{fakeFetcher: inner, refErr: errors.New("gh: connection reset")}
+
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error, want the cycle to carry on: %v", err)
+	}
+	// What did succeed is applied, rather than discarded with the error.
+	if result.Polled != 1 {
+		t.Errorf("Polled = %d, want the pull request read to have happened", result.Polled)
+	}
+	if got := loadPR(t, st, key).Title; got != "a title" {
+		t.Errorf("the pull request was not applied: title = %q", got)
+	}
+	// And the failure is reported rather than swallowed, with the identity it
+	// already carries.
+	if len(result.Failed) != 1 {
+		t.Fatalf("Failed = %v, want the ref read", result.Failed)
+	}
+	if result.Failed[0].Read != readRefs {
+		t.Errorf("the failure does not say which read it was: %v", result.Failed[0])
+	}
+}
+
+// TestEveryReadFailingIsAFailedCycle: partial success must not become a way
+// for a total failure to go unmentioned.
+func TestEveryReadFailingIsAFailedCycle(t *testing.T) {
+	ctx := context.Background()
+	st, _ := newStore(t)
+	addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.0",
+	})
+
+	broken := errors.New("gh: not authenticated")
+	inner := &fakeFetcher{err: broken}
+	client := &failingRefs{fakeFetcher: inner, refErr: broken}
+
+	_, err := Sync(ctx, st, client)
+	if err == nil {
+		t.Fatal("Sync() returned nil when nothing was read")
+	}
+	if !strings.Contains(err.Error(), "every read failed") {
+		t.Errorf("error = %v, want it to say the cycle read nothing", err)
+	}
+}
+
+// TestARateLimitStopsTheCycleWhereItIs: the reads share one GraphQL budget,
+// so carrying on after one has been refused spends against a limit already
+// hit. Attempting all of them is the rule for faults; a limit is not one.
+func TestARateLimitStopsTheCycleWhereItIs(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+	addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.0",
+	})
+
+	inner := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{observed(key)}}}
+	client := &failingRefs{
+		fakeFetcher: inner,
+		refErr:      fmt.Errorf("%w: 60 remaining", github.ErrRateLimited),
+	}
+
+	_, err := Sync(ctx, st, client)
+	if !errors.Is(err, github.ErrRateLimited) {
+		t.Fatalf("Sync() = %v, want the rate limit to stop the cycle", err)
+	}
+	if len(inner.asked) != 0 {
+		t.Errorf("the cycle carried on spending against a limit already hit: %v", inner.asked)
+	}
+}
+
+// TestASkippedReadIsNotReportedAsMissing is the failure mode that would turn
+// one broken cycle into a queue full of spurious work: reportMissing raises an
+// action per unresolvable key, and a read that never ran must not be reported
+// as every one of its entities having gone invisible.
+func TestASkippedReadIsNotReportedAsMissing(t *testing.T) {
+	ctx := context.Background()
+	st, _ := newStore(t)
+
+	client := &fakeFetcher{err: errors.New("gh: connection reset")}
+	result, _ := Sync(ctx, st, client)
+
+	if len(result.Missing) != 0 {
+		t.Errorf("a read that never ran reported %v as missing", result.Missing)
 	}
 }

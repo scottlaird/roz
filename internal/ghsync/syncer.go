@@ -75,6 +75,20 @@ func (s *Syncer) Run(ctx context.Context) error {
 				return fmt.Errorf("gave up after %d consecutive failures: %w", failures, err)
 			}
 		default:
+			// A cycle where some read failed and others did not is a working
+			// cycle, so it resets the counter and paces normally.
+			//
+			// The alternative — counting it — eventually stops a process that
+			// is doing most of its job, and takes the services sharing it
+			// down too: a ref read that has been broken for a fortnight would
+			// stop pull requests being polled at all. What that trades away
+			// is the guarantee that a persistent failure ends in something
+			// louder than a log line, so the log line is written every cycle
+			// rather than once, and says which read it was.
+			for _, failed := range result.Failed {
+				s.logf("sync read %s failed, carrying on with the rest: %v",
+					failed.Read, failed.Err)
+			}
 			failures = 0
 			delay = s.nextDelay(result.RateLimit)
 		}

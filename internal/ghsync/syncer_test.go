@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 func TestPace(t *testing.T) {
@@ -309,4 +310,45 @@ func waitFor(condition func() bool) error {
 		time.Sleep(5 * time.Millisecond)
 	}
 	return errors.New("timed out")
+}
+
+// TestSyncerLogsAPartialCycleEveryTime is what the give-up decision trades
+// against. A cycle where some read failed and others did not resets the
+// counter, so a persistently broken read never stops the process — which
+// means the log line is the only thing standing between it and nobody
+// noticing, so it is written every cycle rather than once.
+func TestSyncerLogsAPartialCycleEveryTime(t *testing.T) {
+	st, key := newStore(t)
+	client := &failingRefs{
+		fakeFetcher: &fakeFetcher{result: github.Result{
+			PullRequests: []github.PullRequest{observed(key)},
+		}},
+		refErr: errors.New("gh: connection reset"),
+	}
+	addRefWait(t, st, store.RefWait{
+		RepoID: "owner/repo", Kind: store.RefTag, Matcher: ">=1.0",
+	})
+
+	var log syncBuffer
+	syncer := &Syncer{
+		Store:       st,
+		Client:      client,
+		Interval:    time.Millisecond,
+		MaxFailures: 2,
+		Log:         &log,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// It runs until cancelled rather than giving up: the pull request read is
+	// working, and stopping would take that down with the ref read.
+	if err := syncer.Run(ctx); err != nil {
+		t.Fatalf("Run() gave up on a cycle that was doing most of its job: %v", err)
+	}
+	if got := strings.Count(log.String(), "carrying on with the rest"); got < 2 {
+		t.Errorf("a partial cycle was logged %d times, want one per cycle:\n%s", got, log.String())
+	}
+	if !strings.Contains(log.String(), "refs") {
+		t.Errorf("the log does not say which read failed:\n%s", log.String())
+	}
 }

@@ -389,6 +389,9 @@ func runPRList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	query.Where, query.WhereArgs = cel.SQL()
+	// Whatever the query could not take runs in Go, and a traversal there
+	// needs somewhere to read the far side from.
+	cel.WithLoader(ctx, storeLoader{st: st})
 
 	prs, err := st.ListPRs(ctx, query)
 	if err != nil {

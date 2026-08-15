@@ -153,6 +153,11 @@ type ProjectFilter struct {
 	// so without that condition every one of them matches and the result is a
 	// list nobody scans — which is the whole use of the query.
 	Orphaned bool
+	// Where is a WHERE fragment somebody else compiled — the SQL half of a
+	// CEL filter, including any correlated subquery it reaches through.
+	Where string
+	// WhereArgs are its parameters, in the order the fragment names them.
+	WhereArgs []any
 	// Order is how the results come back. Empty is creation order.
 	Order string
 	// Sort orders by columns instead, when one was asked for. It wins over
@@ -255,6 +260,10 @@ func (f ProjectFilter) clauses(now string) ([]string, []any) {
 		where = append(where,
 			fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ", ")),
 			"snooze_until IS NULL AND id NOT IN (SELECT project_id FROM action WHERE closed_at IS NULL AND project_id IS NOT NULL)")
+	}
+	if f.Where != "" {
+		where = append(where, "("+f.Where+")")
+		args = append(args, f.WhereArgs...)
 	}
 	return where, args
 }

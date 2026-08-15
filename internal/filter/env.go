@@ -31,11 +31,20 @@ const tableName = "row"
 // wants to filter on. The cost is that `number > "x"` gets past the type
 // checker and fails at evaluation instead, which for an interactive listing is
 // an error either way.
-func envFor(columns []store.ColumnType) (*cel.Env, error) {
-	opts := make([]cel.EnvOption, 0, len(columns))
+func envFor(columns []store.ColumnType, joins *joinEnv) (*cel.Env, error) {
+	opts := make([]cel.EnvOption, 0, len(columns)+4)
 	for _, c := range columns {
 		opts = append(opts, cel.Variable(c.Name, cel.DynType))
 	}
+	if joins != nil {
+		opts = append(opts, joins.declare()...)
+	}
+	// Macro tracking keeps the original `rel.exists(v, pred)` call beside the
+	// comprehension it expands into. Recognising the traversal from the
+	// expansion would mean matching cel-go's accumulator-and-loop-step shape,
+	// which is its implementation rather than the language.
+	opts = append(opts, cel.EnableMacroCallTracking())
+
 	env, err := cel.NewEnv(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("building the filter vocabulary: %w", err)
@@ -43,19 +52,40 @@ func envFor(columns []store.ColumnType) (*cel.Env, error) {
 	return env, nil
 }
 
+// schemasFor describes the base row and every relation to the converter, each
+// under the name a filter uses for it.
+func schemasFor(columns []store.ColumnType, joins *joinEnv, iter, relation string) map[string]schema.Schema {
+	schemas := map[string]schema.Schema{tableName: schemaOf(columns)}
+	if joins == nil {
+		return schemas
+	}
+	// The outer row, under its table name: inside a subquery a bare column
+	// binds to the inner table, so an outer reference has to be qualified.
+	schemas[joins.base] = schemaOf(columns)
+	if iter != "" {
+		schemas[iter] = schemaOf(joins.columns[relation])
+	}
+	for name := range joins.joins {
+		if far, ok := joins.columns[name]; ok && name != iter {
+			schemas[name] = schemaOf(far)
+		}
+	}
+	return schemas
+}
+
 // toSQL converts one term, or says it cannot.
 //
 // Parameterised rather than inlined: the values in a filter are somebody's
 // typing, and a WHERE clause built by string concatenation from typing is the
 // oldest mistake there is.
-func toSQL(ast *cel.Ast, columns []store.ColumnType) (string, []any, error) {
+func toSQL(ast *cel.Ast, schemas map[string]schema.Schema) (string, []any, error) {
 	sqlite, err := dialect.Get(dialect.SQLite)
 	if err != nil {
 		return "", nil, err
 	}
 	result, err := cel2sql.ConvertParameterized(ast,
 		cel2sql.WithDialect(sqlite),
-		cel2sql.WithSchemas(map[string]schema.Schema{tableName: schemaOf(columns)}))
+		cel2sql.WithSchemas(schemas))
 	if err != nil {
 		return "", nil, err
 	}

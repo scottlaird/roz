@@ -396,7 +396,13 @@ func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
 		{`!merged_at`, false, "NOT over a non-boolean is SQLite coercing, not negating"},
 		{`number > "5"`, false, "SQLite compares across types by affinity; CEL calls it an error"},
 		{`approvals.exists(a, a == "alice")`, false, "a JSON column is not a scalar"},
-		{`state == title`, false, "column against column is not a shape anybody checked"},
+		// Column against column was refused until a join needed it — "a child
+		// that outranks its parent" compares two rows' priorities and neither
+		// side is a literal. The rules are the literal ones applied to both
+		// sides.
+		{`state == title`, true, "two columns of one kind, and NULL excludes in both engines"},
+		{`state != title`, false, "state may be absent, and != is where the two part company"},
+		{`title != id`, true, "neither column can be absent, so there is no row to differ over"},
 	}
 
 	for _, tc := range tests {

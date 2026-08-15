@@ -24,9 +24,62 @@ import (
 // what roz believes cel2sql emits; the probe checks that it still does, so a
 // change upstream costs a pushdown rather than an answer.
 
+// scope resolves the names an expression may use to columns.
+//
+// Two of them, because a join predicate lives in a different namespace from a
+// top-level one: `a.verb` is the far row and `project.priority` is the row
+// being filtered, while a *bare* name inside a join is the trap — CEL binds it
+// to the outer row and SQLite binds it to the inner table, so the same
+// expression means two things. Inside a join, bare names are refused.
+type scope struct {
+	// base are the columns of the row being filtered.
+	base map[string]store.ColumnType
+	// baseName is the table, which is how a join predicate names the outer
+	// row. Empty at the top level, where bare names are unambiguous.
+	baseName string
+	// iter is the iteration variable, and far are the columns it reaches.
+	iter string
+	far  map[string]store.ColumnType
+}
+
+func topLevel(columns map[string]store.ColumnType) scope {
+	return scope{base: columns}
+}
+
+// resolve turns an expression into the column it names, if it names one.
+func (s scope) resolve(e celast.Expr) (store.ColumnType, bool) {
+	if e == nil {
+		return store.ColumnType{}, false
+	}
+	switch e.Kind() {
+	case celast.IdentKind:
+		if s.baseName != "" {
+			// Inside a join: see the note on scope.
+			return store.ColumnType{}, false
+		}
+		c, ok := s.base[e.AsIdent()]
+		return c, ok
+	case celast.SelectKind:
+		sel := e.AsSelect()
+		operand := sel.Operand()
+		if operand == nil || operand.Kind() != celast.IdentKind {
+			return store.ColumnType{}, false
+		}
+		switch operand.AsIdent() {
+		case s.iter:
+			c, ok := s.far[sel.FieldName()]
+			return c, ok
+		case s.baseName:
+			c, ok := s.base[sel.FieldName()]
+			return c, ok
+		}
+	}
+	return store.ColumnType{}, false
+}
+
 // pushableShape reports whether an expression is a shape known to mean the
 // same thing in SQLite and in CEL.
-func pushableShape(e celast.Expr, columns map[string]store.ColumnType) bool {
+func pushableShape(e celast.Expr, columns scope) bool {
 	if e == nil || e.Kind() != celast.CallKind {
 		return false
 	}
@@ -50,17 +103,20 @@ func pushableShape(e celast.Expr, columns map[string]store.ColumnType) bool {
 		if len(args) != 1 {
 			return false
 		}
-		c, ok := columnOf(args[0], columns)
+		c, ok := columns.resolve(args[0])
 		return ok && c.Kind == "boolean" && !c.Nullable
 
 	case operators.Equals:
-		return comparesToLiteral(args, columns, equalsRule)
+		return comparesToLiteral(args, columns, equalsRule) ||
+			comparesColumns(args, columns, false)
 
 	case operators.NotEquals:
-		return comparesToLiteral(args, columns, notEqualsRule)
+		return comparesToLiteral(args, columns, notEqualsRule) ||
+			comparesColumns(args, columns, true)
 
 	case operators.Less, operators.LessEquals, operators.Greater, operators.GreaterEquals:
-		return comparesToLiteral(args, columns, orderedRule)
+		return comparesToLiteral(args, columns, orderedRule) ||
+			comparesColumns(args, columns, false)
 
 	// contains becomes INSTR, which is case-sensitive, as CEL's contains is.
 	//
@@ -72,7 +128,7 @@ func pushableShape(e celast.Expr, columns map[string]store.ColumnType) bool {
 		if !call.IsMemberFunction() || len(args) != 1 {
 			return false
 		}
-		c, ok := columnOf(call.Target(), columns)
+		c, ok := columns.resolve(call.Target())
 		return ok && c.Kind == "text" && !c.JSON && literalKind(args[0]) == "text"
 
 	default:
@@ -112,14 +168,43 @@ func orderedRule(c store.ColumnType, literal string) bool {
 	return literal == c.Kind
 }
 
+// comparesColumns checks a comparison between two columns, which is what a
+// join is usually for: "a child that outranks its parent" compares one row's
+// priority to another's, and neither side is a literal.
+//
+// The rules are the literal ones applied to both sides. A NULL operand makes
+// the comparison NULL in SQL and an error in CEL, and both exclude — except
+// for `!=`, where CEL says true and SQL excludes, so that one needs both
+// columns to be non-nullable.
+//
+// Same kind on both sides, for affinity's reason: SQLite will happily compare
+// a text column to an integer one and CEL will not.
+func comparesColumns(args []celast.Expr, columns scope, notEqual bool) bool {
+	if len(args) != 2 {
+		return false
+	}
+	left, leftOK := columns.resolve(args[0])
+	right, rightOK := columns.resolve(args[1])
+	if !leftOK || !rightOK {
+		return false
+	}
+	if left.JSON || right.JSON || left.Kind != right.Kind {
+		return false
+	}
+	if notEqual && (left.Nullable || right.Nullable) {
+		return false
+	}
+	return true
+}
+
 // comparesToLiteral checks a two-argument comparison between one of the
 // record's columns and a literal, in either order.
-func comparesToLiteral(args []celast.Expr, columns map[string]store.ColumnType, rule comparisonRule) bool {
+func comparesToLiteral(args []celast.Expr, columns scope, rule comparisonRule) bool {
 	if len(args) != 2 {
 		return false
 	}
 	for _, order := range [][2]celast.Expr{{args[0], args[1]}, {args[1], args[0]}} {
-		c, ok := columnOf(order[0], columns)
+		c, ok := columns.resolve(order[0])
 		if !ok {
 			continue
 		}
@@ -131,15 +216,6 @@ func comparesToLiteral(args []celast.Expr, columns map[string]store.ColumnType, 
 		}
 	}
 	return false
-}
-
-// columnOf resolves an expression to one of the record's columns.
-func columnOf(e celast.Expr, columns map[string]store.ColumnType) (store.ColumnType, bool) {
-	if e == nil || e.Kind() != celast.IdentKind {
-		return store.ColumnType{}, false
-	}
-	c, ok := columns[e.AsIdent()]
-	return c, ok
 }
 
 // literalKind names the storage kind a literal compares against, or "" when

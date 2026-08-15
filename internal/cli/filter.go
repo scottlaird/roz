@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/scottlaird/roz/internal/filter"
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // compiledFilter is where a command's filter is kept once it is built.
@@ -58,6 +59,19 @@ func filterFrom(cmd *cobra.Command, blank any) (*filter.Filter, error) {
 	}
 	cmd.SetContext(context.WithValue(cmd.Context(), filterKey{}, compiled{f: f}))
 	return f, nil
+}
+
+// storeLoader lets the Go pass read a relation, using the connection the
+// command already has open.
+type storeLoader struct{ st *store.Store }
+
+func (l storeLoader) Related(ctx context.Context, join store.Join, id string) ([]map[string]any, error) {
+	tx, err := l.st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	return store.ReadRelated(ctx, tx, join, id)
 }
 
 // explainFilter prints the plan when asked.

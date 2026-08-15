@@ -34,11 +34,13 @@
 package filter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/cel-go/cel"
+	celast "github.com/google/cel-go/common/ast"
 
 	"github.com/scottlaird/roz/internal/store"
 )
@@ -70,6 +72,18 @@ type Filter struct {
 	// declared is the vocabulary, kept so the Go pass can supply a null for
 	// every column rather than only for the ones a record happened to fill.
 	declared []string
+
+	// joins are the relations this entity can be filtered across, for a Go
+	// pass that has to resolve one.
+	joins *joinEnv
+	// loader and ctx are how the Go pass reads a relation. Nil until a caller
+	// supplies them; a residual that traverses then says so rather than
+	// answering.
+	loader Loader
+	ctx    context.Context
+	// traverses names the relations the Go pass needs, so a missing loader is
+	// an error rather than an empty result.
+	traverses []string
 }
 
 // Compile builds a filter over the columns of blank, which is an empty record
@@ -82,12 +96,16 @@ func Compile(blank any, expr string) (*Filter, error) {
 	if err != nil {
 		return nil, err
 	}
-	env, err := envFor(columns)
+	joins, err := newJoinEnv(blank)
+	if err != nil {
+		return nil, err
+	}
+	env, err := envFor(columns, joins)
 	if err != nil {
 		return nil, err
 	}
 
-	f := &Filter{source: expr}
+	f := &Filter{source: expr, joins: joins}
 	for _, c := range columns {
 		f.declared = append(f.declared, c.Name)
 	}
@@ -106,14 +124,17 @@ func Compile(blank any, expr string) (*Filter, error) {
 		if err != nil {
 			return nil, err
 		}
-		sql, args, err := toSQL(ast, columns)
-		if err == nil {
-			ok, checkErr := pushable(probe, env, ast, term, columns, sql, args)
-			if checkErr != nil {
-				return nil, checkErr
-			}
-			if !ok {
-				err = errNotEquivalent
+		sql, args, err := joinSQL(ast, env, joins, columns)
+		if err == errNotAJoin {
+			sql, args, err = toSQL(ast, schemasFor(columns, joins, "", ""))
+			if err == nil {
+				ok, checkErr := pushable(probe, env, ast, term, columns, sql, args)
+				if checkErr != nil {
+					return nil, checkErr
+				}
+				if !ok {
+					err = errNotEquivalent
+				}
 			}
 		}
 		if err != nil || mentionsJSON(term, columns) {
@@ -143,6 +164,9 @@ func Compile(blank any, expr string) (*Filter, error) {
 		if f.residual, err = env.Program(ast); err != nil {
 			return nil, fmt.Errorf("planning --filter %q: %w", f.residualSrc, err)
 		}
+		// What the Go pass will have to read. Kept so that "nothing matched"
+		// and "nowhere to read from" stop looking alike.
+		f.traverses = relationsIn(ast.NativeRep().Expr(), joins)
 	}
 
 	whole, err := compileTerm(env, expr)
@@ -158,6 +182,101 @@ func Compile(blank any, expr string) (*Filter, error) {
 // errNotEquivalent marks a term SQLite would answer differently from CEL. Not
 // a failure: it is the reason a term runs in Go.
 var errNotEquivalent = errors.New("SQL would not answer this the way CEL does")
+
+// errNotAJoin says a term does not traverse a relation, so the scalar path
+// should have it.
+var errNotAJoin = errors.New("not a traversal")
+
+// joinSQL renders a term that reaches across a relation, or says it is not one.
+//
+// The inner predicate goes through the same converter as a top-level one, with
+// the far table's columns declared under the iteration variable's name — so
+// `a.verb == "merge"` converts to `a.verb = ?`, and aliasing the table `a` in
+// the subquery is all it takes to make that valid.
+func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnType) (string, []any, error) {
+	if joins == nil {
+		return "", nil, errNotAJoin
+	}
+	root := ast.NativeRep().Expr()
+
+	x, ok := asExists(ast, root, joins)
+	if !ok {
+		// No quantifier, but the term may still reach through a to-one
+		// relation, which needs no quantifier because there is at most one row
+		// on the far side.
+		reached := toOneRefs(root, joins)
+		switch len(reached) {
+		case 0:
+			return "", nil, errNotAJoin
+		case 1:
+			if !pushableShape(root, joins.scopeFor(columns, reached[0], reached[0])) {
+				return "", nil, errNotEquivalent
+			}
+			sql, args, err := toSQL(ast, schemasFor(columns, joins, "", ""))
+			if err != nil {
+				return "", nil, err
+			}
+			rendered, params := joins.toOne(reached[0], sql, args)
+			return rendered, params, nil
+		default:
+			// Two relations in one term needs two subqueries and a decision
+			// about how they compose. Not in this spike.
+			return "", nil, fmt.Errorf("a filter reaching %d relations at once is not supported yet",
+				len(reached))
+		}
+	}
+
+	// An emptiness check has no predicate to convert: the subquery asks only
+	// whether anything is there.
+	if x.predicate == nil {
+		sql, args := joins.subquery(x, "", nil)
+		return sql, args, nil
+	}
+
+	// The iteration variable is bound by the comprehension, so it exists
+	// nowhere outside it. Compiling the predicate on its own needs it
+	// declared, which is what this extension is for.
+	scoped, err := env.Extend(cel.Variable(x.iter, cel.DynType))
+	if err != nil {
+		return "", nil, fmt.Errorf("scoping %q: %w", x.iter, err)
+	}
+	inner, err := celFor(scoped, x.predicate, ast.NativeRep().SourceInfo())
+	if err != nil {
+		return "", nil, err
+	}
+	// The same allow-list as a top-level term, in the join's namespace. Two
+	// things go wrong without it: `a.verb.startsWith("W")` converts to a LIKE
+	// that is case-insensitive where CEL is not, and a bare name inside the
+	// predicate binds to the inner table in SQL and to the outer row in CEL.
+	if !pushableShape(inner.NativeRep().Expr(), joins.scopeFor(columns, x.iter, x.relation)) {
+		return "", nil, errNotEquivalent
+	}
+	sql, args, err := toSQL(inner, schemasFor(columns, joins, x.iter, x.relation))
+	if err != nil {
+		return "", nil, err
+	}
+	rendered, params := joins.subquery(x, sql, args)
+	return rendered, params, nil
+}
+
+// celFor lifts a sub-expression back into an AST the converter will take.
+//
+// Through the unparser: cel.ExprToString renders any node back to CEL source,
+// and compiling that gives a checked AST of its own. Slicing a checked AST
+// directly is not supported, and this is the route that is — which also means
+// the textual conjunct splitter above could be replaced by an exact one, and
+// should be if any of this is kept.
+func celFor(env *cel.Env, e celast.Expr, info *celast.SourceInfo) (*cel.Ast, error) {
+	source, err := cel.ExprToString(e, info)
+	if err != nil {
+		return nil, fmt.Errorf("rendering the inner expression: %w", err)
+	}
+	ast, issues := env.Compile(source)
+	if issues != nil && issues.Err() != nil {
+		return nil, fmt.Errorf("compiling the inner expression %q: %w", source, issues.Err())
+	}
+	return ast, nil
+}
 
 // pushable reports whether a converted term may be trusted to the query.
 //
@@ -179,7 +298,7 @@ var errNotEquivalent = errors.New("SQL would not answer this the way CEL does")
 func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	columns []store.ColumnType, fragment string, args []any) (bool, error) {
 
-	if !pushableShape(ast.NativeRep().Expr(), columnsByName(columns)) {
+	if !pushableShape(ast.NativeRep().Expr(), topLevel(columnsByName(columns))) {
 		return false, nil
 	}
 
@@ -240,6 +359,16 @@ func (f *Filter) Keep(record any) (bool, error) {
 		program, source = f.residual, f.residualSrc
 	}
 
+	if len(f.traverses) > 0 && f.loader == nil {
+		// Evaluating would fail to resolve the name, and a failure to resolve
+		// is swallowed below as "this row does not match" — which would turn a
+		// wiring mistake into an empty listing nobody can tell from a correct
+		// one.
+		return false, fmt.Errorf(
+			"--filter %q reaches %s, and this listing has nowhere to read it from",
+			source, strings.Join(f.traverses, ", "))
+	}
+
 	values, err := store.ColumnValues(record)
 	if err != nil {
 		return false, err
@@ -247,7 +376,22 @@ func (f *Filter) Keep(record any) (bool, error) {
 	// A column the record does not carry a value for is null rather than
 	// absent, so `state != "OPEN"` has something to compare against instead
 	// of failing with "no such attribute".
-	out, _, err := program.Eval(nullFilled(values, f.columns()))
+	filled := nullFilled(values, f.columns())
+
+	// Relations are resolved on demand: an expression that never mentions one
+	// costs no query, and one that does costs a query for that row alone.
+	var id string
+	if value, ok := values["id"].(string); ok {
+		id = value
+	}
+	activation := &rowActivation{
+		ctx: f.ctx, values: filled, joins: f.joins, loader: f.loader, id: id,
+	}
+	if activation.ctx == nil {
+		activation.ctx = context.Background()
+	}
+
+	out, _, err := program.Eval(activation)
 	if err != nil {
 		// A row CEL has no answer for does not match, rather than failing the
 		// listing. `number > 5` against a NULL number is the case: CEL calls

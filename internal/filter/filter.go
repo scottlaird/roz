@@ -34,6 +34,7 @@
 package filter
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -92,6 +93,12 @@ func Compile(blank any, expr string) (*Filter, error) {
 	}
 	terms := conjuncts(expr)
 
+	probe, err := newNullProbe(columns)
+	if err != nil {
+		return nil, err
+	}
+	defer probe.Close()
+
 	var pushed []string
 	var residual []string
 	for _, term := range terms {
@@ -100,6 +107,15 @@ func Compile(blank any, expr string) (*Filter, error) {
 			return nil, err
 		}
 		sql, args, err := toSQL(ast, columns)
+		if err == nil {
+			ok, checkErr := pushable(probe, env, ast, term, columns, sql, args)
+			if checkErr != nil {
+				return nil, checkErr
+			}
+			if !ok {
+				err = errNotEquivalent
+			}
+		}
 		if err != nil || mentionsJSON(term, columns) {
 			// Not a failure: this is the term that has to run in Go.
 			//
@@ -137,6 +153,37 @@ func Compile(blank any, expr string) (*Filter, error) {
 		return nil, fmt.Errorf("planning --filter %q: %w", expr, err)
 	}
 	return f, nil
+}
+
+// errNotEquivalent marks a term SQLite would answer differently from CEL. Not
+// a failure: it is the reason a term runs in Go.
+var errNotEquivalent = errors.New("SQL would not answer this the way CEL does")
+
+// pushable reports whether a converted term may be trusted to the query.
+//
+// The rule is equivalence, checked rather than assumed: a filter is written in
+// CEL, so CEL decides what it means, and a fragment that would answer
+// differently is an optimisation that changed an answer. NULL is where they
+// part company — `state != "OPEN"` keeps a NULL row in CEL and drops it in
+// SQL — and it is the only place, because everything else in a converted term
+// is a comparison of values both engines have.
+func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
+	columns []store.ColumnType, fragment string, args []any) (bool, error) {
+
+	if nullableCount(term, columns) == 0 {
+		// Nothing in it can be absent, so there is no row shape the two could
+		// disagree about.
+		return true, nil
+	}
+	if nullableCount(term, columns) > 1 {
+		return false, nil
+	}
+
+	program, err := env.Program(ast)
+	if err != nil {
+		return false, fmt.Errorf("planning --filter %q: %w", term, err)
+	}
+	return probe.agrees(fragment, args, program)
 }
 
 // compileTerm parses and checks one term, reporting CEL's own diagnostic.
@@ -190,7 +237,11 @@ func (f *Filter) Keep(record any) (bool, error) {
 	// of failing with "no such attribute".
 	out, _, err := program.Eval(nullFilled(values, f.columns()))
 	if err != nil {
-		return false, fmt.Errorf("--filter %q: %w", source, err)
+		// A row CEL has no answer for does not match, rather than failing the
+		// listing. `number > 5` against a NULL number is the case: CEL calls
+		// it an error, SQLite excludes the row, and excluding it is both the
+		// agreeing answer and the one somebody wanted.
+		return false, nil
 	}
 	keep, ok := out.Value().(bool)
 	if !ok {

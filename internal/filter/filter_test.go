@@ -137,32 +137,113 @@ func TestNullIsNotEmpty(t *testing.T) {
 	}
 }
 
-// TestSQLAndGoDisagreeAboutNull records a divergence rather than asserting a
-// fix, because it is the finding this experiment most needs to carry.
+// TestTheEnginesAgreeAboutNull is the fix for what this experiment found.
 //
-// SQLite's `state != 'OPEN'` is NULL for a NULL state, and a WHERE that is
-// NULL excludes the row. CEL's `null != "OPEN"` is true, so the same filter
-// run in Go keeps it. The same expression therefore answers differently
-// depending on which half of the plan ran it — which is tolerable for an
-// experiment and would not be for a feature: the fix is to wrap a pushed-down
-// comparison so NULL follows CEL, e.g. `COALESCE(state != ?, TRUE)`.
-func TestSQLAndGoDisagreeAboutNull(t *testing.T) {
-	goSide := compile(t, `state != "OPEN"`)
-	keep, err := goSide.Keep(&row{}) // NULL state, evaluated in Go
-	if err != nil {
-		t.Fatalf("Keep() returned error: %v", err)
-	}
-	if !keep {
-		t.Error("CEL no longer treats null != \"OPEN\" as true; the divergence may be gone")
+// The contract is CEL's: a filter is written in CEL, so CEL decides what it
+// means, and pushdown is an optimisation that may not change an answer. A term
+// SQLite would answer differently is not pushed down — it runs in Go, and the
+// result stops depending on which half of the plan saw the row.
+func TestTheEnginesAgreeAboutNull(t *testing.T) {
+	tests := []struct {
+		expr     string
+		pushed   bool
+		keepNull bool
+		why      string
+	}{
+		{
+			expr: `state != "OPEN"`, pushed: false, keepNull: true,
+			why: "SQL drops a NULL state here and CEL keeps it, so SQL does not get to answer",
+		},
+		{
+			expr: `state == "MERGED"`, pushed: true, keepNull: false,
+			why: "NULL in SQL, false in CEL: the same exclusion by two routes",
+		},
+		{
+			expr: `merged_at == null`, pushed: true, keepNull: true,
+			why: "IS NULL is true rather than NULL, which is what CEL says too",
+		},
+		{
+			expr: `merged_at != null`, pushed: true, keepNull: false,
+			why: "IS NOT NULL is false, and null != null is false",
+		},
+		{
+			expr: `number > 5`, pushed: true, keepNull: false,
+			why: "number is not nullable, so no row shape can differ",
+		},
+		{
+			// Not nullable, so an absent value is "" rather than null, and
+			// "" != "x" is a plain true in both engines.
+			expr: `title != "x"`, pushed: true, keepNull: true,
+			why: "title is not nullable: its zero value is a value",
+		},
+		{
+			// Split: the second term is pushed down, the first is not, and
+			// the whole expression is still false for an all-NULL row.
+			expr: `state != "OPEN" && merged_at != null`, pushed: true, keepNull: false,
+			why: "the demoted term does not stop the other being pushed",
+		},
 	}
 
-	pushed := compile(t, `state != "OPEN"`)
-	where, _ := pushed.SQL()
-	if !strings.Contains(where, "!=") {
-		t.Fatalf("SQL = %q, want a plain comparison", where)
+	for _, tc := range tests {
+		t.Run(tc.expr, func(t *testing.T) {
+			f := compile(t, tc.expr)
+			where, _ := f.SQL()
+			if pushed := where != ""; pushed != tc.pushed {
+				t.Errorf("pushed down = %v, want %v (%s): SQL was %q",
+					pushed, tc.pushed, tc.why, where)
+			}
+
+			// Whichever way it was planned, the answer for a NULL row is the
+			// one CEL gives.
+			plain := compile(t, tc.expr)
+			got, err := plain.Keep(&row{})
+			if err != nil {
+				t.Fatalf("Keep() returned error: %v", err)
+			}
+			if got != tc.keepNull {
+				t.Errorf("Keep(null row) = %v, want %v (%s)", got, tc.keepNull, tc.why)
+			}
+		})
 	}
-	if strings.Contains(where, "COALESCE") || strings.Contains(where, "IS NULL") {
-		t.Error("the pushed-down form now handles NULL; this test should become an equality check")
+}
+
+// TestADemotedTermDoesNotCostTheOthers: one term SQL would answer differently
+// is a reason to run that term in Go, not to give up on the query.
+func TestADemotedTermDoesNotCostTheOthers(t *testing.T) {
+	f := compile(t, `state != "OPEN" && merged_at != null`)
+
+	where, _ := f.SQL()
+	if want := "(merged_at IS NOT NULL)"; where != want {
+		t.Errorf("SQL = %q, want only the equivalent term %q", where, want)
+	}
+	if f.residualSrc != `state != "OPEN"` {
+		t.Errorf("residual = %q, want the term SQL would have answered differently", f.residualSrc)
+	}
+}
+
+// TestTwoNullableColumnsAreNotPushedDown: the probe tries one row shape, and a
+// term over two nullable columns has shapes it never sees — NULL in one and a
+// value in the other. Being wrong in this direction costs a pushdown.
+func TestTwoNullableColumnsAreNotPushedDown(t *testing.T) {
+	f := compile(t, `state != merged_at`)
+	if where, _ := f.SQL(); where != "" {
+		t.Errorf("a term over two nullable columns was pushed down as %q", where)
+	}
+}
+
+// TestARowCELCannotAnswerDoesNotMatch: `number > 5` against a NULL number is
+// an error in CEL rather than a yes or a no. Failing the whole listing over
+// one such row would be worse than any answer, and SQLite excludes it, so
+// excluding it is both the agreeing answer and the useful one.
+func TestARowCELCannotAnswerDoesNotMatch(t *testing.T) {
+	f := compile(t, `merged_at > "2026-01-01"`)
+
+	keep, err := f.Keep(&row{}) // merged_at is NULL
+	if err != nil {
+		t.Fatalf("Keep() returned error rather than excluding the row: %v", err)
+	}
+	if keep {
+		t.Error("a row CEL could not answer for was kept")
 	}
 }
 

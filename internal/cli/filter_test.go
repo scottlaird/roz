@@ -127,3 +127,47 @@ func TestAFilterNamingNothingIsRefused(t *testing.T) {
 		t.Errorf("error does not name the problem: %v", err)
 	}
 }
+
+// TestNullAnswersTheSameWayWhicheverPathRan is the fix worth having end to
+// end: a tracked pull request nothing has synced has a NULL state, and
+// `state != "MERGED"` is true of it in CEL. SQLite would drop it, so the term
+// is not pushed down — and the listing shows it either way.
+func TestNullAnswersTheSameWayWhicheverPathRan(t *testing.T) {
+	db, _ := trackedPR(t)
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#2"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	// One synced, one never — so one has a state and the other has NULL.
+	observeStates(t, db, map[string]string{"owner/repo#1": "MERGED"})
+
+	out, err := runCLI(t, "pr", "list", "--db", db,
+		"--filter", `state != "MERGED"`, "--fields", "id,state", "--explain-filter")
+	if err != nil {
+		t.Fatalf("pr list --filter returned error: %v", err)
+	}
+	if !strings.Contains(out, "in Go") {
+		t.Errorf("the term was pushed down, and SQL would drop the NULL row:\n%s", out)
+	}
+	if !strings.Contains(out, "owner/repo#2") {
+		t.Errorf("the unsynced pull request was dropped; CEL says null != \"MERGED\":\n%s", out)
+	}
+	if strings.Contains(out, "owner/repo#1") {
+		t.Errorf("the merged pull request survived a filter excluding it:\n%s", out)
+	}
+}
+
+// TestARowWithNothingToCompareIsSkipped: a NULL number is not greater than
+// five and not not-greater either. CEL calls that an error; failing the whole
+// listing over one such row would be worse than any answer.
+func TestARowWithNothingToCompareIsSkipped(t *testing.T) {
+	db, _ := trackedPR(t)
+
+	out, err := runCLI(t, "pr", "list", "--db", db,
+		"--filter", `merged_at > "2026-01-01"`, "--fields", "id,merged_at")
+	if err != nil {
+		t.Fatalf("pr list --filter returned error: %v", err)
+	}
+	if strings.Contains(out, "owner/repo#1") {
+		t.Errorf("a row with no value to compare was kept:\n%s", out)
+	}
+}

@@ -83,7 +83,7 @@ func (c *Client) TeamMembers(ctx context.Context, teams []string) (map[string][]
 		}
 
 		query, aliases := buildTeamQuery(plan, cursors)
-		body, runErr := c.run(ctx, query)
+		body, runErr := c.request(ctx, ReadTeams, query)
 
 		// Rate limiting means wait, not that the question was wrong.
 		if errors.Is(runErr, ErrRateLimited) {

@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/scottlaird/roz/internal/metrics"
 )
 
 // DefaultAddr is where the server listens unless told otherwise. Loopback
@@ -106,6 +108,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handle)
 	mux.HandleFunc("/events", s.handleEvents)
+	// Served from the same listener as the page, which is loopback and
+	// unauthenticated. That is the right trade here and worth saying: what
+	// this exposes -- request counts, a rate-limit budget, a schema version --
+	// is less sensitive than the page beside it, so nothing is gained by
+	// making it harder to reach than the thing it describes.
+	mux.Handle("/metrics", metrics.Handler())
 	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
 	// Told to stop before Shutdown starts waiting, so an event stream ends of

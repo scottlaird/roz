@@ -117,7 +117,7 @@ func (c *Client) filePage(ctx context.Context, owner, name string, number int64,
 }
 `, owner, name, number, filePage, cursor)
 
-	body, err := c.run(ctx, query)
+	body, err := c.request(ctx, ReadChange, query)
 	if err != nil {
 		return changePage{}, err
 	}
@@ -198,7 +198,7 @@ func (c *Client) codeowners(ctx context.Context, owner, name, ref string) (text,
 	}
 	b.WriteString("  }\n}\n")
 
-	body, err := c.run(ctx, b.String())
+	body, err := c.request(ctx, ReadCodeowners, b.String())
 	if err != nil {
 		return "", "", err
 	}

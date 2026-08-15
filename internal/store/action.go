@@ -291,6 +291,32 @@ func inPlay(now string) ([]string, []any) {
 // waiting verb added later is classified without editing this.
 const waitVerbs = "(SELECT verb FROM actionverb WHERE rank_class = ?)"
 
+// notHeldByItsProject keeps out the actions on a project that is blocked.
+//
+// The queue answers "what do I do now", and a blocked project's actions are
+// exactly the ones that cannot be done now. Before this the project listing
+// said blocked and the action listing said go, about the same fact.
+//
+// Derived here rather than written onto the action, which is the important
+// part. An action already has blocked_by and hidden_behind, each with its own
+// release condition; a third writer of the same state would raise the question
+// of which one releases it, and the wrong answer leaves an action stuck after
+// its project unblocks. Read at query time there is nothing to release: the
+// status is maintained by applyProjectBlockedState, so the moment a project's
+// last blocker closes its actions are back, with nobody having remembered
+// which ones they were.
+//
+// project.status rather than a count of open blockers, so that this and
+// `project list` cannot disagree — that disagreement is the bug.
+//
+// rank_pin is the escape. Not every action on a blocked project is blocked by
+// the same thing: the `decide` that would remove the blocker, or a `file` that
+// closes out a stale ticket, are exactly the work that clears it, and a rule
+// applied uniformly buries them. Pinning one says "I mean this one", which is
+// what rank_pin has always meant — see rankOrder, where it beats everything.
+const notHeldByItsProject = `(a.rank_pin IS NOT NULL OR NOT EXISTS (
+		SELECT 1 FROM project p WHERE p.id = a.project_id AND p.status = ?))`
+
 // staleSubjects matches actions whose subject pull request is still open.
 //
 // A pull request nobody has synced has no state, and is not matched: absence
@@ -393,9 +419,9 @@ func (f ActionFilter) clauses(now string) ([]string, []any) {
 	if f.Unblocked {
 		clauses, inPlayArgs := inPlay(now)
 		where = append(where, clauses...)
-		where = append(where, "a.verb NOT IN "+waitVerbs)
+		where = append(where, "a.verb NOT IN "+waitVerbs, notHeldByItsProject)
 		args = append(args, inPlayArgs...)
-		args = append(args, RankWait)
+		args = append(args, RankWait, ProjectBlocked)
 	}
 	if f.Waiting {
 		clauses, inPlayArgs := inPlay(now)

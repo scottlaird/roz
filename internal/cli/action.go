@@ -697,7 +697,14 @@ func runActionList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	return runListing(cmd, actionColumns, actions, renderContext{late: late})
+	// Which projects are blocked, so an action held out of the queue says so
+	// rather than sitting in the listing looking ready.
+	blocked, err := st.BlockedProjects(ctx)
+	if err != nil {
+		return err
+	}
+	return runListing(cmd, actionColumns, actions,
+		renderContext{late: late, blocked: blocked})
 }
 
 // actionColumns is what `action list` can show.
@@ -721,8 +728,32 @@ var actionColumns = columnSet[*store.Action]{
 				return lateCell(ctx.late, a.ID)
 			},
 		},
+		{
+			// An action whose project is blocked is not in the queue, and a
+			// listing that showed it looking ready would be the same two
+			// views disagreeing that scottlaird/roz#181 was about.
+			//
+			// A mark rather than a name: which project it is, is the PROJECT
+			// column beside it, and what is holding that project up is
+			// `action show`, where there is room to name them.
+			name: "held", header: "HELD",
+			render: func(a *store.Action, ctx renderContext) string {
+				if a.ProjectID.Valid && ctx.blocked[a.ProjectID.String] {
+					return "yes"
+				}
+				return ""
+			},
+			showIf: func(rows []*store.Action, ctx renderContext) bool {
+				for _, a := range rows {
+					if a.ProjectID.Valid && ctx.blocked[a.ProjectID.String] {
+						return true
+					}
+				}
+				return false
+			},
+		},
 	},
-	defaults: []string{"id", "state", "verb", "project_id", "snooze_until", "late", "title"},
+	defaults: []string{"id", "state", "verb", "project_id", "snooze_until", "late", "held", "title"},
 	rankings: queueRankings,
 	empty:    "no actions",
 }

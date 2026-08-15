@@ -163,7 +163,7 @@ var issueColumns = columnSet[*store.TrackerIssue]{
 		{
 			name: "closed_at", header: "CLOSED",
 			render: func(i *store.TrackerIssue, _ renderContext) string { return dateCell(i.ClosedAt) },
-			showIf: func(rows []*store.TrackerIssue) bool {
+			showIf: func(rows []*store.TrackerIssue, _ renderContext) bool {
 				for _, i := range rows {
 					if i.ClosedAt.Valid {
 						return true

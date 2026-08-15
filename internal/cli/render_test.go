@@ -823,3 +823,75 @@ func TestAPullRequestChipUsesTheShortName(t *testing.T) {
 		t.Errorf("the chip does not use the short name:\n%s", out)
 	}
 }
+
+// TestIssueCellKeepsAKeyWithItsState is scottlaird/roz#161. A tracker key and
+// its state are one thing to read, and a long status split them across two
+// lines: "(Waiting for Security" over "Review)" is not two pieces of
+// information.
+//
+// Asserted on the markup rather than on a width, because a width is a number
+// tied to today's content and this is the property that has to hold: the pair
+// is one unbreakable run, whatever the column turns out to be.
+func TestIssueCellKeepsAKeyWithItsState(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "Migrate the auth service", "--issue", "CDSS-4242")
+	if _, err := runCLI(t, "issue", "observe", "--db", db, "CDSS-4242",
+		"--status", "Waiting for Security Review"); err != nil {
+		t.Fatalf("issue observe returned error: %v", err)
+	}
+	addAction(t, db, "--title", "Do it", "--verb", "write", "--project", project)
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+
+	if !strings.Contains(page, `class="issue"`) {
+		t.Errorf("the key and its state are not held together:\n%s", page)
+	}
+	// And the rule that keeps that run whole is present.
+	if !strings.Contains(page, ".issue{white-space:nowrap}") {
+		t.Error("the stylesheet does not keep an issue on one line")
+	}
+	// The pair is inside one element, rather than the state trailing outside
+	// it where a break could still fall between them.
+	pair := regexp.MustCompile(`<span class="issue">.*?\(Waiting for Security Review\).*?</span>`)
+	if !pair.MatchString(page) {
+		t.Errorf("the state sits outside the run that holds the key:\n%s", page)
+	}
+}
+
+// TestIssueListHasNoStrayGapBeforeItsComma: the newlines around a template
+// definition are text, and they were reaching the page — so two issues in a
+// cell read "CDSS-1 (Open) , CDSS-2 (Open)".
+func TestIssueListHasNoStrayGapBeforeItsComma(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "Split the nodepool", "--issue", "CDSS-1744")
+	if _, err := runCLI(t, "project", "link-issue", "--db", db,
+		"--project", project, "--issue", "CDSS-1745"); err != nil {
+		t.Fatalf("project link-issue returned error: %v", err)
+	}
+	addAction(t, db, "--title", "Do it", "--verb", "write", "--project", project)
+
+	page, err := runCLI(t, "render", "--db", db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if strings.Contains(page, " , ") || strings.Contains(page, "\n, ") {
+		t.Errorf("an issue list carries a stray gap before its comma:\n%s",
+			issueCell(t, page))
+	}
+	if !strings.Contains(page, "</span>, <span") {
+		t.Errorf("two issues are not separated by a plain comma:\n%s", issueCell(t, page))
+	}
+}
+
+// issueCell pulls out the first issues cell, for an error worth reading.
+func issueCell(t *testing.T, page string) string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)<td><span class="issue">.*?</td>`).FindString(page)
+	if m == "" {
+		return page
+	}
+	return m
+}

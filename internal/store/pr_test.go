@@ -601,3 +601,176 @@ func endPR(t *testing.T, st *Store, p *PR, state, at string) {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 }
+
+// TestResolveStacking is scottlaird/roz#172: the column existed, `pr list
+// --stacked` filtered on it, and nothing ever wrote it — because the head
+// branch was not stored, so there was nothing to match a base against.
+func TestResolveStacking(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	// A chain of three, and one unrelated.
+	base := trackPR(t, st, "owner/repo", 123)
+	setBranches(t, st, base, "main", "feature-a")
+	middle := trackPR(t, st, "owner/repo", 124)
+	setBranches(t, st, middle, "feature-a", "feature-b")
+	top := trackPR(t, st, "owner/repo", 125)
+	setBranches(t, st, top, "feature-b", "feature-c")
+	alone := trackPR(t, st, "owner/repo", 200)
+	setBranches(t, st, alone, "main", "unrelated")
+
+	if _, err := st.ResolveStacking(ctx, ActorSyncGitHub); err != nil {
+		t.Fatalf("ResolveStacking() returned error: %v", err)
+	}
+
+	// Each link resolves, rather than only the first.
+	for _, tt := range []struct{ id, want string }{
+		{middle.ID, base.ID},
+		{top.ID, middle.ID},
+	} {
+		if got := loadPRRow(t, st, tt.id).StackedOn.String; got != tt.want {
+			t.Errorf("%s stacked_on = %q, want %q", tt.id, got, tt.want)
+		}
+	}
+	// Based on the default branch, so on nothing tracked.
+	for _, id := range []string{base.ID, alone.ID} {
+		if got := loadPRRow(t, st, id).StackedOn; got.Valid {
+			t.Errorf("%s stacked_on = %q, want nothing", id, got.String)
+		}
+	}
+
+	listed, err := st.ListPRs(ctx, PRFilter{Stacked: true})
+	if err != nil {
+		t.Fatalf("ListPRs() returned error: %v", err)
+	}
+	if len(listed) != 2 {
+		t.Errorf("--stacked returned %d, want the two with a parent", len(listed))
+	}
+}
+
+// TestStackingIsReDerivedRatherThanLatched: a rebase onto the default branch
+// clears it, with nothing having to notice the relationship ended.
+func TestStackingIsReDerivedRatherThanLatched(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	parent := trackPR(t, st, "owner/repo", 123)
+	setBranches(t, st, parent, "main", "feature-a")
+	child := trackPR(t, st, "owner/repo", 124)
+	setBranches(t, st, child, "feature-a", "feature-b")
+
+	if _, err := st.ResolveStacking(ctx, ActorSyncGitHub); err != nil {
+		t.Fatalf("ResolveStacking() returned error: %v", err)
+	}
+	if got := loadPRRow(t, st, child.ID).StackedOn.String; got != parent.ID {
+		t.Fatalf("stacked_on = %q, want %q", got, parent.ID)
+	}
+
+	// Rebased onto the default branch.
+	setBranches(t, st, loadPRRow(t, st, child.ID), "main", "feature-b")
+	changed, err := st.ResolveStacking(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("ResolveStacking() returned error: %v", err)
+	}
+	if got := loadPRRow(t, st, child.ID).StackedOn; got.Valid {
+		t.Errorf("stacked_on = %q after a rebase, want it cleared", got.String)
+	}
+	if len(changed) != 1 {
+		t.Errorf("the change was reported as %v, want the one that moved", changed)
+	}
+
+	// And a run that changes nothing writes nothing, so a quiet poll stays
+	// quiet in the log.
+	changed, err = st.ResolveStacking(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("ResolveStacking() returned error: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Errorf("a settled run reported %v", changed)
+	}
+}
+
+// TestStackingIgnoresWhatIsNotTracked: basing on a branch belonging to
+// somebody else's pull request, or to none, leaves the column empty rather
+// than guessing.
+func TestStackingIgnoresWhatIsNotTracked(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	// Same branch names, different repositories: a base only matches a head
+	// in the repository it belongs to.
+	trackRepo(t, st, "owner/other")
+	elsewhere := trackPR(t, st, "owner/other", 1)
+	setBranches(t, st, elsewhere, "main", "feature-a")
+	child := trackPR(t, st, "owner/repo", 124)
+	setBranches(t, st, child, "feature-a", "feature-b")
+
+	if _, err := st.ResolveStacking(ctx, ActorSyncGitHub); err != nil {
+		t.Fatalf("ResolveStacking() returned error: %v", err)
+	}
+	if got := loadPRRow(t, st, child.ID).StackedOn; got.Valid {
+		t.Errorf("stacked_on = %q, want nothing across repositories", got.String)
+	}
+}
+
+// TestStackingDoesNotLoopOnACycle: nothing walks the chain, so a cycle GitHub
+// should never report cannot hang the resolver.
+func TestStackingDoesNotLoopOnACycle(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	one := trackPR(t, st, "owner/repo", 1)
+	setBranches(t, st, one, "b", "a")
+	two := trackPR(t, st, "owner/repo", 2)
+	setBranches(t, st, two, "a", "b")
+
+	if _, err := st.ResolveStacking(ctx, ActorSyncGitHub); err != nil {
+		t.Fatalf("ResolveStacking() returned error: %v", err)
+	}
+	if got := loadPRRow(t, st, one.ID).StackedOn.String; got != two.ID {
+		t.Errorf("%s stacked_on = %q", one.ID, got)
+	}
+	if got := loadPRRow(t, st, two.ID).StackedOn.String; got != one.ID {
+		t.Errorf("%s stacked_on = %q", two.ID, got)
+	}
+}
+
+// setBranches records what a pull request targets and what it is from.
+func setBranches(t *testing.T, st *Store, p *PR, base, head string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := p.Clone()
+	after.BaseRef = sql.NullString{String: base, Valid: true}
+	after.HeadRef = sql.NullString{String: head, Valid: true}
+	if _, err := tx.Update(ctx, p, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+// loadPRRow reads one back.
+func loadPRRow(t *testing.T, st *Store, id string) *PR {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	p, err := tx.LoadPR(ctx, id)
+	if err != nil {
+		t.Fatalf("LoadPR(%s) returned error: %v", id, err)
+	}
+	return p
+}

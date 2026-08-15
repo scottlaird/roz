@@ -23,7 +23,7 @@ import (
 // whoever actually read it. Twenty is a guess at how much noise can sit on top
 // of a real comment.
 const prFields = `
-    number title url state isDraft baseRefName headRefOid isInMergeQueue
+    number title url state isDraft baseRefName headRefName headRefOid isInMergeQueue
     reviewDecision mergeStateStatus mergedAt closedAt
     author { login }
     reviewRequests(first: 20) {

@@ -60,6 +60,11 @@ type PR struct {
 	// when its parent merges.
 	BaseRef sql.NullString `db:"base_ref" kind:"observed"`
 	HeadSHA sql.NullString `db:"head_sha" kind:"observed"`
+	// HeadRef is the branch this pull request is from, which is what a
+	// stacked child targets. head_sha cannot stand in for it: two pull
+	// requests in a chain have different heads by construction, and what the
+	// child names is the parent's branch.
+	HeadRef sql.NullString `db:"head_ref" kind:"observed"`
 
 	// One approval is not APPROVED when four teams are on the request.
 	ReviewerTeams string `db:"reviewer_teams" kind:"observed" format:"json"`
@@ -110,8 +115,17 @@ type PR struct {
 	// database computes it, so it is never written.
 	Frozen bool `db:"frozen" kind:"derived"`
 
-	// StackedOn is derived from base_ref, but by sync rather than by the
-	// database, so it is observed and not derived.
+	// StackedOn is the tracked pull request this one is based on: the one in
+	// the same repository whose head branch this one targets.
+	//
+	// Derived from base_ref by sync rather than by the database, so it is
+	// observed and not derived. Purely observed, with no authored twin: a
+	// person setting it would be overwritten by the next poll, and two
+	// writers of one column is the argument the whole actor rule exists to
+	// settle.
+	//
+	// Re-derived every sync rather than latched, so a rebase onto the default
+	// branch clears it.
 	StackedOn sql.NullString `db:"stacked_on" kind:"observed"`
 
 	Raw          string `db:"raw" kind:"observed" format:"json"`
@@ -341,6 +355,115 @@ func (s *Store) ListPRs(ctx context.Context, filter PRFilter) ([]*PR, error) {
 		return nil, fmt.Errorf("listing pull requests: %w", err)
 	}
 	return prs, nil
+}
+
+// ResolveStacking sets stacked_on for every tracked pull request, from the
+// branch each one targets.
+//
+// A pull request is stacked when another tracked one in the same repository
+// has the branch it is based on as its head. That matters because stacking
+// changes what an action means: merging a child while it is based on its
+// parent's branch lands it on that branch rather than on the default one, so
+// a merge action on the child is only valid once the parent has merged.
+//
+// Derived here rather than inferred into the action graph. Creating a blocker
+// edge from an observed field would mean sync mutating what a person reasons
+// about, and unstacking would then have to un-create an edge somebody may
+// since have had an opinion about. Surfacing the fact is the fix; what to do
+// about it is a separate decision.
+//
+// Re-derived in full on every sync rather than latched, which is what makes a
+// rebase onto the default branch clear it. The whole column is written each
+// time, so nothing has to notice that a relationship ended.
+//
+// A base branch belonging to no tracked pull request leaves the column empty,
+// rather than guessing at a repository roz was never told about. Chains
+// resolve link by link — each row's own base is looked up, so #125 on #124 on
+// #123 gives each its parent — and a cycle cannot loop, because nothing here
+// walks the chain: one lookup per row, no recursion.
+//
+// A merged parent keeps its head branch until the branch is deleted, and a
+// deleted branch leaves the child naming something that is gone. Neither is
+// rewritten backwards: the child simply stops being stacked once the branch
+// it named no longer belongs to anything tracked.
+func (s *Store) ResolveStacking(ctx context.Context, actor Actor) ([]*PR, error) {
+	tx, err := s.Begin(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	prs, err := tx.allPRs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Head branch to the pull request that has it, per repository. A branch
+	// naming two open pull requests is not a thing GitHub allows, so the last
+	// writer wins and the case does not arise.
+	heads := make(map[string]string, len(prs))
+	for _, p := range prs {
+		if p.HeadRef.Valid && p.HeadRef.String != "" {
+			heads[p.Repo+" "+p.HeadRef.String] = p.ID
+		}
+	}
+
+	var changed []*PR
+	for _, before := range prs {
+		var want sql.NullString
+		if before.BaseRef.Valid && before.BaseRef.String != "" {
+			if parent, ok := heads[before.Repo+" "+before.BaseRef.String]; ok && parent != before.ID {
+				want = sql.NullString{String: parent, Valid: true}
+			}
+		}
+		if want == before.StackedOn {
+			continue
+		}
+		after := before.Clone()
+		after.StackedOn = want
+		if _, err := tx.Update(ctx, before, after); err != nil {
+			return nil, err
+		}
+		changed = append(changed, after)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
+// allPRs reads every tracked pull request inside a unit of work.
+func (t *Tx) allPRs(ctx context.Context) ([]*PR, error) {
+	fields, err := fieldsOfStruct(&PR{})
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]string, len(fields))
+	for i, f := range fields {
+		columns[i] = f.column
+	}
+
+	rows, err := t.tx.QueryContext(ctx,
+		fmt.Sprintf("SELECT %s FROM pr ORDER BY repo, number", strings.Join(columns, ", ")))
+	if err != nil {
+		return nil, fmt.Errorf("reading the tracked pull requests: %w", err)
+	}
+	defer rows.Close()
+
+	var prs []*PR
+	for rows.Next() {
+		var p PR
+		dest := make([]any, len(fields))
+		for i, f := range fields {
+			dest[i] = f.pointerOf(&p)
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, fmt.Errorf("reading the tracked pull requests: %w", err)
+		}
+		prs = append(prs, &p)
+	}
+	return prs, rows.Err()
 }
 
 // PollWindow is how far back a poll reaches past a pull request's ending,

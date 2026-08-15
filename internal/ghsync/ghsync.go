@@ -97,6 +97,10 @@ type Result struct {
 	// would decide "did anything work" on a read that never happened.
 	asked int
 
+	// Stacked lists the pull requests whose stacked_on moved this cycle,
+	// either onto a parent or off one.
+	Stacked []*store.PR
+
 	// Failed lists the reads that did not happen this cycle. Empty is the
 	// ordinary case.
 	//
@@ -186,6 +190,16 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 			return result, err
 		}
 	}
+
+	// After the pull requests are applied, so a base branch that changed this
+	// minute is resolved against what GitHub just said rather than against
+	// the previous poll. Local, so a cycle that could not read anything still
+	// re-derives from what is stored.
+	stacked, err := st.ResolveStacking(ctx, store.ActorSyncGitHub)
+	if err != nil {
+		return result, err
+	}
+	result.Stacked = stacked
 
 	// Settling on a partly-read cycle is safe, and it is worth saying why: an
 	// observation that did not happen records nothing, so a predicate simply
@@ -661,6 +675,7 @@ func merge(before *store.PR, observed github.PullRequest) (*store.PR, error) {
 	after.URL = keepIfEmpty(before.URL, observed.URL)
 	after.BaseRef = keepIfEmpty(before.BaseRef, observed.BaseRef)
 	after.HeadSHA = keepIfEmpty(before.HeadSHA, observed.HeadSHA)
+	after.HeadRef = keepIfEmpty(before.HeadRef, observed.HeadRef)
 	after.ReviewDecision = keepIfEmpty(before.ReviewDecision, observed.ReviewDecision)
 	after.MergeStateStatus = keepIfEmpty(before.MergeStateStatus, observed.MergeStateStatus)
 	after.ChecksState = keepIfEmpty(before.ChecksState, observed.ChecksState)

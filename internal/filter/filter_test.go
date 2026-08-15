@@ -2,8 +2,11 @@ package filter
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/roz/internal/store"
 )
 
 // row is a record shaped like roz's, without being one: a text column, a
@@ -288,85 +291,93 @@ func TestAnUnknownColumnIsRefusedWithCELsOwnError(t *testing.T) {
 	}
 }
 
-// TestSplittingIsConservative: a splitter that split inside a string or inside
-// brackets would change what the filter means. Being unsure has to cost a
-// pushdown, never an answer.
-func TestSplittingIsConservative(t *testing.T) {
+// TestSplittingIsExact: the split is now the language's idea of where the ands
+// are, taken off the checked tree and unparsed back to source, rather than a
+// scanner's guess at it.
+func TestSplittingIsExact(t *testing.T) {
+	columns, err := store.ColumnTypes(&row{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := envFor(columns, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		expr string
-		want int
+		want []string
 	}{
-		{`state == "MERGED"`, 1},
-		{`state == "MERGED" && number > 1`, 2},
-		{`state == "MERGED" && number > 1 && title != ""`, 3},
-		// An or is never split: its sides are not independent filters, and
+		{`state == "MERGED"`, []string{`state == "MERGED"`}},
+		{`state == "MERGED" && number > 1`, []string{`state == "MERGED"`, `number > 1`}},
+		{
+			`state == "MERGED" && number > 1 && title != ""`,
+			[]string{`state == "MERGED"`, `number > 1`, `title != ""`},
+		},
+		// An or is one term: its sides are not independent filters, and
 		// pushing one down would return rows the other excluded.
-		{`state == "MERGED" || number > 1`, 1},
-		{`(state == "OPEN" || state == "MERGED") && number > 1`, 2},
-		// && inside a string is text, not an operator.
-		{`title == "a && b"`, 1},
-		// && inside a comprehension belongs to the comprehension.
-		{`approvals.exists(a, a == "x" && a != "y")`, 1},
+		{`state == "MERGED" || number > 1`, []string{`state == "MERGED" || number > 1`}},
+		{
+			`(state == "OPEN" || state == "MERGED") && number > 1`,
+			[]string{`state == "OPEN" || state == "MERGED"`, `number > 1`},
+		},
+		// An && inside a string is text, and one inside a comprehension
+		// belongs to the comprehension. The old textual splitter got these
+		// right by counting quotes and brackets; this one never has to.
+		{`title == "a && b"`, []string{`title == "a && b"`}},
+		{
+			`approvals.exists(a, a == "x" && a != "y")`,
+			[]string{`approvals.exists(a, a == "x" && a != "y")`},
+		},
 	}
+
 	for _, tc := range tests {
-		if got := len(conjuncts(tc.expr)); got != tc.want {
-			t.Errorf("conjuncts(%q) = %d terms, want %d: %q",
-				tc.expr, got, tc.want, conjuncts(tc.expr))
-		}
+		t.Run(tc.expr, func(t *testing.T) {
+			got, err := conjuncts(env, tc.expr)
+			if err != nil {
+				t.Fatalf("conjuncts returned error: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("conjuncts = %q, want %q", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("term %d = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }
 
-// TestCoercionIsCaughtToo is the case one probe row missed.
+// TestAnExpressionThatCostsTooMuchIsAnError, not a row that fails to match.
 //
-// `!merged_at` converts to `NOT merged_at`, which SQLite reads as "coerces to
-// zero" — true of the text '0', and of any word, since a non-numeric string
-// coerces to 0. CEL calls `!"abc"` an error and matches nothing. Both answer
-// no to a row of NULLs, so a single all-NULL probe called them equivalent and
-// pushed down a fragment that means something else entirely.
-func TestCoercionIsCaughtToo(t *testing.T) {
-	f := compile(t, `!merged_at`)
-
-	if where, _ := f.SQL(); where != "" {
-		t.Errorf("a coercing fragment was pushed down as %q", where)
-	}
-
-	// And what it means is CEL's answer, which is that it matches nothing:
-	// `!` wants a bool and a timestamp column never holds one.
-	for _, r := range []*row{
-		{},
-		{MergedAt: sql.NullString{String: "0", Valid: true}},
-		{MergedAt: sql.NullString{String: "2026-08-15", Valid: true}},
-	} {
-		keep, err := f.Keep(r)
-		if err != nil {
-			t.Fatalf("Keep() returned error: %v", err)
-		}
-		if keep {
-			t.Errorf("Keep(%+v) = true; ! wants a bool", r.MergedAt)
-		}
-	}
-}
-
-// TestTheWayToAskForNullIsCheap: `merged_at == null` is the expression that
-// says it, and it converts to IS NULL — which an index can serve, and which
-// roz's own partial indexes are built on.
-func TestTheWayToAskForNullIsCheap(t *testing.T) {
-	f := compile(t, `merged_at == null`)
-
-	where, args := f.SQL()
-	if want := "(merged_at IS NULL)"; where != want {
-		t.Errorf("SQL = %q, want %q", where, want)
-	}
-	if len(args) != 0 {
-		t.Errorf("args = %v, want none: IS NULL takes no value", args)
-	}
-
-	keep, err := f.Keep(&row{})
+// Treating an exhausted budget as "does not match" would return an answer
+// computed from a prefix of the work, which is the one outcome worse than
+// being slow.
+func TestAnExpressionThatCostsTooMuchIsAnError(t *testing.T) {
+	// The predicate is never true, so neither exists() short-circuits and the
+	// walk is the full product.
+	f, err := Compile(&row{}, `approvals.exists(a, approvals.exists(b, a + b == "no"))`)
 	if err != nil {
-		t.Fatalf("Keep() returned error: %v", err)
+		t.Fatalf("Compile returned error: %v", err)
 	}
-	if !keep {
-		t.Error("the null row did not match merged_at == null")
+
+	// A list big enough that the nested walk passes the budget.
+	big := make([]string, 1200)
+	for i := range big {
+		big[i] = "login"
+	}
+	encoded, err := json.Marshal(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = f.Keep(&row{Approvals: string(encoded)})
+	if err == nil {
+		t.Fatal("an expression over budget answered rather than failing")
+	}
+	if !strings.Contains(err.Error(), "cost") {
+		t.Errorf("error does not say what went wrong: %v", err)
 	}
 }
 

@@ -41,6 +41,7 @@ import (
 
 	"github.com/google/cel-go/cel"
 	celast "github.com/google/cel-go/common/ast"
+	"github.com/google/cel-go/common/operators"
 
 	"github.com/scottlaird/roz/internal/store"
 )
@@ -109,7 +110,10 @@ func Compile(blank any, expr string) (*Filter, error) {
 	for _, c := range columns {
 		f.declared = append(f.declared, c.Name)
 	}
-	terms := conjuncts(expr)
+	terms, err := conjuncts(env, expr)
+	if err != nil {
+		return nil, err
+	}
 
 	probe, err := newNullProbe(columns)
 	if err != nil {
@@ -168,7 +172,7 @@ func Compile(blank any, expr string) (*Filter, error) {
 		if err != nil {
 			return nil, err
 		}
-		if f.residual, err = env.Program(ast); err != nil {
+		if f.residual, err = programOf(env, ast); err != nil {
 			return nil, fmt.Errorf("planning --filter %q: %w", f.residualSrc, err)
 		}
 		// What the Go pass will have to read. Kept so that "nothing matched"
@@ -180,7 +184,7 @@ func Compile(blank any, expr string) (*Filter, error) {
 	if err != nil {
 		return nil, err
 	}
-	if f.whole, err = env.Program(whole); err != nil {
+	if f.whole, err = programOf(env, whole); err != nil {
 		return nil, fmt.Errorf("planning --filter %q: %w", expr, err)
 	}
 	return f, nil
@@ -333,7 +337,7 @@ func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 		return false, nil
 	}
 
-	program, err := env.Program(ast)
+	program, err := programOf(env, ast)
 	if err != nil {
 		return false, fmt.Errorf("planning --filter %q: %w", term, err)
 	}
@@ -414,8 +418,18 @@ func (f *Filter) Keep(record any) (bool, error) {
 		activation.ctx = context.Background()
 	}
 
-	out, _, err := program.Eval(activation)
+	out, details, err := program.Eval(activation)
 	if err != nil {
+		// Two failures arrive the same way and mean opposite things.
+		//
+		// Running out of budget is a filter nobody can trust: treating that
+		// row as "does not match" would return an answer computed from a
+		// prefix of the work.
+		if details != nil && details.ActualCost() != nil && *details.ActualCost() >= maxCost {
+			return false, fmt.Errorf(
+				"--filter %q cost more than %d to evaluate for one row; simplify it",
+				source, maxCost)
+		}
 		// A row CEL has no answer for does not match, rather than failing the
 		// listing. `number > 5` against a NULL number is the case: CEL calls
 		// it an error, SQLite excludes the row, and excluding it is both the
@@ -467,51 +481,67 @@ func mentionsJSON(term string, columns []store.ColumnType) bool {
 	return false
 }
 
-// conjuncts splits an expression at top-level `&&`.
+// conjuncts splits an expression at top-level `&&`, exactly.
 //
-// Textual, and deliberately conservative: it splits only outside brackets and
-// string literals, and anything it is unsure of stays one term — which costs a
-// pushdown rather than changing an answer. Splitting the checked AST instead
-// would be exact, but cel-go has no supported way to lift a sub-expression
-// back into an *cel.Ast for conversion, and this is an experiment rather than
-// the shape to keep.
+// Off the checked tree rather than the text. The first version of this walked
+// the string counting brackets and quotes, on the belief that cel-go had no
+// supported way to lift a sub-expression back out of an AST. It has:
+// cel.ExprToString unparses any node to CEL source, which compiles again on
+// its own. So the split is now the language's idea of where the ands are
+// rather than a scanner's.
 //
-// `||` is never split: the two sides of an or are not independent filters, and
+// `||` is never split. The two sides of an or are not independent filters, and
 // pushing one down would return rows the other should have excluded.
-func conjuncts(expr string) []string {
+func conjuncts(env *cel.Env, expr string) ([]string, error) {
+	ast, err := compileTerm(env, expr)
+	if err != nil {
+		return nil, err
+	}
+
 	var terms []string
-	var depth, start int
-	var quote rune
-
-	runes := []rune(expr)
-	for i := 0; i < len(runes); i++ {
-		c := runes[i]
-		switch {
-		case quote != 0:
-			if c == '\\' {
-				i++
-			} else if c == quote {
-				quote = 0
+	var split func(celast.Expr) error
+	split = func(n celast.Expr) error {
+		if n != nil && n.Kind() == celast.CallKind {
+			call := n.AsCall()
+			if call.FunctionName() == operators.LogicalAnd && len(call.Args()) == 2 {
+				if err := split(call.Args()[0]); err != nil {
+					return err
+				}
+				return split(call.Args()[1])
 			}
-		case c == '"' || c == '\'':
-			quote = c
-		case c == '(' || c == '[':
-			depth++
-		case c == ')' || c == ']':
-			depth--
-		case depth == 0 && c == '&' && i+1 < len(runes) && runes[i+1] == '&':
-			terms = append(terms, strings.TrimSpace(string(runes[start:i])))
-			i++
-			start = i + 1
 		}
+		source, err := cel.ExprToString(n, ast.NativeRep().SourceInfo())
+		if err != nil {
+			return fmt.Errorf("rendering a term of --filter %q: %w", expr, err)
+		}
+		terms = append(terms, source)
+		return nil
 	}
-	terms = append(terms, strings.TrimSpace(string(runes[start:])))
+	if err := split(ast.NativeRep().Expr()); err != nil {
+		return nil, err
+	}
+	return terms, nil
+}
 
-	for _, term := range terms {
-		if term == "" {
-			// An unbalanced expression: let CEL report it, on the whole thing.
-			return []string{expr}
-		}
-	}
-	return terms
+// maxCost bounds one row's evaluation.
+//
+// CEL's cost units are abstract: a comparison is a handful, and walking a
+// relation is one per element plus the predicate. A million is far above
+// anything a filter over a personal queue does and far below anything that
+// takes visible time, so it is a guard against a pathological expression
+// rather than a budget anybody should feel.
+//
+// It matters more than the localhost threat model suggests. A saved view is
+// evaluated per row per render, so an expression that is merely slow becomes a
+// page that does not come back — and the person who wrote it is the person
+// waiting for it.
+const maxCost = 1_000_000
+
+// programOf plans an expression, bounded and counted.
+//
+// Counted as well as bounded because the two failures have to be told apart: a
+// row CEL cannot answer for does not match, while a row that ran out of budget
+// is a filter nobody can trust, and both arrive as an error from Eval.
+func programOf(env *cel.Env, ast *cel.Ast) (cel.Program, error) {
+	return env.Program(ast, cel.CostLimit(maxCost), cel.EvalOptions(cel.OptTrackCost))
 }

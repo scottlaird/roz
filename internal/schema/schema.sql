@@ -227,7 +227,7 @@ CREATE TABLE project (
   summary          TEXT NOT NULL DEFAULT '',
   status           TEXT NOT NULL CHECK (status IN
                      ('active','blocked','snoozed','done','retired','superseded')),
-  priority         INTEGER CHECK (priority BETWEEN 1 AND 4),
+  priority         INTEGER CHECK (priority BETWEEN 1 AND 9),  -- see 0028
   effort           TEXT CHECK (effort IN ('minutes','hours','session','days','weeks')),
   snooze_until     TEXT,
   snooze_reason    TEXT NOT NULL DEFAULT '',

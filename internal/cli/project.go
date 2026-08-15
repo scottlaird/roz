@@ -89,7 +89,7 @@ func addProjectFieldFlags(cmd *cobra.Command) {
 	f.String(flagTitle, "", "what the project is")
 	f.String(flagSummary, "", "how it relates to other items; not a design note")
 	f.String(flagStatus, "", "active, blocked, snoozed, done, retired or superseded")
-	f.Int(flagPriority, 0, "1 to 4")
+	f.Int(flagPriority, 0, "1 to 9")
 	f.String(flagEffort, "", "minutes, hours, session, days or weeks")
 	f.String(flagSnoozeUntil, "", "ISO-8601 date or timestamp; requires status snoozed")
 	f.String(flagSnoozeReason, "", "why it is deferred")

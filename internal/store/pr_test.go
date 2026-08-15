@@ -480,3 +480,124 @@ func setState(t *testing.T, st *Store, p *PR, state string) {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 }
+
+// TestPRsToPoll is scottlaird/roz#174: a pull request that ended months ago
+// was re-read on every cycle for ever, and nothing untracks a row, so the set
+// only grew.
+func TestPRsToPoll(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	const now = "2026-08-15T00:00:00.000Z"
+
+	open := trackPR(t, st, "owner/repo", 1)
+	setState(t, st, open, PRStateOpen)
+
+	old := trackPR(t, st, "owner/repo", 2)
+	endPR(t, st, old, PRStateMerged, "2026-01-01T00:00:00.000Z")
+
+	recent := trackPR(t, st, "owner/repo", 3)
+	endPR(t, st, recent, PRStateMerged, "2026-08-14T00:00:00.000Z")
+
+	// Ended long ago, and something is still being done about it.
+	worked := trackPR(t, st, "owner/repo", 4)
+	endPR(t, st, worked, PRStateMerged, "2026-01-01T00:00:00.000Z")
+	a := addAction(t, st, "follow up on the merge", "investigate")
+	linkActionPR(t, st, a, worked.ID)
+
+	// Terminal with no date: a row recorded before closed_at existed. One
+	// more read gives it a date the next window can drop it on, so it is in.
+	undated := trackPR(t, st, "owner/repo", 5)
+	setState(t, st, undated, PRStateClosed)
+
+	got, err := st.PRsToPoll(ctx, PollWindow{Days: 14, Now: now})
+	if err != nil {
+		t.Fatalf("PRsToPoll() returned error: %v", err)
+	}
+	want := []string{
+		"owner/repo#1", // open
+		"owner/repo#3", // ended inside the window
+		"owner/repo#4", // ended outside it, but an action is about it
+		"owner/repo#5", // ended, undated
+	}
+	if !equalStrings(got, want) {
+		t.Errorf("PRsToPoll() = %v, want %v", got, want)
+	}
+
+	// A window of nothing still keeps what is open, and what is worked on.
+	got, err = st.PRsToPoll(ctx, PollWindow{Days: 0, Now: now})
+	if err != nil {
+		t.Fatalf("PRsToPoll() returned error: %v", err)
+	}
+	for _, key := range []string{"owner/repo#1", "owner/repo#4"} {
+		if !contains(got, key) {
+			t.Errorf("a zero window dropped %s: %v", key, got)
+		}
+	}
+	if contains(got, "owner/repo#3") {
+		t.Errorf("a zero window kept a merged pull request: %v", got)
+	}
+}
+
+// TestAnOpenPullRequestIsPolledHoweverOld is the caveat that would be a bug
+// backwards: the transition into MERGED is itself an observation, so a row
+// that is locally open has to stay in the poll set whatever its age. Filtering
+// on what GitHub last said instead would mean a pull request that merges is
+// never seen to have merged.
+func TestAnOpenPullRequestIsPolledHoweverOld(t *testing.T) {
+	st := newStore(t)
+
+	ancient := trackPR(t, st, "owner/repo", 1)
+	setState(t, st, ancient, PRStateOpen)
+
+	got, err := st.PRsToPoll(context.Background(),
+		PollWindow{Days: 1, Now: "2030-01-01T00:00:00.000Z"})
+	if err != nil {
+		t.Fatalf("PRsToPoll() returned error: %v", err)
+	}
+	if !contains(got, ancient.ID) {
+		t.Errorf("an open pull request aged out of the poll set: %v", got)
+	}
+}
+
+// linkActionPR records that an action is about a pull request.
+func linkActionPR(t *testing.T, st *Store, a *Action, prID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+	if err := tx.LinkPR(ctx, a, prID, RoleSubject); err != nil {
+		t.Fatalf("LinkPR() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+// endPR records an ending the way sync would.
+func endPR(t *testing.T, st *Store, p *PR, state, at string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	after := p.Clone()
+	after.State = sql.NullString{String: state, Valid: true}
+	after.ClosedAt = sql.NullString{String: at, Valid: true}
+	if state == PRStateMerged {
+		after.MergedAt = sql.NullString{String: at, Valid: true}
+	}
+	if _, err := tx.Update(ctx, p, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}

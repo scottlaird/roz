@@ -1259,3 +1259,81 @@ func TestSyncRecordsWhenAPullRequestMerged(t *testing.T) {
 		t.Errorf("merged_at = %q after a poll that said nothing, want it kept", got)
 	}
 }
+
+// TestSyncAsksOnlyAboutWhatCanMove: the poll set is chosen before the request
+// goes out, so a terminal pull request outside the window costs nothing.
+func TestSyncAsksOnlyAboutWhatCanMove(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+
+	// The one from newStore merges, long ago.
+	merged := observed(key)
+	merged.State = "MERGED"
+	merged.MergedAt = "2026-01-01T00:00:00.000Z"
+	merged.ClosedAt = "2026-01-01T00:00:00.000Z"
+
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{merged}}}
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(client.asked) != 1 {
+		t.Fatalf("the first sync asked about %v, want the one tracked", client.asked)
+	}
+
+	// It is now terminal and dated, so the next cycle has nothing to ask.
+	client.asked = nil
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(client.asked) != 0 {
+		t.Errorf("a merged pull request was polled again: %v", client.asked)
+	}
+	if result.Polled != 0 {
+		t.Errorf("Polled = %d, want 0", result.Polled)
+	}
+}
+
+// TestSyncKeepsPollingWhatAnActionIsAbout: writing an action against
+// something long merged is ordinary use, and without this Settle never gets an
+// observation and the action cannot close.
+func TestSyncKeepsPollingWhatAnActionIsAbout(t *testing.T) {
+	ctx := context.Background()
+	st, key := newStore(t)
+
+	merged := observed(key)
+	merged.State = "MERGED"
+	merged.MergedAt = "2026-01-01T00:00:00.000Z"
+	merged.ClosedAt = "2026-01-01T00:00:00.000Z"
+
+	client := &fakeFetcher{result: github.Result{PullRequests: []github.PullRequest{merged}}}
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+
+	a := store.NewAction("check what shipped", "investigate")
+	if err := st.AllocateAction(ctx, a); err != nil {
+		t.Fatalf("AllocateAction() returned error: %v", err)
+	}
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.Insert(ctx, a); err != nil {
+		t.Fatalf("Insert() returned error: %v", err)
+	}
+	if err := tx.LinkPR(ctx, a, key, store.RoleSubject); err != nil {
+		t.Fatalf("LinkPR() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	client.asked = nil
+	if _, err := Sync(ctx, st, client); err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if len(client.asked) != 1 {
+		t.Errorf("a pull request with an open action was not polled: %v", client.asked)
+	}
+}

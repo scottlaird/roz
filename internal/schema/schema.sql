@@ -72,7 +72,11 @@ CREATE TABLE config (
   -- nothing: the shape of a key also matches UTF-8 and SHA-256.
   jira_prefixes TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(jira_prefixes)),
   created_at    TEXT NOT NULL,
-  updated_at    TEXT NOT NULL
+  updated_at    TEXT NOT NULL,
+  -- how many days after a pull request ends to keep polling it. Days rather
+  -- than hours: what it covers is review comments landing after a merge.
+  -- Last because ADD COLUMN put it there. See 0029.
+  poll_window_days INTEGER NOT NULL DEFAULT 14 CHECK (poll_window_days >= 0)
 ) STRICT;
 
 INSERT INTO config (id, created_at, updated_at)
@@ -410,6 +414,12 @@ CREATE TABLE pr (
   -- that caught up, or never, having been merged the first time it was read.
   -- NULL means not merged. See 0027.
   merged_at          TEXT,
+  -- when GitHub says it closed, whether by merging or not. It is what the
+  -- poll window is measured from: merged_at dates a merge and says nothing
+  -- about a close, so a window keyed off it alone would hold every CLOSED row
+  -- either permanently in or permanently out. NULL means still open, or not
+  -- read since the column existed. See 0029.
+  closed_at          TEXT,
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;
@@ -731,3 +741,5 @@ CREATE INDEX action_ref_pending_repo ON action_ref_pending(repo_id, kind);
 -- what either query is asking for.
 CREATE INDEX pr_merged_at ON pr(merged_at) WHERE merged_at IS NOT NULL;
 CREATE INDEX tracker_issue_closed_at ON tracker_issue(closed_at) WHERE closed_at IS NOT NULL;
+-- the poll set: open pull requests plus the ones that ended recently
+CREATE INDEX pr_poll_window ON pr(closed_at) WHERE closed_at IS NOT NULL;

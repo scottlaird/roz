@@ -1275,6 +1275,64 @@ ROZ1 done
 **A blocked project stays on the page**, marked. Blocked is exactly where work
 goes quiet, which makes it the last thing worth hiding.
 
+### Its actions leave the queue with it
+
+The queue answers *"what do I do now"*, and a blocked project's actions are
+exactly the ones that cannot be done now. So they come out of
+`action list --unblocked`, and stay in the full listing, marked:
+
+```console
+$ roz action list --unblocked
+ID   STATE  VERB   PROJECT  SNOOZED UNTIL  LATE  TITLE
+NA3  ready  write  ROZ2     -              -     Unrelated work
+$ roz action list
+ID   STATE  VERB    PROJECT  SNOOZED UNTIL  LATE  HELD  TITLE
+NA1  ready  write   ROZ1     -              -     yes   Write the endpoint
+NA2  ready  decide  ROZ1     -              -     yes   Decide the cutover
+NA3  ready  write   ROZ2     -              -     -     Unrelated work
+```
+
+`action show` names what is holding it, since the action itself carries
+nothing that would explain it:
+
+```console
+$ roz action show NA1
+...
+held_by     ROZ2
+project_id  ROZ1
+state       ready
+```
+
+**Nothing is written onto the action.** It is read from the project's status
+at query time, which is what makes the release free: an action has
+`blocked_by` and `hidden_behind` already, each with its own release condition,
+and a third writer of the same state would raise the question of which one
+lets go. There is nothing to let go of here — the moment the last blocker
+closes, the project is active and its actions are back, with nobody having
+remembered which ones they were.
+
+It reads `project.status` rather than counting open blockers, so this and
+`project list` cannot disagree. That disagreement was the bug
+([#181](https://github.com/scottlaird/roz/issues/181)).
+
+**`rank_pin` is the escape.** Not every action on a blocked project is blocked
+by the same thing — the `decide` that would *remove* the blocker is exactly
+the work that clears it, and a rule applied uniformly buries it:
+
+```console
+$ roz action set NA2 --rank-pin 1
+$ roz action list --unblocked
+ID   STATE  VERB    PROJECT  SNOOZED UNTIL  LATE  HELD  TITLE
+NA2  ready  decide  ROZ1     -              -     yes   Decide the cutover
+NA3  ready  write   ROZ2     -              -     -     Unrelated work
+```
+
+Pinning says *"I mean this one"*, which is what `rank_pin` has always meant.
+The `HELD` mark stays, because it is still true and worth knowing.
+
+`--waiting` is unaffected. It answers what you are waiting *on*, and a wait for
+a review is still true whatever the project's status says.
+
 `roz project unblock` removes the edge for when the dependency was wrong
 rather than satisfied — saying so should not mean closing something unfinished.
 

@@ -150,6 +150,31 @@ func (t *Tx) projectBlocks(ctx context.Context, from, to string) (bool, error) {
 	return true, nil
 }
 
+// BlockedProjects returns the ids of every project currently blocked.
+//
+// Read as a set rather than asked per action, because a listing draws hundreds
+// of rows and "is this one's project blocked" is the same question each time.
+// The same status the queue filters on, so a marked row and a missing one
+// cannot disagree.
+func (s *Store) BlockedProjects(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id FROM project WHERE status = ?", ProjectBlocked)
+	if err != nil {
+		return nil, fmt.Errorf("reading the blocked projects: %w", err)
+	}
+	defer rows.Close()
+
+	blocked := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("reading a blocked project: %w", err)
+		}
+		blocked[id] = true
+	}
+	return blocked, rows.Err()
+}
+
 // OpenProjectBlockers returns the ids of the projects still holding this one
 // up. A closed project holds nothing up and is not returned.
 func (t *Tx) OpenProjectBlockers(ctx context.Context, id string) ([]string, error) {

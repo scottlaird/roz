@@ -335,16 +335,16 @@ var prColumns = columnSet[*store.PR]{
 		{
 			name: "merged_at", header: "MERGED",
 			render: func(p *store.PR, _ renderContext) string { return dateCell(p.MergedAt) },
-			showIf: func(rows []*store.PR) bool { return anyPR(rows, prIsMerged) },
+			showIf: func(rows []*store.PR, _ renderContext) bool { return anyPR(rows, prIsMerged) },
 		},
 		{
 			name:   "tracked_because",
 			header: "BECAUSE",
-			showIf: func(rows []*store.PR) bool { return anyPR(rows, prIsExplained) },
+			showIf: func(rows []*store.PR, _ renderContext) bool { return anyPR(rows, prIsExplained) },
 		},
 		{
 			name:   "pipeline",
-			showIf: func(rows []*store.PR) bool { return anyPR(rows, prIsOverridden) },
+			showIf: func(rows []*store.PR, _ renderContext) bool { return anyPR(rows, prIsOverridden) },
 		},
 	},
 	defaults: []string{

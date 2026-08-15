@@ -92,6 +92,7 @@ func (a *Action) relations() []Relation {
 		{Name: "blocking", Load: blockingIDs},
 		{Name: "subject_pr", Load: subjectPRID},
 		{Name: "context_prs", Load: contextPRIDs},
+		{Name: "held_by", Load: heldByIDs},
 	}
 }
 
@@ -121,6 +122,33 @@ func (r *PR) relations() []Relation {
 
 func blockedByIDs(ctx context.Context, tx *Tx, id string) (any, error) {
 	blockers, err := tx.OpenBlockers(ctx, id)
+	if err != nil || len(blockers) == 0 {
+		return nil, err
+	}
+	return blockers, nil
+}
+
+// heldByIDs names what is holding this action's project up, which is why the
+// action is out of the queue.
+//
+// The action itself carries nothing to explain that — deliberately, since a
+// blocked project is derived at query time rather than written onto its
+// actions — so `action show` would otherwise say ready about something the
+// queue will not offer.
+//
+// Nil where the project has no open blockers, which includes a project whose
+// status was set by hand. That one still leaves the queue, and `project show`
+// is where the reason for it is.
+func heldByIDs(ctx context.Context, tx *Tx, id string) (any, error) {
+	a, err := tx.LoadAction(ctx, id)
+	if err != nil || !a.ProjectID.Valid || a.ProjectID.String == "" {
+		return nil, err
+	}
+	project, err := tx.LoadProject(ctx, a.ProjectID.String)
+	if err != nil || project.Status != ProjectBlocked {
+		return nil, err
+	}
+	blockers, err := tx.OpenProjectBlockers(ctx, project.ID)
 	if err != nil || len(blockers) == 0 {
 		return nil, err
 	}

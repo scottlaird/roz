@@ -61,7 +61,12 @@ type column[T any] struct {
 	// the reason a listing of open pull requests has no MERGED column. It
 	// applies to the default view only: a column asked for by name is shown
 	// whatever is in it, because asking is the answer to "is this relevant".
-	showIf func(rows []T) bool
+	//
+	// It takes the context for the same reason render does: whether a column
+	// has anything to say is not always a question the rows can answer on
+	// their own. Whether an action is held depends on its project's status,
+	// which is beside the rows rather than in them.
+	showIf func(rows []T, ctx renderContext) bool
 }
 
 // renderContext is what a cell needs and the record does not carry.
@@ -76,6 +81,11 @@ type renderContext struct {
 	// identifier. Absence is what says not late, so the map is read for
 	// presence rather than for its number — see lateCell.
 	late map[string]int
+	// blocked is the set of projects that are, keyed by identifier. A blocked
+	// project's actions are out of the queue, and a listing that showed them
+	// unmarked would be the disagreement scottlaird/roz#181 was about, moved
+	// one place along.
+	blocked map[string]bool
 }
 
 // columnSet is everything one listing can show.
@@ -175,7 +185,7 @@ func (s columnSet[T]) names() []string {
 // fieldsAll is the info dump the issue asked for — every column the record
 // defines, which is otherwise unreachable because the default view is a
 // deliberate subset.
-func (s columnSet[T]) selected(fields []string, rows []T) ([]column[T], error) {
+func (s columnSet[T]) selected(fields []string, rows []T, ctx renderContext) ([]column[T], error) {
 	all, err := s.all()
 	if err != nil {
 		return nil, err
@@ -195,7 +205,7 @@ func (s columnSet[T]) selected(fields []string, rows []T) ([]column[T], error) {
 			if !ok {
 				return nil, fmt.Errorf("the default view names %q, which is not a column", name)
 			}
-			if c.showIf != nil && !c.showIf(rows) {
+			if c.showIf != nil && !c.showIf(rows, ctx) {
 				continue
 			}
 			chosen = append(chosen, c)
@@ -232,7 +242,11 @@ func (c column[T]) heading() string {
 // nothing here has to know which columns those are.
 func writeRecords[T any](out io.Writer, format string, set columnSet[T],
 	fields []string, rows []T, ctx renderContext) error {
-	columns, err := set.selected(fields, rows)
+	// Stamped before the columns are chosen, since whether one is worth
+	// showing can depend on what is in the context.
+	ctx.now = time.Now().UTC().Format(store.TimeFormat)
+
+	columns, err := set.selected(fields, rows, ctx)
 	if err != nil {
 		return err
 	}
@@ -252,10 +266,6 @@ func writeRecords[T any](out io.Writer, format string, set columnSet[T],
 	if len(objects) != len(rows) {
 		return fmt.Errorf("marshalled %d records into %d objects", len(rows), len(objects))
 	}
-
-	// Stamped here rather than by the caller, so every row of one table is
-	// asked the same question about what time it is.
-	ctx.now = time.Now().UTC().Format(store.TimeFormat)
 
 	switch format {
 	case outputJSON:

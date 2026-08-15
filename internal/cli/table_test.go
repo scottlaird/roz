@@ -257,7 +257,7 @@ func TestShowIfKeepsAColumnOutOfTheDefaultView(t *testing.T) {
 	set := columnSet[*row]{
 		blank: &row{},
 		declared: []column[*row]{
-			{name: "note", showIf: func(rows []*row) bool {
+			{name: "note", showIf: func(rows []*row, _ renderContext) bool {
 				for _, r := range rows {
 					if r.Note != "" {
 						return true

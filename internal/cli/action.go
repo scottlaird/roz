@@ -19,6 +19,7 @@ const (
 	flagWhy        = "why"
 	flagRankPin    = "rank-pin"
 	flagOkayToWait = "okay-to-wait-until"
+	flagWaitingFor = "waiting-for"
 )
 
 func newActionCmd() *cobra.Command {
@@ -51,7 +52,7 @@ func newActionCmd() *cobra.Command {
 // cascade that belongs to them.
 var actionFieldFlags = []string{
 	flagTitle, flagVerb, flagProject, flagWhy, flagStatus, flagRankPin,
-	flagSnoozeUntil, flagSnoozeReason, flagOkayToWait,
+	flagSnoozeUntil, flagSnoozeReason, flagOkayToWait, flagWaitingFor,
 }
 
 func addActionFieldFlags(cmd *cobra.Command) {
@@ -66,6 +67,8 @@ func addActionFieldFlags(cmd *cobra.Command) {
 	f.String(flagSnoozeReason, "", "why it is deferred")
 	f.String(flagOkayToWait, "",
 		"when waiting on this stops being reasonable; empty clears it and the verb's allowance applies")
+	f.String(flagWaitingFor, "",
+		"the one owner whose review actually unblocks this, e.g. @org/storage; empty clears it")
 }
 
 func newActionAddCmd() *cobra.Command {
@@ -349,6 +352,24 @@ func applyActionFlags(cmd *cobra.Command, a *store.Action) error {
 				return err
 			}
 			a.OkayToWaitUntil = sql.NullString{String: at, Valid: true}
+		}
+	}
+	if f.Changed(flagWaitingFor) {
+		v, err := f.GetString(flagWaitingFor)
+		if err != nil {
+			return err
+		}
+		// Empty clears it, which is what happens when the team it named
+		// approves and the wait moves on. Going stale is the expected failure
+		// here, so correcting it has to be cheap.
+		if strings.TrimSpace(v) == "" {
+			a.WaitingFor = sql.NullString{}
+		} else {
+			owner, err := oneOwner(flagWaitingFor, v)
+			if err != nil {
+				return err
+			}
+			a.WaitingFor = sql.NullString{String: owner, Valid: true}
 		}
 	}
 	if f.Changed(flagRankPin) {
@@ -752,8 +773,23 @@ var actionColumns = columnSet[*store.Action]{
 				return false
 			},
 		},
+		{
+			// Shown when somebody has said who the wait is for, and otherwise
+			// not — an empty column across every row is the listing asking a
+			// question rather than answering one, and this one is answered by
+			// hand until CODEOWNERS can default it.
+			name: "waiting_for",
+			showIf: func(rows []*store.Action, _ renderContext) bool {
+				for _, a := range rows {
+					if a.WaitingFor.Valid {
+						return true
+					}
+				}
+				return false
+			},
+		},
 	},
-	defaults: []string{"id", "state", "verb", "project_id", "snooze_until", "late", "held", "title"},
+	defaults: []string{"id", "state", "verb", "project_id", "snooze_until", "late", "held", "waiting_for", "title"},
 	rankings: queueRankings,
 	empty:    "no actions",
 }

@@ -292,6 +292,13 @@ CREATE TABLE action (
   -- step cannot be late before it was actionable. Last because ADD COLUMN put
   -- it there. See 0021.
   ready_since TEXT,
+  -- authored: which of the requested reviewers this wait is actually for.
+  -- waiting_on beside it is observed and holds everyone GitHub says was
+  -- asked, which is routinely several teams pulled in by incidental files;
+  -- this is the judgement of whose approval unblocks the work, which GitHub
+  -- has no way of knowing. Both are true, and this is usually but not always
+  -- one of that list. Last because ADD COLUMN put it there. See 0031.
+  waiting_for TEXT CHECK (waiting_for IS NULL OR waiting_for <> ''),
   UNIQUE (kind, n),
   CHECK (id = kind || n),
   CHECK (hidden_behind IS NULL OR hidden_behind <> id),

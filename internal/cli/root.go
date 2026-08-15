@@ -50,6 +50,7 @@ func NewRootCmd() *cobra.Command {
 		newPipelineCmd(),
 		newVerifyCmd(),
 		newCodeownersCmd(),
+		newOwnerCmd(),
 		newNoteCmd(),
 		newExceptionCmd(),
 		newPageCmd(),

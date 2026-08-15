@@ -725,6 +725,23 @@ CREATE TABLE review_rule (
   note        TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
+-- ── owner_channel ────────────────────────────────────────────────────
+-- Where a group is reached. The channel belongs to the reviewer rather than
+-- to the repository: a change touching storage should reach the storage
+-- channel whichever repository it is in, and a monorepo has no single right
+-- answer at all. Once routing has decided who to ask, this is a table read.
+--
+-- Groups only -- the '/' in the key is what makes '@org/storage' a key and
+-- '@alice' not one. A person is reached by naming them, and where routing
+-- resolves to a person this has no answer, which is better said than
+-- invented. See 0032.
+CREATE TABLE owner_channel (
+  owner      TEXT PRIMARY KEY CHECK (owner <> '' AND instr(owner, '/') > 0),
+  channel    TEXT NOT NULL CHECK (channel <> ''),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
 -- ── indexes for the queries that run every render ────────────────────
 CREATE INDEX action_open     ON action(state, verb) WHERE closed_at IS NULL;
 CREATE INDEX action_expired  ON action(snooze_until)

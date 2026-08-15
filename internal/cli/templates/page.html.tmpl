@@ -101,7 +101,12 @@
              padding:8px 10px;margin:.45em 0;overflow-x:auto}
   .prose pre code{background:none;border:0;padding:0}
   .prose blockquote{margin:.45em 0;padding-left:10px;border-left:2px solid var(--rule)}
-  .refs{margin-top:4px;font-size:12.5px;color:var(--mid);display:flex;flex-wrap:wrap;gap:4px 14px}
+  {{/* baseline, not the flex default: a ref row mixes bare .mono spans (the
+       project) with wrapper spans that inherit .refs' own 12.5px and hold an
+       11px link (a pull request, an issue). Stretched items each start their
+       text at the top of their own line box, so the two sat 2px apart. */}}
+  .refs{margin-top:4px;font-size:12.5px;color:var(--mid);display:flex;flex-wrap:wrap;
+        gap:4px 14px;align-items:baseline}
   .refs .bad{color:var(--bad);font-weight:600}
   .refs .state{color:var(--faint)}
 

@@ -401,8 +401,13 @@ func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
 		{`title != "x"`, true, "a column that cannot be absent has no NULL row to differ over"},
 
 		{`state != "MERGED"`, false, "SQL drops a NULL state where CEL keeps it"},
-		{`title.startsWith("Fix")`, false, "LIKE is case-insensitive for ASCII and startsWith is not"},
-		{`title.endsWith("x")`, false, "the same, from the other end"},
+		// Both became pushable when the store started opening connections with
+		// case_sensitive_like. The converter escapes the literal's own % and _
+		// and emits an ESCAPE clause, so a prefix holding a wildcard is a
+		// prefix rather than a pattern.
+		{`title.startsWith("Fix")`, true, "LIKE is case-sensitive now, as startsWith always was"},
+		{`title.endsWith("x")`, true, "the same, from the other end"},
+		{`title.startsWith("100%")`, true, "the wildcard in the literal is escaped, not honoured"},
 		{`title.matches("^Fix")`, false, "the dialect refuses regexes outright"},
 		{`!merged_at`, false, "NOT over a non-boolean is SQLite coercing, not negating"},
 		{`number > "5"`, false, "SQLite compares across types by affinity; CEL calls it an error"},
@@ -428,21 +433,27 @@ func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
 	}
 }
 
-// TestStartsWithWouldHaveBeenWrong is the case that argues for the flip.
+// TestStartsWithMatchesCaseInBothEngines is the shape that argued hardest for
+// the allow-list, and is allowed now because the reason it was refused went
+// away rather than because anybody stopped worrying about it.
 //
-// The sample rows would not have caught it: SQLite's LIKE is case-insensitive
-// for ASCII, so `title LIKE 'fix%'` matches "Fix the thing" while CEL's
-// startsWith does not — and every string the probe tries is lower case, so
-// both engines agree on every one of them. The shape is refused because
-// somebody read what LIKE does, not because a sample found it.
-func TestStartsWithWouldHaveBeenWrong(t *testing.T) {
+// SQLite's LIKE was case-insensitive for ASCII, so `title LIKE 'fix%'` matched
+// "Fix the thing" in the query where CEL's startsWith did not. The store now
+// opens every connection with case_sensitive_like, and the equivalence probe
+// opens its scratch database the same way, so this has to agree there before
+// it reaches a query at all.
+func TestStartsWithMatchesCaseInBothEngines(t *testing.T) {
 	f := compile(t, `title.startsWith("fix")`)
 
-	if where, _ := f.SQL(); where != "" {
-		t.Fatalf("startsWith was pushed down as %q", where)
+	where, _ := f.SQL()
+	if where == "" {
+		t.Fatal("startsWith did not push down")
+	}
+	if !strings.Contains(where, "LIKE") {
+		t.Errorf("SQL = %q, want a LIKE", where)
 	}
 
-	// And in Go it means what CEL says, which is case-sensitive.
+	// And in Go it is case-sensitive, which is what the query now matches.
 	for _, tc := range []struct {
 		title string
 		want  bool
@@ -450,7 +461,7 @@ func TestStartsWithWouldHaveBeenWrong(t *testing.T) {
 		{"fix the thing", true},
 		{"Fix the thing", false},
 	} {
-		got, err := f.Keep(&row{Title: tc.title})
+		got, err := compile(t, `title.startsWith("fix")`).Keep(&row{Title: tc.title})
 		if err != nil {
 			t.Fatalf("Keep(%q) returned error: %v", tc.title, err)
 		}

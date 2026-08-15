@@ -42,7 +42,10 @@ type nullProbe struct {
 }
 
 func newNullProbe(columns []store.ColumnType) (*nullProbe, error) {
-	db, err := sql.Open("sqlite", ":memory:")
+	// The same LIKE the store uses. A probe that answered LIKE differently
+	// from the database it is standing in for would certify an equivalence
+	// that does not hold where it matters.
+	db, err := sql.Open("sqlite", "file::memory:?_pragma=case_sensitive_like(1)")
 	if err != nil {
 		return nil, fmt.Errorf("opening a scratch database to check the filter: %w", err)
 	}

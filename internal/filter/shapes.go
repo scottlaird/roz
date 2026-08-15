@@ -118,13 +118,16 @@ func pushableShape(e celast.Expr, columns scope) bool {
 		return comparesToLiteral(args, columns, orderedRule) ||
 			comparesColumns(args, columns, false)
 
-	// contains becomes INSTR, which is case-sensitive, as CEL's contains is.
+	// contains becomes INSTR, which is case-sensitive as CEL's contains is.
 	//
-	// startsWith and endsWith are deliberately absent: they become LIKE, and
-	// SQLite's LIKE is case-insensitive for ASCII, so `title.startsWith("Fix")`
-	// would match "fix the thing" in the query and not in Go. matches is
-	// absent because the dialect refuses it outright.
-	case overloadContains:
+	// startsWith and endsWith become LIKE, which was case-insensitive for
+	// ASCII and therefore refused: `title.startsWith("Fix")` matched "fix the
+	// thing" in the query and not in Go. The store now opens its connections
+	// with case_sensitive_like, so the two agree — and the literal's own `%`
+	// and `_` are escaped by the converter, with an ESCAPE clause to match.
+	//
+	// matches stays absent: the dialect refuses regexes outright.
+	case overloadContains, overloadStartsWith, overloadEndsWith:
 		if !call.IsMemberFunction() || len(args) != 1 {
 			return false
 		}
@@ -136,8 +139,12 @@ func pushableShape(e celast.Expr, columns scope) bool {
 	}
 }
 
-// overloadContains is the member function name as it appears in the AST.
-const overloadContains = "contains"
+// The member function names as they appear in the AST.
+const (
+	overloadContains   = "contains"
+	overloadStartsWith = "startsWith"
+	overloadEndsWith   = "endsWith"
+)
 
 // comparisonRule decides one comparison, given the column and the literal it
 // is against. A nil literal kind means the CEL literal `null`.

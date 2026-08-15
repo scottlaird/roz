@@ -91,15 +91,18 @@ func TestABareNameInsideAJoinIsRefused(t *testing.T) {
 
 // TestTheAllowListAppliesInsideAJoinToo: the inner predicate is somebody's
 // typing exactly as a top-level one is, and it went to the converter unchecked
-// in the first draft of this spike — so `a.verb.startsWith("W")` became a LIKE
-// that is case-insensitive where CEL is not.
+// in the first draft of this spike.
+//
+// A regex is the example now that LIKE is case-sensitive: the SQLite dialect
+// refuses matches() outright, so it is a shape that has to run in Go however
+// deep it is nested.
 func TestTheAllowListAppliesInsideAJoinToo(t *testing.T) {
-	f, err := Compile(&store.Project{}, `actions.exists(a, a.verb.startsWith("wait"))`)
+	f, err := Compile(&store.Project{}, `actions.exists(a, a.verb.matches("^wait"))`)
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
 	if where, _ := f.SQL(); where != "" {
-		t.Errorf("startsWith inside a join was pushed down as %q", where)
+		t.Errorf("a regex inside a join was pushed down as %q", where)
 	}
 }
 
@@ -161,7 +164,7 @@ func TestARelationIsReadOnlyWhenTheFilterAsksForIt(t *testing.T) {
 // wired a loader is indistinguishable from answering "no" because nothing
 // matched, and the first is a bug wearing the second's clothes.
 func TestATraversalWithNowhereToReadFromSaysSo(t *testing.T) {
-	f, err := Compile(&store.Project{}, `actions.exists(a, a.verb.startsWith("wait"))`)
+	f, err := Compile(&store.Project{}, `actions.exists(a, a.verb.matches("^wait"))`)
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
@@ -226,7 +229,7 @@ func TestASecondHopIsRefusedRatherThanAnswered(t *testing.T) {
 // at the call site and are not the same at all.
 func TestARefusalIsNotADemotion(t *testing.T) {
 	// Not equivalent: demoted, and the filter still works.
-	demoted, err := Compile(&store.Project{}, `actions.exists(a, a.verb.startsWith("wait"))`)
+	demoted, err := Compile(&store.Project{}, `actions.exists(a, a.verb.matches("^wait"))`)
 	if err != nil {
 		t.Fatalf("a demotion became an error: %v", err)
 	}

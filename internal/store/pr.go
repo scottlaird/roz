@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // prSeparator joins a repo and number into an identifier, matching the
@@ -95,6 +96,15 @@ type PR struct {
 	// all if it was already merged the first time it was read. Neither answers
 	// "what did I merge last week". NULL means not merged.
 	MergedAt sql.NullString `db:"merged_at" kind:"observed"`
+
+	// ClosedAt is when GitHub says it ended, merged or not.
+	//
+	// Separate from MergedAt because it answers a different question: one
+	// dates a merge, this dates an ending of either kind. It is what the poll
+	// window is measured from, and a window keyed off merged_at alone would
+	// hold every closed-unmerged pull request either permanently inside it or
+	// permanently outside it, depending on how the NULL fell.
+	ClosedAt sql.NullString `db:"closed_at" kind:"observed"`
 
 	// Frozen is a generated column: either of the two above being set. The
 	// database computes it, so it is never written.
@@ -331,6 +341,92 @@ func (s *Store) ListPRs(ctx context.Context, filter PRFilter) ([]*PR, error) {
 		return nil, fmt.Errorf("listing pull requests: %w", err)
 	}
 	return prs, nil
+}
+
+// PollWindow is how far back a poll reaches past a pull request's ending,
+// and what to poll under it.
+//
+// A pull request that ended months ago is re-read on every cycle for ever,
+// and nothing ever untracks a row, so the set only grows. The observed
+// columns of a terminal pull request cannot move again — bar the late review
+// comment the window is for — so most of a poll is spent asking about rows
+// whose answer is already known.
+type PollWindow struct {
+	// Days is how long after an ending to keep asking. Zero polls only what
+	// is still open.
+	Days int64
+	// Now is the clock the window is measured back from. Empty takes the
+	// store's.
+	Now string
+}
+
+// PRsToPoll returns the pull requests worth asking GitHub about.
+//
+// Three sets, and each is there for a reason that would be a bug without it:
+//
+// Stored state OPEN, never what GitHub last said. The transition into MERGED
+// is itself an observation, so a row that is locally open has to stay in the
+// poll set however old it is — the alternative is a pull request that merges
+// and is never seen to have merged.
+//
+// Ended within the window. Review comments and thread resolutions land after
+// a merge, and human_commented_at is read by the amend-versus-new-commit
+// rule, so an ending is not the last thing that happens. An ended row with no
+// date is polled too: that is a row recorded before closed_at existed, and one
+// more read gives it a date that the next window can drop it on.
+//
+// Anything with an open action against it, whatever its age. Tracking
+// something long merged and then writing an action about it is ordinary use,
+// and without this Settle never gets an observation and the action cannot
+// close — the same permanently-un-closeable shape an unlinked predicate verb
+// has.
+//
+// Nothing is deleted and no filter changes. This is about what is asked,
+// which is a different question from what is kept: `pr list` and its filters
+// answer from the store exactly as they did.
+func (s *Store) PRsToPoll(ctx context.Context, window PollWindow) ([]string, error) {
+	now := window.Now
+	if now == "" {
+		now = s.now().UTC().Format(timeFormat)
+	}
+	cutoff, err := daysBefore(now, window.Days)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id FROM pr
+		WHERE state IS NULL OR state = ?
+		   OR closed_at IS NULL
+		   OR closed_at >= ?
+		   OR id IN (SELECT pr_id FROM action_pr link
+		             JOIN action a ON a.id = link.action_id
+		             WHERE a.closed_at IS NULL)
+		ORDER BY repo, number`, PRStateOpen, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("choosing what to poll: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("choosing what to poll: %w", err)
+		}
+		keys = append(keys, id)
+	}
+	return keys, rows.Err()
+}
+
+// daysBefore is the window's far edge, as a timestamp that compares against
+// the stored ones as text.
+func daysBefore(now string, days int64) (string, error) {
+	at, err := time.Parse(timeFormat, now)
+	if err != nil {
+		return "", fmt.Errorf("reading the clock for the poll window: %w", err)
+	}
+	return at.AddDate(0, 0, -int(days)).Format(timeFormat), nil
 }
 
 func (f PRFilter) clauses() ([]string, []any) {

@@ -129,11 +129,18 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 		}
 	}
 
-	tracked, err := st.ListPRs(ctx, store.PRFilter{})
+	// Not every tracked pull request: the ones that can still move, plus a
+	// window past an ending for the comments that land after one, plus
+	// anything an open action is about. See store.PRsToPoll.
+	settings, err := st.Config(ctx)
 	if err != nil {
 		return Result{}, err
 	}
-	if len(tracked) == 0 {
+	keys, err := st.PRsToPoll(ctx, store.PollWindow{Days: settings.PollWindowDays})
+	if err != nil {
+		return Result{}, err
+	}
+	if len(keys) == 0 {
 		// Nothing to poll, but a deadline is not a fact about GitHub: an
 		// action can sit past its allowance in a database with no pull
 		// requests tracked at all. Settle still runs, since a ref may have
@@ -145,10 +152,6 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 		return result, checkOverdue(ctx, st, &result)
 	}
 
-	keys := make([]string, len(tracked))
-	for i, pr := range tracked {
-		keys[i] = pr.ID
-	}
 	result.Polled = len(keys)
 
 	fetched, err := client.Fetch(ctx, keys)
@@ -566,6 +569,11 @@ func merge(before *store.PR, observed github.PullRequest) (*store.PR, error) {
 	// merged never has to unset this. keepIfEmpty is exactly that rule, and
 	// the reason it is right here rather than merely convenient.
 	after.MergedAt = keepIfEmpty(before.MergedAt, observed.MergedAt)
+	// An ending is permanent in the same way a merge is, so the empty value
+	// GitHub sends for an open pull request never has to unset this. A
+	// reopened one keeps the date it closed on, and state is what says it is
+	// open again.
+	after.ClosedAt = keepIfEmpty(before.ClosedAt, observed.ClosedAt)
 	// Zero is a real answer here — no unresolved threads — so unlike the
 	// text columns this is always written.
 	after.UnresolvedThreads = sql.NullInt64{Int64: int64(observed.UnresolvedThreads), Valid: true}

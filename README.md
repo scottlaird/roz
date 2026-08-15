@@ -233,6 +233,39 @@ Read-only, batched into one GraphQL query, and attributed to `sync:github` —
 which the store will not let write an authored column. Where GitHub reports
 nothing, the stored value is left alone: absence is not a fact.
 
+**It asks about what can still move**, rather than everything ever tracked.
+Nothing untracks a row, so the tracked set only grows, and the observed
+columns of a pull request that merged last quarter cannot change again. Three
+things are polled:
+
+- Anything whose **stored** state is open. Stored, never what GitHub last
+  said — the transition into `MERGED` is itself an observation, so a row that
+  is locally open stays in the set however old it is. The other way round, a
+  pull request that merges is never seen to have merged.
+- Anything that ended within `poll_window_days`, default 14. An ending is not
+  the last thing that happens: review comments and thread resolutions land
+  after a merge, and `human_commented_at` is what the amend-versus-force-push
+  rule reads. The window is generous rather than tight, because a wide one
+  costs a few entities per poll and a narrow one costs an observation nobody
+  makes.
+- Anything an **open action** is about, whatever its age. Tracking something
+  long merged and then writing an action about it is ordinary use, and without
+  this the predicate never gets an observation and the action cannot close.
+
+```bash
+roz config set --poll-window-days 30
+```
+
+Nothing is deleted and no filter changes. This is about what is *asked*, which
+is a different question from what is kept: `pr list --state MERGED` and
+`--since` answer from the store exactly as they did.
+
+The cost is real and worth stating: **a closed pull request that is reopened
+outside the window is not noticed**, and no later poll recovers it. Merging
+carries no such hazard, and reopening after a fortnight is rare enough to be
+worth the trade — but it is a trade rather than a free win. Widen the window,
+or write an action against the pull request, if it matters for one.
+
 Sync also closes any action whose predicate the new observations satisfy, and
 reads the GitHub issues projects track; the walkthrough gets to both below.
 

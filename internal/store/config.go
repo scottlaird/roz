@@ -34,6 +34,14 @@ type Config struct {
 
 	CreatedAt string `db:"created_at" kind:"created"`
 	UpdatedAt string `db:"updated_at" kind:"auto"`
+
+	// PollWindowDays is how long after a pull request ends to keep asking
+	// GitHub about it. Zero polls only what is still open.
+	//
+	// A property of this queue rather than of one invocation, which is the
+	// test for belonging here: how far back to look does not change between
+	// two commands run a minute apart.
+	PollWindowDays int64 `db:"poll_window_days"`
 }
 
 func (c *Config) table() string       { return "config" }

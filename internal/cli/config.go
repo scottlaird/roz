@@ -12,12 +12,13 @@ import (
 const (
 	flagOwner       = "owner"
 	flagJiraBaseURL = "jira-base-url"
+	flagPollWindow  = "poll-window-days"
 	flagJiraPrefix  = "jira-prefix"
 )
 
 // configFieldFlags are the settable columns. All authored: there is nothing
 // here for sync to write.
-var configFieldFlags = []string{flagOwner, flagJiraBaseURL, flagJiraPrefix}
+var configFieldFlags = []string{flagOwner, flagJiraBaseURL, flagJiraPrefix, flagPollWindow}
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -96,6 +97,8 @@ func newConfigSetCmd() *cobra.Command {
 	f.StringArray(flagJiraPrefix, nil,
 		"a project key worth linking, e.g. CDSS; repeat for more, and replaces the whole list. "+
 			"Without one, no key is linked: the pattern also matches UTF-8 and SHA-256.")
+	f.Int64(flagPollWindow, 14,
+		"how many days after a pull request ends to keep polling it; 0 polls only what is open")
 	addActorFlag(cmd)
 	return cmd
 }
@@ -183,6 +186,18 @@ func applyConfigFlags(cmd *cobra.Command, cfg *store.Config) error {
 		if err := cfg.SetPrefixes(v); err != nil {
 			return err
 		}
+	}
+	if f.Changed(flagPollWindow) {
+		v, err := f.GetInt64(flagPollWindow)
+		if err != nil {
+			return err
+		}
+		if v < 0 {
+			// The CHECK would refuse it too; saying so here names the flag
+			// rather than the constraint.
+			return fmt.Errorf("--%s cannot be negative", flagPollWindow)
+		}
+		cfg.PollWindowDays = v
 	}
 	return nil
 }

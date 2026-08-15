@@ -56,6 +56,9 @@ type PullRequest struct {
 	// is what a week in review is ordered by — the poll that noticed is a
 	// different date, and the wrong one.
 	MergedAt string
+	// ClosedAt dates an ending of either kind, and is what the poll window is
+	// measured from. GitHub sets it on a merge as well as on a close.
+	ClosedAt string
 
 	// UnresolvedThreads counts review threads that are unresolved and not
 	// outdated. Outdated means the thread hangs off a commit that is no
@@ -125,6 +128,7 @@ type wirePullRequest struct {
 	ReviewDecision   string     `json:"reviewDecision"`
 	MergeStateStatus string     `json:"mergeStateStatus"`
 	MergedAt         string     `json:"mergedAt"`
+	ClosedAt         string     `json:"closedAt"`
 	Author           *wireActor `json:"author"`
 
 	ReviewRequests struct {
@@ -211,6 +215,7 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 		ReviewDecision:   p.ReviewDecision,
 		MergeStateStatus: mergeState(p.MergeStateStatus),
 		MergedAt:         p.MergedAt,
+		ClosedAt:         p.ClosedAt,
 		ReviewerTeams:    reviewers(p),
 		Approvals:        approvals(p),
 	}

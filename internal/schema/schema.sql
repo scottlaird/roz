@@ -420,6 +420,10 @@ CREATE TABLE pr (
   -- either permanently in or permanently out. NULL means still open, or not
   -- read since the column existed. See 0029.
   closed_at          TEXT,
+  -- the branch it is from. base_ref is the branch it targets, and without
+  -- this there was nothing to match one against the other -- which is why
+  -- stacked_on was never set. See 0030.
+  head_ref           TEXT,
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;
@@ -743,3 +747,5 @@ CREATE INDEX pr_merged_at ON pr(merged_at) WHERE merged_at IS NOT NULL;
 CREATE INDEX tracker_issue_closed_at ON tracker_issue(closed_at) WHERE closed_at IS NOT NULL;
 -- the poll set: open pull requests plus the ones that ended recently
 CREATE INDEX pr_poll_window ON pr(closed_at) WHERE closed_at IS NOT NULL;
+-- given a base_ref, which tracked pull request in the repository has that head
+CREATE INDEX pr_head_ref ON pr(repo, head_ref) WHERE head_ref IS NOT NULL;

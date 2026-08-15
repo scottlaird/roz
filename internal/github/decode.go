@@ -17,12 +17,15 @@ type PullRequest struct {
 	Repo   string
 	Number int64
 
-	Title        string
-	Author       string
-	URL          string
-	State        string
-	IsDraft      bool
-	BaseRef      string
+	Title   string
+	Author  string
+	URL     string
+	State   string
+	IsDraft bool
+	BaseRef string
+	// HeadRef is the branch the pull request is from, which is what a stacked
+	// child names as its base.
+	HeadRef      string
 	HeadSHA      string
 	InMergeQueue bool
 
@@ -122,6 +125,7 @@ type wirePullRequest struct {
 	State          string `json:"state"`
 	IsDraft        bool   `json:"isDraft"`
 	BaseRefName    string `json:"baseRefName"`
+	HeadRefName    string `json:"headRefName"`
 	HeadRefOid     string `json:"headRefOid"`
 	IsInMergeQueue bool   `json:"isInMergeQueue"`
 
@@ -210,6 +214,7 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 		State:            p.State,
 		IsDraft:          p.IsDraft,
 		BaseRef:          p.BaseRefName,
+		HeadRef:          p.HeadRefName,
 		HeadSHA:          p.HeadRefOid,
 		InMergeQueue:     p.IsInMergeQueue,
 		ReviewDecision:   p.ReviewDecision,

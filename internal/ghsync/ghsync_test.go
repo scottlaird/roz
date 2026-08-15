@@ -1446,3 +1446,58 @@ func TestASkippedReadIsNotReportedAsMissing(t *testing.T) {
 		t.Errorf("a read that never ran reported %v as missing", result.Missing)
 	}
 }
+
+// TestSyncSetsStackedOn is the end of scottlaird/roz#172: `pr list --stacked`
+// documented itself and returned nothing, because nothing wrote the column.
+func TestSyncSetsStackedOn(t *testing.T) {
+	ctx := context.Background()
+	st, parentKey := newStore(t)
+
+	childKey := "owner/repo#2"
+	trackPR(t, st, childKey)
+
+	parent := observed(parentKey)
+	parent.BaseRef, parent.HeadRef = "main", "feature-a"
+	child := observed(childKey)
+	child.Key, child.Number = childKey, 2
+	child.BaseRef, child.HeadRef = "feature-a", "feature-b"
+
+	client := &fakeFetcher{result: github.Result{
+		PullRequests: []github.PullRequest{parent, child},
+	}}
+	result, err := Sync(ctx, st, client)
+	if err != nil {
+		t.Fatalf("Sync() returned error: %v", err)
+	}
+	if got := loadPR(t, st, childKey).StackedOn.String; got != parentKey {
+		t.Errorf("stacked_on = %q, want %q", got, parentKey)
+	}
+	if got := loadPR(t, st, parentKey).StackedOn; got.Valid {
+		t.Errorf("the parent is stacked on %q", got.String)
+	}
+	if len(result.Stacked) != 1 {
+		t.Errorf("Stacked = %v, want the one that moved", result.Stacked)
+	}
+}
+
+// trackPR starts tracking one, for a test that needs more than newStore gives.
+func trackPR(t *testing.T, st *store.Store, key string) {
+	t.Helper()
+	ctx := context.Background()
+
+	repo, number, err := store.ParsePRKey(key)
+	if err != nil {
+		t.Fatalf("ParsePRKey(%s) returned error: %v", key, err)
+	}
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+	if err := tx.Insert(ctx, store.NewPR(repo, number)); err != nil {
+		t.Fatalf("tracking %s: %v", key, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}

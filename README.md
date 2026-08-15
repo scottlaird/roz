@@ -1108,6 +1108,41 @@ Nothing in the suite reaches the network or the real `gh`: GitHub reads go
 through an injected runner, and the store tests open a fresh database per test
 with the clock advanced a second per transaction.
 
+## When one pull request is based on another
+
+Stacking changes what an action means. Merging `#124` while it is based on
+`#123`'s branch lands it on that branch rather than on the default one, so a
+`merge` on the child is only valid once the parent has merged.
+
+Sync works it out, from the branch each pull request is *from* against the
+branch each one targets:
+
+```console
+$ roz pr list --stacked --fields id,base_ref,stacked_on
+ID                  BASE REF   STACKED ON
+scottlaird/roz#124  feature-a  scottlaird/roz#123
+scottlaird/roz#125  feature-b  scottlaird/roz#124
+```
+
+Each link resolves on its own, so a chain of three gives each row its parent.
+
+**Re-derived on every sync rather than latched**, which is what makes a rebase
+onto the default branch clear it — nothing has to notice that the relationship
+ended. A base branch belonging to no tracked pull request leaves the column
+empty rather than guessing at a repository roz was never told about, and a
+merged parent keeps its head branch until the branch is deleted, at which
+point the child simply stops being stacked. Nothing is rewritten backwards.
+
+**No blocker is inferred from it.** Creating an edge in the action graph from
+an observed field would mean sync mutating what you reason about, and
+unstacking would then have to un-create an edge you may since have had an
+opinion about. Surfacing the fact is what this does; what to do about it is a
+decision, and `action add-blocker` is where you make it.
+
+`stacked_on` is purely observed, with no authored twin. A person setting it
+would be overwritten by the next poll, and two writers of one column is the
+argument the actor rule exists to settle.
+
 ## When one pull request is different
 
 A repository's pipeline is the usual answer — right almost always, and wrong

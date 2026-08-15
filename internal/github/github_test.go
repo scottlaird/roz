@@ -192,7 +192,7 @@ func TestFetchBatches(t *testing.T) {
 		return []byte(`{"data":{}}`), nil
 	})
 
-	keys := make([]string, BatchSize*2+1)
+	keys := make([]string, PRBatchSize*2+1)
 	for i := range keys {
 		keys[i] = "owner/repo#" + string(rune('0'+i%10))
 	}
@@ -259,7 +259,7 @@ func TestFetchFailureNamesTheRequest(t *testing.T) {
 		return []byte(`{"data":{}}`), nil
 	})
 
-	keys := make([]string, BatchSize+3)
+	keys := make([]string, PRBatchSize+3)
 	for i := range keys {
 		keys[i] = "owner/repo#1"
 	}
@@ -389,5 +389,40 @@ func TestUnreadableBodyQuotesIt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "truncated") {
 		t.Errorf("error = %q, want it to quote the body", err)
+	}
+}
+
+// TestBatchSizesAreSeparate is the point of splitting one constant into
+// three: retuning the read that fails must not retune the two that do not.
+//
+// A ref query is a repository and a namespace that pages internally, so its
+// per-entity cost is not comparable to a pull request's — which carries
+// reviews, threads, checks and a timeline in the same request.
+func TestBatchSizesAreSeparate(t *testing.T) {
+	if PRBatchSize >= IssueBatchSize {
+		t.Errorf("PRBatchSize (%d) is not below IssueBatchSize (%d); the pull request "+
+			"query is the heavy one", PRBatchSize, IssueBatchSize)
+	}
+	// The failing case was 42 entities in one request, so the ceiling sits
+	// below that rather than at the 150 the old constant was chosen against.
+	if PRBatchSize >= 42 {
+		t.Errorf("PRBatchSize = %d, which is at or above the size observed to fail", PRBatchSize)
+	}
+}
+
+func TestBatches(t *testing.T) {
+	for _, tt := range []struct {
+		n, size, want int
+	}{
+		{0, 20, 0},
+		{1, 20, 1},
+		{20, 20, 1},
+		{21, 20, 2},
+		{42, 20, 3},
+		{42, 50, 1},
+	} {
+		if got := batches(tt.n, tt.size); got != tt.want {
+			t.Errorf("batches(%d, %d) = %d, want %d", tt.n, tt.size, got, tt.want)
+		}
 	}
 }

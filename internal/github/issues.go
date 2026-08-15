@@ -61,11 +61,11 @@ func (c *Client) Issues(ctx context.Context, keys []string) (IssueResult, error)
 		return result, nil
 	}
 
-	for start := 0; start < len(keys); start += BatchSize {
-		keyBatch := keys[start:min(start+BatchSize, len(keys))]
+	for start := 0; start < len(keys); start += IssueBatchSize {
+		keyBatch := keys[start:min(start+IssueBatchSize, len(keys))]
 		b := batch{
 			op: opIssues, entities: len(keyBatch),
-			index: start/BatchSize + 1, total: batches(len(keys)),
+			index: start/IssueBatchSize + 1, total: batches(len(keys), IssueBatchSize),
 		}
 
 		query, aliases, err := buildIssueQuery(keyBatch)

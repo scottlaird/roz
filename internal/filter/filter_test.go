@@ -369,3 +369,76 @@ func TestTheWayToAskForNullIsCheap(t *testing.T) {
 		t.Error("the null row did not match merged_at == null")
 	}
 }
+
+// TestTheAllowListDecidesWhatIsTried is the flip: a shape has to be known
+// equivalent before it is converted at all, rather than converted and then
+// checked. What the probe can do is fail to find a difference; what it cannot
+// do is show there is none.
+func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
+	tests := []struct {
+		expr   string
+		pushed bool
+		why    string
+	}{
+		{`state == "MERGED"`, true, "a column against a literal of its own type"},
+		{`state == "CLOSED" || state == "MERGED"`, true, "an or of two allowed comparisons"},
+		{`state == "MERGED" && number > 5`, true, "an and of two allowed comparisons"},
+		{`merged_at == null`, true, "IS NULL, which both engines read the same way"},
+		{`merged_at != null`, true, "IS NOT NULL, likewise"},
+		{`number > 5`, true, "an ordered comparison against its own type"},
+		{`title.contains("queue")`, true, "INSTR, which is case-sensitive as CEL is"},
+		{`title != "x"`, true, "a column that cannot be absent has no NULL row to differ over"},
+
+		{`state != "MERGED"`, false, "SQL drops a NULL state where CEL keeps it"},
+		{`title.startsWith("Fix")`, false, "LIKE is case-insensitive for ASCII and startsWith is not"},
+		{`title.endsWith("x")`, false, "the same, from the other end"},
+		{`title.matches("^Fix")`, false, "the dialect refuses regexes outright"},
+		{`!merged_at`, false, "NOT over a non-boolean is SQLite coercing, not negating"},
+		{`number > "5"`, false, "SQLite compares across types by affinity; CEL calls it an error"},
+		{`approvals.exists(a, a == "alice")`, false, "a JSON column is not a scalar"},
+		{`state == title`, false, "column against column is not a shape anybody checked"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.expr, func(t *testing.T) {
+			f := compile(t, tc.expr)
+			where, _ := f.SQL()
+			if pushed := where != ""; pushed != tc.pushed {
+				t.Errorf("pushed down = %v, want %v (%s): SQL was %q",
+					pushed, tc.pushed, tc.why, where)
+			}
+		})
+	}
+}
+
+// TestStartsWithWouldHaveBeenWrong is the case that argues for the flip.
+//
+// The sample rows would not have caught it: SQLite's LIKE is case-insensitive
+// for ASCII, so `title LIKE 'fix%'` matches "Fix the thing" while CEL's
+// startsWith does not — and every string the probe tries is lower case, so
+// both engines agree on every one of them. The shape is refused because
+// somebody read what LIKE does, not because a sample found it.
+func TestStartsWithWouldHaveBeenWrong(t *testing.T) {
+	f := compile(t, `title.startsWith("fix")`)
+
+	if where, _ := f.SQL(); where != "" {
+		t.Fatalf("startsWith was pushed down as %q", where)
+	}
+
+	// And in Go it means what CEL says, which is case-sensitive.
+	for _, tc := range []struct {
+		title string
+		want  bool
+	}{
+		{"fix the thing", true},
+		{"Fix the thing", false},
+	} {
+		got, err := f.Keep(&row{Title: tc.title})
+		if err != nil {
+			t.Fatalf("Keep(%q) returned error: %v", tc.title, err)
+		}
+		if got != tc.want {
+			t.Errorf("Keep(%q) = %v, want %v", tc.title, got, tc.want)
+		}
+	}
+}

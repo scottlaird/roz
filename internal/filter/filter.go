@@ -161,18 +161,27 @@ var errNotEquivalent = errors.New("SQL would not answer this the way CEL does")
 
 // pushable reports whether a converted term may be trusted to the query.
 //
-// The rule is equivalence, checked rather than assumed: a filter is written in
-// CEL, so CEL decides what it means, and a fragment that would answer
-// differently is an optimisation that changed an answer.
+// Two gates, and the order matters. First the expression has to be one of the
+// shapes known to mean the same thing in both engines; then the probe has to
+// agree that it still does.
 //
-// NULL is where they most obviously part company — `state != "OPEN"` keeps a
-// NULL row in CEL and drops it in SQL — but not the only place. SQLite coerces
-// types where CEL refuses to: `!merged_at` becomes `NOT merged_at`, which is
-// true of any text that reads as zero, while CEL calls it an error. So the
-// check is a handful of sample rows rather than one, and it is still samples
-// rather than a proof.
+// Default deny, because the other way round — convert everything, demote what
+// the probe catches — was wrong twice. A probe can only fail to find a
+// difference, never show there is none, and both misses were a value nobody
+// thought to try: `!merged_at` survived a row of NULLs, and `startsWith` would
+// survive still, since SQLite's LIKE is case-insensitive for ASCII and every
+// sample string is lower case. An allow-list fails the other way, towards Go,
+// which is slower and right.
+//
+// The probe stays as the second gate rather than being replaced by the first.
+// The shapes record what roz believes cel2sql emits; the probe checks that it
+// still does, so a change upstream costs a pushdown rather than an answer.
 func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	columns []store.ColumnType, fragment string, args []any) (bool, error) {
+
+	if !pushableShape(ast.NativeRep().Expr(), columnsByName(columns)) {
+		return false, nil
+	}
 
 	// More than one column that may be absent has row shapes the samples never
 	// build — NULL in the first with a value in the second — so it is not

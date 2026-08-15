@@ -59,6 +59,9 @@ func syncOwners(ctx context.Context, st *store.Store, reader ChangeReader, resul
 			continue
 		}
 		owners, err := deriveOwners(ctx, reader, pr)
+		if err == nil {
+			result.asked++
+		}
 		if err != nil {
 			// One unreadable pull request must not stop the rest, and it is
 			// already reported by the state poll if it has gone invisible.

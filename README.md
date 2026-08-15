@@ -272,6 +272,37 @@ reads the GitHub issues projects track; the walkthrough gets to both below.
 `roz syncer` runs the same thing on a loop, slowing down as the rate limit
 budget drops and backing off on a 429.
 
+**A cycle makes several reads, and one failing no longer cancels the others.**
+Refs, issues and pull requests are read in that order — refs first because a
+release gate has to have its ref recorded before anything asks whether it
+arrived — and before this, the first read to fail took the rest of the cycle
+with it. Pull requests are last, so a ref read that failed every cycle meant
+they were never polled at all.
+
+Now what succeeds is applied, and what failed is said:
+
+```console
+sync read refs failed, carrying on with the rest: gh: connection reset
+```
+
+**A rate limit still stops the cycle where it is.** The reads share one
+GraphQL budget, so carrying on after one has been refused spends against a
+limit already hit. Attempting all of them is the rule for faults; a limit is
+not a fault.
+
+**A partly-read cycle does not count towards giving up.** It is a working
+cycle, and counting it would eventually stop a process doing most of its job —
+taking the services sharing it down too. What that trades away is the
+guarantee that a persistent failure ends in something louder than a log line,
+so the line is written every cycle rather than once, and names the read. A
+cycle that got nothing at all from GitHub is a failed cycle and still counts.
+
+Settling on a partly-read cycle is safe, and it is worth knowing why: an
+observation that did not happen records nothing, so a predicate simply does
+not fire. Absence is not a negative observation. Nothing "completes" a partial
+cycle by clearing what it did not read — that would close or reopen things on
+no evidence.
+
 ### Closing, and the cascade
 
 This is where the queue moves on its own.

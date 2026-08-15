@@ -15,6 +15,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -89,7 +90,41 @@ type Result struct {
 	// RateLimit is what GitHub last said about the budget, so a caller
 	// polling on a loop can pace itself.
 	RateLimit github.RateLimit
+
+	// asked counts the requests this cycle actually made, as opposed to the
+	// reads it considered making. A read with nothing to poll makes no
+	// request and is neither a success nor a failure — counting it as one
+	// would decide "did anything work" on a read that never happened.
+	asked int
+
+	// Failed lists the reads that did not happen this cycle. Empty is the
+	// ordinary case.
+	//
+	// A cycle makes several reads and one failing no longer cancels the rest,
+	// so "the sync worked" is no longer a yes or no. What did succeed is
+	// applied and reported; this is how the rest is not lost with it.
+	Failed []ReadFailure
 }
+
+// ReadFailure is one read a cycle could not make.
+type ReadFailure struct {
+	// Read names it — refs, issues, pull requests — so a log line says what
+	// went unread rather than only that something did.
+	Read string
+	Err  error
+}
+
+func (f ReadFailure) Error() string { return f.Read + ": " + f.Err.Error() }
+
+// readError marks a failure as GitHub's rather than the store's.
+//
+// The distinction decides whether a cycle carries on: a read that GitHub
+// refused leaves the others worth attempting, and a database that will not
+// answer does not.
+type readError struct{ err error }
+
+func (e *readError) Error() string { return e.err.Error() }
+func (e *readError) Unwrap() error { return e.err }
 
 // OverdueCount is how many waits have gone on too long.
 func (r Result) OverdueCount() int { return len(r.Overdue) }
@@ -115,55 +150,139 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 
 	// Refs first, and unconditionally: an action can wait for a release in a
 	// database with no pull requests tracked at all, and the observation has
-	// to be in place before Settle asks whether it arrived.
+	// to be in place before Settle asks whether it arrived. That ordering is
+	// why the fix for a failing read is to stop cancelling the rest rather
+	// than to put the cheap ones first.
 	if err := syncRefs(ctx, st, client, &result); err != nil {
-		return Result{}, err
-	}
-
-	// Issues too, and for the same reason: a project can track one in a
-	// database with no pull requests at all, and the early return below would
-	// otherwise skip them entirely.
-	if reader, ok := client.(IssueReader); ok {
-		if err := syncIssues(ctx, st, reader, &result); err != nil {
-			return Result{}, err
+		if stop, err := noteFailure(&result, readRefs, err); stop {
+			return result, err
 		}
 	}
 
+	// Issues too, and for the same reason: a project can track one in a
+	// database with no pull requests at all.
+	if reader, ok := client.(IssueReader); ok {
+		if err := syncIssues(ctx, st, reader, &result); err != nil {
+			if stop, err := noteFailure(&result, readIssues, err); stop {
+				return result, err
+			}
+		}
+	}
+
+	if err := syncPRs(ctx, st, client, &result); err != nil {
+		if stop, err := noteFailure(&result, readPRs, err); stop {
+			return result, err
+		}
+	}
+
+	// After the state poll, so a head that moved this minute is derived
+	// against rather than against the one before it.
+	//
+	// Not in the partial-failure scheme, because it already is one: an
+	// unreadable pull request there is reported and the rest carry on, so
+	// anything reaching here is the store rather than GitHub.
+	if reader, ok := client.(ChangeReader); ok {
+		if err := syncOwners(ctx, st, reader, &result); err != nil {
+			return result, err
+		}
+	}
+
+	// Settling on a partly-read cycle is safe, and it is worth saying why: an
+	// observation that did not happen records nothing, so a predicate simply
+	// does not fire. Absence is not a negative observation. A fix that
+	// "completed" a partial cycle by clearing what it had not read would break
+	// exactly that, and would close or reopen things on no evidence.
+	//
+	// Settle after applying everything, not per pull request: a chain can span
+	// several, and a step freed by one closure may be satisfied by an
+	// observation made in the same pass.
+	settled, err := st.Settle(ctx, store.ActorPredicate)
+	if err != nil {
+		return result, err
+	}
+	result.Settled = settled
+
+	// After settling, so a step that just closed is not also reported as
+	// having waited too long. Settle is about what finished; this is about
+	// what has not, and finishing wins.
+	//
+	// Unconditional, because a deadline is not a fact about GitHub: an action
+	// can sit past its allowance in a database with nothing tracked at all,
+	// and on a cycle where every read failed.
+	if err := checkOverdue(ctx, st, &result); err != nil {
+		return result, err
+	}
+
+	// A cycle that got nothing at all from GitHub is a failed cycle rather
+	// than a partial one, and is what the caller counts towards giving up.
+	// Anything less is reported through Result.Failed and left to the caller,
+	// which is what stops one broken read from cancelling the others.
+	if result.asked == 0 && len(result.Failed) > 0 {
+		return result, fmt.Errorf("every read failed: %w", result.Failed[0].Err)
+	}
+	return result, nil
+}
+
+// The reads one cycle makes, named so a failure says which one it was.
+const (
+	readRefs   = "refs"
+	readIssues = "issues"
+	readPRs    = "pull requests"
+)
+
+// noteFailure records a read that did not happen, and says whether the cycle
+// can carry on without it.
+//
+// A failure that did not come from GitHub stops the cycle. The store is what
+// every read writes into, so a database that will not answer is not a partial
+// success — it is the same failure arriving four times.
+//
+// A rate limit stops it too, for a different reason: the reads share one
+// GraphQL budget, so carrying on after one has been refused spends against a
+// limit already hit. Attempting all of them is the rule for faults; a limit is
+// not a fault.
+func noteFailure(result *Result, read string, err error) (bool, error) {
+	var fault *readError
+	if !errors.As(err, &fault) {
+		return true, err
+	}
+	result.Failed = append(result.Failed, ReadFailure{Read: read, Err: fault.err})
+	if errors.Is(err, github.ErrRateLimited) {
+		return true, err
+	}
+	return false, nil
+}
+
+// syncPRs polls the pull requests that can still move, and applies what
+// GitHub said about them.
+func syncPRs(ctx context.Context, st *store.Store, client Fetcher, result *Result) error {
 	// Not every tracked pull request: the ones that can still move, plus a
 	// window past an ending for the comments that land after one, plus
 	// anything an open action is about. See store.PRsToPoll.
 	settings, err := st.Config(ctx)
 	if err != nil {
-		return Result{}, err
+		return err
 	}
 	keys, err := st.PRsToPoll(ctx, store.PollWindow{Days: settings.PollWindowDays})
 	if err != nil {
-		return Result{}, err
+		return err
 	}
 	if len(keys) == 0 {
-		// Nothing to poll, but a deadline is not a fact about GitHub: an
-		// action can sit past its allowance in a database with no pull
-		// requests tracked at all. Settle still runs, since a ref may have
-		// arrived above.
-		result.Settled, err = st.Settle(ctx, store.ActorPredicate)
-		if err != nil {
-			return Result{}, err
-		}
-		return result, checkOverdue(ctx, st, &result)
+		return nil
 	}
-
 	result.Polled = len(keys)
 
 	fetched, err := client.Fetch(ctx, keys)
 	if err != nil {
-		return Result{}, err
+		return &readError{err: err}
 	}
+	result.asked++
 	result.RateLimit = fetched.RateLimit
 
 	for _, observed := range fetched.PullRequests {
 		changes, ejected, err := applyOne(ctx, st, observed)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		if len(changes) > 0 {
 			result.Changed[observed.Key] = changes
@@ -174,42 +293,23 @@ func Sync(ctx context.Context, st *store.Store, client Fetcher) (Result, error) 
 			// unit of work.
 			report, err := st.ReportEjection(ctx, observed.Key)
 			if err != nil {
-				return Result{}, err
+				return err
 			}
 			result.Ejected = append(result.Ejected, *report)
 		}
 	}
 
+	// Only for the keys this read actually asked about. A read that never
+	// ran reports nothing missing: not polled is not missing, and reporting
+	// it that way would raise an action per entity and turn one broken cycle
+	// into a queue full of spurious work.
 	for key, why := range fetched.Missing {
 		result.Missing[key] = why
 		if err := reportMissing(ctx, st, key, why); err != nil {
-			return Result{}, err
+			return err
 		}
 	}
-
-	// After the state poll, so a head that moved this minute is derived
-	// against rather than against the one before it.
-	if reader, ok := client.(ChangeReader); ok {
-		if err := syncOwners(ctx, st, reader, &result); err != nil {
-			return Result{}, err
-		}
-	}
-
-	// Settle after applying everything, not per pull request: a chain can
-	// span several, and a step freed by one closure may be satisfied by an
-	// observation made in the same pass.
-	result.Settled, err = st.Settle(ctx, store.ActorPredicate)
-	if err != nil {
-		return Result{}, err
-	}
-
-	// After settling, so a step that just closed is not also reported as
-	// having waited too long. Settle is about what finished; this is about
-	// what has not, and finishing wins.
-	if err := checkOverdue(ctx, st, &result); err != nil {
-		return Result{}, err
-	}
-	return result, nil
+	return nil
 }
 
 // syncRefs polls the refs something is waiting for, and records them.
@@ -253,8 +353,9 @@ func syncRefs(ctx context.Context, st *store.Store, client Fetcher, result *Resu
 
 	fetched, err := client.Refs(ctx, queries)
 	if err != nil {
-		return err
+		return &readError{err: err}
 	}
+	result.asked++
 	if fetched.RateLimit.Known() {
 		result.RateLimit = fetched.RateLimit
 	}

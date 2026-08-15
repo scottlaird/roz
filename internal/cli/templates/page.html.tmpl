@@ -135,6 +135,20 @@
   tr.detail td{padding-top:0;color:var(--mid);font-size:13px}
   td.n{font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:nowrap;width:1%}
   td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mid);width:1%}
+  {{/* A tracker key and its state are one thing to read, so they do not
+       break apart: without this a long status wraps mid-parenthesis, and
+       "(Waiting for Security" over "Review)" is not two pieces of
+       information.
+
+       This is also what widens the column. A cell that can break anywhere
+       asks the table for almost nothing, so the slack went to title and
+       issues was left narrow -- the imbalance read as effort being greedy,
+       and effort is already at its floor: a column cannot be narrower than
+       its own heading, and "effort" is what sets that. Keeping the pair
+       whole is what makes the column ask for the width it needs, without a
+       number here that would go stale. Several issues in a cell still wrap,
+       between them, which is where a break belongs. */}}
+  .issue{white-space:nowrap}
   .note{
     background:var(--raise); border:1px solid var(--rule); border-radius:8px;
     padding:.75rem 1rem; margin:1rem 0;
@@ -340,6 +354,10 @@
 <p class="noteset">written {{.Set}}</p></section>{{end}}
 {{end}}
 
-{{define "issue"}}
-{{if .URL}}<a href="{{.URL}}" class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</a>{{else}}<span class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}
-{{end}}
+{{/* The whole thing is one span so the key and its state cannot be split by
+     a line break, and the template trims its own edges: the newlines around a
+     definition are text, and they were reaching the page as a stray space
+     before every separating comma. */}}
+{{define "issue" -}}
+<span class="issue">{{if .URL}}<a href="{{.URL}}" class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</a>{{else}}<span class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}</span>
+{{- end}}

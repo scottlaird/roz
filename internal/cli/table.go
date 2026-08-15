@@ -478,6 +478,24 @@ func addListingFlags[T any](cmd *cobra.Command, set columnSet[T]) {
 	addFilterFlag(cmd, set.names())
 }
 
+// flagFiltersFor finds the translations belonging to whichever listing this
+// is, by the command path rather than by a registration nobody would remember
+// to keep current.
+func flagFiltersFor(cmd *cobra.Command) map[string]flagMeaning {
+	switch {
+	case cmd.Parent() == nil:
+		return nil
+	case cmd.Parent().Name() == "pr":
+		return prFlagFilters
+	case cmd.Parent().Name() == "action":
+		return actionFlagFilters
+	case cmd.Parent().Name() == "project":
+		return projectFlagFilters
+	default:
+		return nil
+	}
+}
+
 // runListing is the tail every list command shares once its columns are
 // declared: filter, choose the format, choose the fields, render.
 //
@@ -491,7 +509,7 @@ func runListing[T any](cmd *cobra.Command, set columnSet[T], rows []T, ctx rende
 	if err != nil {
 		return err
 	}
-	if err := explainFilter(cmd, f); err != nil {
+	if err := explainFilter(cmd, f, flagFiltersFor(cmd)); err != nil {
 		return err
 	}
 	if rows, err = keep(f, rows, set.recordOf); err != nil {

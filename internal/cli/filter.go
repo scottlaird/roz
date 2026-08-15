@@ -74,16 +74,17 @@ func (l storeLoader) Related(ctx context.Context, join store.Join, id string) ([
 	return store.ReadRelated(ctx, tx, join, id)
 }
 
-// explainFilter prints the plan when asked.
-func explainFilter(cmd *cobra.Command, f *filter.Filter) error {
-	if f == nil {
-		return nil
-	}
+// explainFilter prints the plan when asked, and what any hand-written filter
+// flags would have been as a filter.
+func explainFilter(cmd *cobra.Command, f *filter.Filter, known map[string]flagMeaning) error {
 	asked, err := cmd.Flags().GetBool(flagExplainFilter)
 	if err != nil || !asked {
 		return err
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), f.Explain())
+	explainFlags(cmd, known)
+	if f != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), f.Explain())
+	}
 	return nil
 }
 

@@ -400,3 +400,54 @@ func TestProjectCloseRejections(t *testing.T) {
 		})
 	}
 }
+
+// TestProjectSetRefusesTheIssueFlags is scottlaird/roz#179. Both spellings
+// were advertised on `set` and neither did anything, and the deprecation
+// notice named a replacement that `set` does not accept either — so following
+// the advice failed the same way.
+func TestProjectSetRefusesTheIssueFlags(t *testing.T) {
+	db := initDB(t)
+	id := addProject(t, db, "Split the nodepool")
+
+	for _, flag := range []string{"--issue", "--jira-key"} {
+		t.Run(flag, func(t *testing.T) {
+			_, err := runCLI(t, "project", "set", "--db", db, id, flag, "CDSS-1744")
+			if err == nil {
+				t.Fatalf("project set %s was accepted and did nothing", flag)
+			}
+			// A rejected flag and an empty invocation are different failures.
+			if strings.Contains(err.Error(), "nothing to set") {
+				t.Errorf("a flag that was given reads as no flags at all: %v", err)
+			}
+			// And the message names the command that does the job, with
+			// enough of it to run.
+			for _, want := range []string{"link-issue", id, "CDSS-1744"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error does not carry %q: %v", want, err)
+				}
+			}
+		})
+	}
+
+	// Genuinely empty still reads as empty.
+	_, err := runCLI(t, "project", "set", "--db", db, id)
+	if err == nil || !strings.Contains(err.Error(), "nothing to set") {
+		t.Errorf("an empty invocation = %v, want it to say so", err)
+	}
+}
+
+// TestProjectAddStillLinksIssues: the flag is refused on `set` only. At
+// creation there is no ambiguity about adding versus replacing, since there
+// is nothing there yet.
+func TestProjectAddStillLinksIssues(t *testing.T) {
+	db := initDB(t)
+	id := addProject(t, db, "Split the nodepool", "--issue", "CDSS-1744")
+
+	out, err := runCLI(t, "project", "show", "--db", db, id)
+	if err != nil {
+		t.Fatalf("project show returned error: %v", err)
+	}
+	if !strings.Contains(out, "jira:CDSS-1744") {
+		t.Errorf("project add --issue did not link it:\n%s", out)
+	}
+}

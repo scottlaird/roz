@@ -1636,6 +1636,51 @@ substituting for a required owner is not, so routing continues until the rules
 are satisfied whatever the hints said. Where nothing is hinted, the choice is
 the owner covering the most outstanding files.
 
+## Which of them the wait is actually for
+
+Everything above is about who *could* approve, and who to ask first. Neither
+answers the question a queue asks about a wait already in flight: of the four
+teams on this pull request, which one are we actually waiting for?
+
+CODEOWNERS routinely puts several teams on a change because of files it happens
+to touch — generated mocks, tests, examples, each owned by somebody. Only one
+is usually the review the work depends on, and nothing in the observed list
+says which. Two pull requests in one chain, each with four teams requested and
+each genuinely waiting on a different one, look identical in the data — and
+reading the list as though it answered the question gets it backwards.
+
+```console
+$ roz action set NA1 --waiting-for @org/storage
+NA1 waiting_for: "" → "@org/storage"
+
+$ roz action list --waiting
+ID   STATE  VERB         PROJECT  SNOOZED UNTIL  LATE  WAITING FOR   TITLE
+NA1  ready  wait_review  ROZ1     -              -     @org/storage  wait for review scottlaird/roz#39
+```
+
+The column shows up when somebody has answered, and stays out of the way when
+nobody has. On the page it replaces the observed list in the chip beside the
+item, keeping the date: `for @org/storage since 2026-08-11`.
+
+It is **authored**, and has to be. Whose approval unblocks the work is
+something the author knows and GitHub does not, so no rule over the observed
+list can produce it: first-listed, the repository's own team, the one that has
+not approved — each is a guess, and the point is that the list does not contain
+the answer. It may be a person rather than a team, and it may be somebody
+GitHub never listed at all, when the real dependency is one individual's
+context rather than a formal owner.
+
+It does not contradict `waiting_on`, which is still every team GitHub says was
+asked. Both are true, and this one is usually — not always — a member of that
+list.
+
+Expect it to go stale. A team approves, the wait moves to the next one, and the
+pull request has not changed at all; `--waiting-for ""` clears it. Deriving a
+default from CODEOWNERS — the owners of the files carrying the *substance* of
+the change, as against the ones pulled in by incidental paths — is the
+eventual automation, and it will populate this rather than replace it. A
+derived answer can still be wrong, which is what an authored column is for.
+
 ## When a pull request falls out of the merge queue
 
 An ejected pull request is the quietest way for finished work to stall. It

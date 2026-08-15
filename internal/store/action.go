@@ -70,6 +70,21 @@ type Action struct {
 	WaitingOn    string         `db:"waiting_on" kind:"observed" format:"json"`
 	WaitingSince sql.NullString `db:"waiting_since" kind:"observed"`
 
+	// WaitingFor is which of those the wait is actually for, and is authored
+	// because nothing else could supply it: CODEOWNERS puts several teams on a
+	// pull request because of files it happens to touch, and which one's
+	// approval unblocks the work is something the author knows and GitHub does
+	// not.
+	//
+	// It does not contradict WaitingOn and does not replace it. Both are true,
+	// and this is usually one of that list — but it may be a person rather
+	// than a team, or somebody GitHub never listed at all, when the real
+	// dependency is one individual's context rather than a formal owner.
+	//
+	// Expect it to go stale. A team approves, the wait moves to the next one,
+	// and the pull request has not changed at all.
+	WaitingFor sql.NullString `db:"waiting_for"`
+
 	// ReadySince is when this last became something a person could act on:
 	// un-hidden, or freed by its last blocker. NULL means since it was
 	// created, which is the ordinary case.

@@ -1,0 +1,35 @@
+-- Which of the requested reviewers the wait is actually for.
+--
+-- waiting_on is observed, and is every team GitHub says was asked. CODEOWNERS
+-- routinely puts several of them on a pull request because of files it happens
+-- to touch -- generated mocks, tests, examples, each owned by somebody -- and
+-- only one is usually the review the work is actually waiting on. Nothing
+-- recorded which. Two pull requests in one chain, each with four teams
+-- requested and each genuinely waiting on a different one, were
+-- indistinguishable in the data, and reading the observed list got it
+-- backwards, because the list does not contain the answer.
+--
+-- Authored, and it has to be: whose approval unblocks the work is something
+-- the author knows and GitHub does not. It sits beside the observed list
+-- rather than replacing it. Both are true, and this is usually one of that
+-- list -- but not always, since it may be a person rather than a team, and may
+-- be somebody GitHub never listed at all, when the real dependency is one
+-- individual's context rather than a formal owner.
+--
+-- Not derived from waiting_on. Every rule for picking one of them -- the
+-- first, the repository's own team, the one that has not approved yet -- is a
+-- guess, and the whole point is that the list does not contain the answer.
+-- Deriving it from CODEOWNERS is a different and better proposition, and is
+-- the eventual automation: the owners of the files carrying the substance of
+-- the change, as distinct from the ones pulled in by incidental paths. That
+-- should populate this as a default rather than replace it, which is why the
+-- column is authored -- a derived answer can still be wrong, and overriding it
+-- is what this is for.
+--
+-- Stale is the expected failure rather than an error. A team approves and the
+-- wait moves to the next one without the pull request changing at all, so
+-- whatever holds this has to be cheap to correct.
+--
+-- One owner, not a list. The list is the column next to it.
+ALTER TABLE action ADD COLUMN waiting_for TEXT
+  CHECK (waiting_for IS NULL OR waiting_for <> '');

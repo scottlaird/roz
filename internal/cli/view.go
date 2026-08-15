@@ -627,6 +627,18 @@ func age(a *store.Action, now string) string {
 		}
 		return "until " + a.SnoozeUntil.String
 	}
+	// The authored answer wins over the observed list, which is the point of
+	// having it: the list is every team CODEOWNERS pulled in, and reading it
+	// as "who are we waiting for" is how somebody gets it backwards. Kept with
+	// the date rather than instead of it — whose review, and how long, are
+	// both what the chip is for.
+	if a.WaitingFor.Valid && a.WaitingFor.String != "" {
+		chip := "for " + a.WaitingFor.String
+		if a.WaitingSince.Valid && a.WaitingSince.String != "" {
+			chip += " since " + shortDate(a.WaitingSince.String)
+		}
+		return chip
+	}
 	if a.WaitingSince.Valid && a.WaitingSince.String != "" {
 		return "since " + shortDate(a.WaitingSince.String)
 	}

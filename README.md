@@ -54,6 +54,7 @@ directory.
 | `roz action add-blocker` | Record that one action must precede another. |
 | `roz action hide-behind` | Fold an action out of the queue until another clears. |
 | `roz action link-pr` | Attach a pull request as subject or context. |
+| `roz action wait-issue` | Say which tracker issue an action waits for, for work blocked on somebody else's. |
 | `roz action close` | Close it, and run the cascade. |
 | **GitHub** | |
 | `roz repo track` | Start tracking a repository and choose its pipeline. |
@@ -2233,6 +2234,47 @@ The obvious implementation is an ancestry check, and it is wrong: a change
 cherry-picked onto a release branch has a different SHA there, so ancestry
 answers "not present" for anything that reached a release the way patch
 releases are usually built.
+
+## Waiting on somebody else's issue
+
+`wait_ref` covers waiting for a release and `wait_review` covers waiting for an
+approval. Neither covers the third kind: work blocked on an issue in a
+repository that is not yours. That was a plain `wait` nobody could close except
+by hand — so it sat in the queue looking live until somebody happened to notice
+the issue had closed.
+
+```console
+$ roz action add --title "wait for the upstream fix" --verb wait_issue \
+    --tracker github --issue rust-lang/rust#1
+NA1
+
+$ roz sync github
+github:rust-lang/rust#1 closed_at: "" → "2026-08-14T10:22:31Z"
+NA1 closed: wait_issue
+```
+
+The issue is recorded when the wait is written, and that is not a convenience:
+sync polls the issues roz has rows for, so a wait on one nothing had recorded
+would be false for ever. Linking is what puts it into the poll — the same trap
+`--pr` exists to prevent, one subject along.
+
+It closes on the tracker's own **closing time**, not its status. `Done`,
+`Closed` and `Resolved` are three trackers' names for one idea, and deciding
+which of them counts is not roz's to do; a time is unambiguous. GitHub supplies
+it on every sync. Jira has it only where `roz issue observe --closed-at` was
+given one, so a Jira issue closed and never recorded keeps its wait open —
+which is roz not having been told, and fails in the direction everything else
+here fails in.
+
+A wait written *after* the issue closed settles on the spot rather than at the
+next poll, and so does `roz issue observe` recording a close: a fact that
+arrives from a command is exactly when its predicate becomes answerable.
+
+One issue per action. Waiting on two of them is two waits, which the blocking
+graph says better — it can say which arrived first.
+
+Like `wait_ref`, it has no `wait_days`. Somebody else's issue is not yours to
+chase, and an overdue report would be noise that never goes away.
 
 ## Upgrading while something is running
 

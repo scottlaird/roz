@@ -33,6 +33,11 @@ type Facts struct {
 	// GitHub. Empty where the group has never been read, and empty is not
 	// approval.
 	Members []string
+
+	// Issue is the tracker issue the action waits on, or nil where it waits
+	// on none. The one subject that is not ours: an issue in somebody else's
+	// repository, which nothing here can do anything about except notice.
+	Issue *TrackerIssue
 }
 
 // A Predicate decides whether an action's work is finished, from the observed
@@ -80,6 +85,10 @@ const (
 	// PredicateRefExists is not prefixed pr_: it asks about a repository and
 	// a pattern, and nothing about a pull request.
 	PredicateRefExists = "ref_exists"
+
+	// PredicateIssueClosed asks about a tracker issue, which is the first
+	// subject that is somebody else's work rather than ours.
+	PredicateIssueClosed = "issue_closed"
 )
 
 // mergeStates a rebase is meant to clear.
@@ -184,6 +193,27 @@ var predicates = map[string]Predicate{
 			}
 		}
 		return false
+	},
+
+	// The tracker says the issue closed.
+	//
+	// closed_at rather than the status, for the reason the week-in-review
+	// listings read it: status is the tracker's own word and unconstrained on
+	// purpose, so "Done", "Closed" and "Resolved" are three trackers' names
+	// for one idea and deciding which of them counts is not roz's to do. A
+	// time is unambiguous.
+	//
+	// What that costs is a tracker nothing reads. GitHub supplies the time on
+	// every sync; Jira has it only where `roz issue observe --closed-at` was
+	// given one, so a wait on a Jira issue closed and never recorded stays
+	// open. That is roz not having been told, and it fails in the direction
+	// every predicate fails in: a wait held open is visible, and one closed on
+	// an absence would not be.
+	PredicateIssueClosed: func(f Facts) bool {
+		if f.Issue == nil {
+			return false
+		}
+		return f.Issue.ClosedAt.Valid && f.Issue.ClosedAt.String != ""
 	},
 
 	// A branch or tag matching the wait exists.

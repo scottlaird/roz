@@ -42,6 +42,7 @@ func newActionCmd() *cobra.Command {
 		newActionHideBehindCmd(),
 		newActionLinkPRCmd(),
 		newActionWaitRefCmd(),
+		newActionWaitIssueCmd(),
 		newActionCloseCmd(),
 	)
 	return cmd
@@ -86,6 +87,10 @@ func newActionAddCmd() *cobra.Command {
 	// And for the same reason, a verb that closes on a ref needs to be able to
 	// say which one in the command that chose it. See `action wait-ref`.
 	addRefWaitFlags(cmd)
+	// Same again for a verb that closes when an issue does. --tracker comes
+	// with it, since a key alone does not say whose key it is.
+	cmd.Flags().String(flagIssueKey, "", "the tracker issue this action waits for, e.g. rust-lang/rust#1")
+	addTrackerFlag(cmd)
 	_ = cmd.MarkFlagRequired(flagTitle)
 	_ = cmd.MarkFlagRequired(flagVerb)
 	addActorFlag(cmd)
@@ -137,7 +142,11 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkActionReferences(ctx, st, actor, a, prID, intent); err != nil {
+	issue, tracker, err := issueWaitFrom(cmd)
+	if err != nil {
+		return err
+	}
+	if err := checkActionReferences(ctx, st, actor, a, prID, intent, issue); err != nil {
 		return err
 	}
 
@@ -169,12 +178,19 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// Also after the insert: the link points at the action, and recording the
+	// issue is what puts it into the poll.
+	if issue != "" {
+		if err := tx.WaitOnIssue(ctx, a.ID, tracker, issue); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
 	fmt.Fprintln(cmd.OutOrStdout(), a.ID)
-	if prID == "" && intent == nil {
+	if prID == "" && intent == nil && issue == "" {
 		return nil
 	}
 	// A gate has no version until the repository's releases have been read,
@@ -197,7 +213,7 @@ func runActionAdd(cmd *cobra.Command, _ []string) error {
 
 // checkActionReferences confirms the verb and project exist, in a
 // transaction that is finished with before anything else runs.
-func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action, prID string, intent *refIntent) error {
+func checkActionReferences(ctx context.Context, st *store.Store, actor store.Actor, a *store.Action, prID string, intent *refIntent, issue string) error {
 	tx, err := st.Begin(ctx, actor)
 	if err != nil {
 		return err
@@ -212,6 +228,9 @@ func checkActionReferences(ctx context.Context, st *store.Store, actor store.Act
 		return err
 	}
 	if err := checkPredicateHasRefWait(v, intent != nil, "pass --"+flagRefRepo+" and --"+flagRef); err != nil {
+		return err
+	}
+	if err := checkPredicateHasIssue(v, issue != "", "pass --"+flagIssueKey); err != nil {
 		return err
 	}
 	if intent != nil {
@@ -286,6 +305,37 @@ func checkPredicateHasRefWait(v *store.ActionVerb, hasWait bool, remedy string) 
 	return fmt.Errorf(
 		"%q closes when a matching ref appears, so it needs to know which: %s",
 		v.Verb, remedy)
+}
+
+// checkPredicateHasIssue is the same refusal again for a verb that closes when
+// a tracker issue does.
+//
+// Fourth of these, and separate for the reason the others are: the remedy is
+// `roz action wait-issue`, and being sent to link a pull request instead is
+// its own small bug.
+func checkPredicateHasIssue(v *store.ActionVerb, hasIssue bool, remedy string) error {
+	if hasIssue || v.Closes != store.ClosesPredicate || !v.RequiresIssue {
+		return nil
+	}
+	return fmt.Errorf(
+		"%q closes when a tracker issue does, so it needs to know which: %s",
+		v.Verb, remedy)
+}
+
+// issueWaitFrom reads the issue an action is to wait for, empty when none was
+// given.
+func issueWaitFrom(cmd *cobra.Command) (issue, tracker string, err error) {
+	f := cmd.Flags()
+	if issue, err = f.GetString(flagIssueKey); err != nil {
+		return "", "", err
+	}
+	if issue == "" {
+		return "", "", nil
+	}
+	if tracker, err = f.GetString(flagTracker); err != nil {
+		return "", "", err
+	}
+	return issue, tracker, store.ValidateTracker(tracker)
 }
 
 func checkProjectExists(ctx context.Context, tx *store.Tx, project sql.NullString) error {
@@ -471,6 +521,14 @@ func runActionSet(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			if err := checkPredicateHasSubject(v, hasPR, "link one with `roz action link-pr`"); err != nil {
+				return err
+			}
+			waiting, err := tx.IssueWaitedOnBy(ctx, a.ID)
+			if err != nil {
+				return err
+			}
+			if err := checkPredicateHasIssue(v, waiting != "",
+				"name one with `roz action wait-issue`"); err != nil {
 				return err
 			}
 		}

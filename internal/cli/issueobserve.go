@@ -119,7 +119,17 @@ func runIssueObserve(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return writeObserveResult(cmd.OutOrStdout(), result)
+	if err := writeObserveResult(cmd.OutOrStdout(), result); err != nil {
+		return err
+	}
+
+	// An issue closing is exactly what a wait_issue action closes on, and it
+	// has just arrived. Without this the step sits ready with nothing left to
+	// wait for until the next sync — the same staleness `pr announce` settles
+	// for the same reason, and under the same actor: recording what a tracker
+	// said is an observation, and deciding a wait is therefore over is a rule
+	// somebody wrote into the vocabulary.
+	return settleNow(ctx, cmd, st)
 }
 
 // issueObservations reads either the one on the command line or the feed.

@@ -174,3 +174,68 @@ func TestATraversalWithNowhereToReadFromSaysSo(t *testing.T) {
 		t.Errorf("error does not name what it could not read: %v", err)
 	}
 }
+
+// TestASecondHopIsRefusedRatherThanAnswered is the bug this replaced.
+//
+// A chain evaluates in Go against a far row that is a map of columns, so
+// `a.project` is a missing key, CEL calls that an error, and a row whose
+// evaluation fails does not match — every row, silently, giving an empty
+// listing indistinguishable from a correct one. Verified against real data
+// before the fix: a filter for pull requests whose action belongs to a
+// priority-1 project returned nothing, while both halves of it returned rows
+// on their own.
+func TestASecondHopIsRefusedRatherThanAnswered(t *testing.T) {
+	tests := []struct {
+		name  string
+		blank any
+		expr  string
+		want  string
+	}{
+		{
+			name:  "a relation of a related record",
+			blank: &store.PR{}, expr: `actions.exists(a, a.project.priority == 1)`,
+			want: "a.project.priority",
+		},
+		{
+			name:  "a chained to-one",
+			blank: &store.Project{}, expr: `parent.parent.title == "x"`,
+			want: "parent.parent.title",
+		},
+		{
+			name:  "a traversal inside a traversal",
+			blank: &store.Project{}, expr: `children.exists(c, c.actions.exists(a, a.verb == "merge"))`,
+			want: "c.actions",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Compile(tc.blank, tc.expr)
+			if err == nil {
+				t.Fatalf("Compile(%q) answered rather than refusing", tc.expr)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error does not name the hop: %v", err)
+			}
+		})
+	}
+}
+
+// TestARefusalIsNotADemotion: the two are told apart by the compiler, because
+// "somewhere else should run this" and "this cannot be answered" look the same
+// at the call site and are not the same at all.
+func TestARefusalIsNotADemotion(t *testing.T) {
+	// Not equivalent: demoted, and the filter still works.
+	demoted, err := Compile(&store.Project{}, `actions.exists(a, a.verb.startsWith("wait"))`)
+	if err != nil {
+		t.Fatalf("a demotion became an error: %v", err)
+	}
+	if where, _ := demoted.SQL(); where != "" {
+		t.Error("the demoted term was pushed down after all")
+	}
+
+	// Not answerable: refused.
+	if _, err := Compile(&store.Project{}, `parent.parent.title == "x"`); err == nil {
+		t.Error("an unanswerable filter compiled")
+	}
+}

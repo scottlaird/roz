@@ -301,6 +301,115 @@ func relationsIn(e celast.Expr, env *joinEnv) []string {
 	return names
 }
 
+// checkNoChains refuses a filter that traverses twice.
+//
+// Not a pushdown decision — a hard error, because the alternative is a false
+// empty. A chain evaluates in Go against a far row that is a map of columns,
+// where `a.project` is a missing key; CEL calls that an error, and a row whose
+// evaluation fails does not match, so every row silently fails to match and
+// the listing comes back empty rather than looking wrong.
+//
+// One hop is what this spike does. Saying so is the difference between a
+// feature that is missing and an answer that is wrong.
+func (e *joinEnv) checkNoChains(root celast.Expr, iter, relation string) error {
+	if e == nil {
+		return nil
+	}
+	far := map[string]store.ColumnType{}
+	if relation != "" {
+		far = columnsByName(e.columns[relation])
+	}
+
+	var found error
+	var walk func(celast.Expr)
+	walk = func(n celast.Expr) {
+		if n == nil || found != nil {
+			return
+		}
+		if n.Kind() == celast.SelectKind {
+			sel := n.AsSelect()
+			operand := sel.Operand()
+
+			// `parent.parent.title`: a select on a select is a chain by
+			// construction.
+			if operand != nil && operand.Kind() == celast.SelectKind {
+				found = fmt.Errorf(
+					"%s reaches through two relations, which a filter cannot follow yet",
+					fieldPath(n))
+				return
+			}
+			if operand != nil && operand.Kind() == celast.IdentKind {
+				name := operand.AsIdent()
+				if join, ok := e.joins[name]; ok && join.Kind == store.ToOne {
+					if _, isColumn := columnsByName(e.columns[name])[sel.FieldName()]; !isColumn {
+						found = fmt.Errorf(
+							"%s.%s: %q is not a column of %s, and a filter cannot follow "+
+								"a relation of a related record yet",
+							name, sel.FieldName(), sel.FieldName(), join.Table)
+						return
+					}
+				}
+				// Inside a traversal, a field of the far row that is not one
+				// of its columns is the second hop.
+				if iter != "" && name == iter {
+					if _, isColumn := far[sel.FieldName()]; !isColumn {
+						found = fmt.Errorf(
+							"%s.%s: %q is not a column of %s, and a filter cannot follow "+
+								"a relation of a related record yet",
+							iter, sel.FieldName(), sel.FieldName(), e.joins[relation].Table)
+						return
+					}
+				}
+			}
+		}
+		switch n.Kind() {
+		case celast.SelectKind:
+			walk(n.AsSelect().Operand())
+		case celast.CallKind:
+			call := n.AsCall()
+			walk(call.Target())
+			for _, arg := range call.Args() {
+				walk(arg)
+			}
+		case celast.ListKind:
+			for _, element := range n.AsList().Elements() {
+				walk(element)
+			}
+		case celast.ComprehensionKind:
+			c := n.AsComprehension()
+			// `c.actions.exists(...)`: a traversal whose range is a field of
+			// something else is the second hop, wearing a quantifier.
+			if r := c.IterRange(); r != nil && r.Kind() == celast.SelectKind {
+				found = fmt.Errorf(
+					"%s: a filter cannot follow a relation of a related record yet",
+					fieldPath(r))
+				return
+			}
+			walk(c.IterRange())
+			walk(c.LoopCondition())
+			walk(c.LoopStep())
+			walk(c.Result())
+		}
+	}
+	walk(root)
+	return found
+}
+
+// fieldPath renders a select chain for an error message.
+func fieldPath(e celast.Expr) string {
+	if e == nil || e.Kind() != celast.SelectKind {
+		return ""
+	}
+	sel := e.AsSelect()
+	if prefix := fieldPath(sel.Operand()); prefix != "" {
+		return prefix + "." + sel.FieldName()
+	}
+	if operand := sel.Operand(); operand != nil && operand.Kind() == celast.IdentKind {
+		return operand.AsIdent() + "." + sel.FieldName()
+	}
+	return sel.FieldName()
+}
+
 // subquery renders a recognised traversal as SQL.
 //
 // The far table is aliased as the iteration variable, so the inner predicate

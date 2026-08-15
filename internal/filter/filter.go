@@ -125,6 +125,13 @@ func Compile(blank any, expr string) (*Filter, error) {
 			return nil, err
 		}
 		sql, args, err := joinSQL(ast, env, joins, columns)
+		// A refusal is not a demotion. errNotAJoin and errNotEquivalent say
+		// "somewhere else should run this"; anything else says the filter
+		// cannot be answered at all, and returning rows regardless would be a
+		// wrong answer rather than a slow one.
+		if err != nil && !errors.Is(err, errNotAJoin) && !errors.Is(err, errNotEquivalent) {
+			return nil, err
+		}
 		if err == errNotAJoin {
 			sql, args, err = toSQL(ast, schemasFor(columns, joins, "", ""))
 			if err == nil {
@@ -199,6 +206,15 @@ func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnT
 	}
 	root := ast.NativeRep().Expr()
 
+	// Before anything decides where to run this: a second hop is refused
+	// outright. Checked on the expanded tree rather than on the recognised
+	// predicate, because a nested `c.actions.exists(...)` is a macro inside a
+	// macro, and the outer one's recorded argument is only a placeholder for
+	// it.
+	if err := joins.checkNoChains(root, "", ""); err != nil {
+		return "", nil, err
+	}
+
 	x, ok := asExists(ast, root, joins)
 	if !ok {
 		// No quantifier, but the term may still reach through a to-one
@@ -231,6 +247,13 @@ func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnT
 	if x.predicate == nil {
 		sql, args := joins.subquery(x, "", nil)
 		return sql, args, nil
+	}
+
+	// A second hop inside the traversal is refused here rather than falling
+	// through to Go, where the far row is a map of columns and `a.project`
+	// evaluates to an error that reads as "no match" for every row.
+	if err := joins.checkNoChains(x.predicate, x.iter, x.relation); err != nil {
+		return "", nil, err
 	}
 
 	// The iteration variable is bound by the comprehension, so it exists

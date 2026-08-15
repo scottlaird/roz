@@ -470,16 +470,34 @@ func renderCell(raw json.RawMessage, style cellStyle) string {
 	}
 }
 
-// addListingFlags puts the two output flags on a listing that declares its
+// addListingFlags puts the output flags on a listing that declares its
 // columns.
 func addListingFlags[T any](cmd *cobra.Command, set columnSet[T]) {
 	addListOutputFlag(cmd)
 	addFieldsFlag(cmd, set)
+	addFilterFlag(cmd, set.names())
 }
 
 // runListing is the tail every list command shares once its columns are
-// declared: choose the format, choose the fields, render.
+// declared: filter, choose the format, choose the fields, render.
+//
+// The filter runs here rather than in each command because most listings do
+// not push it down: their store call takes no WHERE fragment, so the rows have
+// already been read by the time this sees them. A listing that does push it
+// down — `pr list` — compiles the same filter earlier and passes what is left,
+// so this is where the residual lands either way.
 func runListing[T any](cmd *cobra.Command, set columnSet[T], rows []T, ctx renderContext) error {
+	f, err := filterFrom(cmd, set.recordOf(set.blank))
+	if err != nil {
+		return err
+	}
+	if err := explainFilter(cmd, f); err != nil {
+		return err
+	}
+	if rows, err = keep(f, rows, set.recordOf); err != nil {
+		return err
+	}
+
 	format, err := listOutputFrom(cmd)
 	if err != nil {
 		return err

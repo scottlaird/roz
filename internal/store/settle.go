@@ -104,6 +104,9 @@ type candidate struct {
 	// hasWait says the action is waiting on a ref, so the wait and the
 	// repository's refs are worth loading.
 	hasWait bool
+	// issue is the tracker issue the action waits on, empty where it waits
+	// on none.
+	issue string
 }
 
 // satisfiedActions returns the open predicate-verb actions whose predicate
@@ -176,6 +179,13 @@ func (t *Tx) factsFor(ctx context.Context, c candidate) (Facts, error) {
 		}
 		facts.PR = pr
 	}
+	if c.issue != "" {
+		issue, err := t.LoadTrackerIssue(ctx, c.issue)
+		if err != nil {
+			return Facts{}, err
+		}
+		facts.Issue = issue
+	}
 	if c.hasWait {
 		wait, err := t.RefWaitFor(ctx, c.action.ID)
 		if err != nil {
@@ -210,13 +220,15 @@ func (t *Tx) pendingPredicateActions(ctx context.Context) ([]candidate, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT %s, coalesce(link.pr_id, ''), w.action_id IS NOT NULL
+		SELECT %s, coalesce(link.pr_id, ''), w.action_id IS NOT NULL,
+		       coalesce(i.issue_id, '')
 		FROM action a
 		JOIN actionverb v ON v.verb = a.verb
 		LEFT JOIN action_pr link ON link.action_id = a.id AND link.role = ?
 		LEFT JOIN action_ref_wait w ON w.action_id = a.id
+		LEFT JOIN action_tracker_issue i ON i.action_id = a.id
 		WHERE a.closed_at IS NULL AND v.closes = ?
-		  AND (link.pr_id IS NOT NULL OR w.action_id IS NOT NULL)
+		  AND (link.pr_id IS NOT NULL OR w.action_id IS NOT NULL OR i.issue_id IS NOT NULL)
 		ORDER BY a.n`, strings.Join(columns, ", "))
 
 	rows, err := t.tx.QueryContext(ctx, query, RoleSubject, ClosesPredicate)
@@ -228,18 +240,18 @@ func (t *Tx) pendingPredicateActions(ctx context.Context) ([]candidate, error) {
 	var pending []candidate
 	for rows.Next() {
 		var a Action
-		var pr string
+		var pr, issue string
 		var hasWait bool
-		dest := make([]any, 0, len(fields)+2)
+		dest := make([]any, 0, len(fields)+3)
 		for _, f := range fields {
 			dest = append(dest, f.pointerOf(&a))
 		}
-		dest = append(dest, &pr, &hasWait)
+		dest = append(dest, &pr, &hasWait, &issue)
 
 		if err := rows.Scan(dest...); err != nil {
 			return nil, fmt.Errorf("reading actions waiting on a predicate: %w", err)
 		}
-		pending = append(pending, candidate{action: &a, pr: pr, hasWait: hasWait})
+		pending = append(pending, candidate{action: &a, pr: pr, hasWait: hasWait, issue: issue})
 	}
 	return pending, rows.Err()
 }

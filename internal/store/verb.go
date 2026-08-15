@@ -80,6 +80,12 @@ type ActionVerb struct {
 	// different to each. A ref spec resolves to a release; an owner spec is
 	// the group being waited on, and lands on the action's waiting_for.
 	RequiresOwner bool `db:"requires_owner"`
+
+	// RequiresIssue says the verb needs a tracker issue to be able to close.
+	// The fourth of these for the reason there are three: the remedy is
+	// `roz action wait-issue`, and an error naming any of the others sends
+	// somebody the wrong way.
+	RequiresIssue bool `db:"requires_issue"`
 }
 
 func (v *ActionVerb) table() string       { return "actionverb" }

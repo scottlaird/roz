@@ -118,6 +118,11 @@ CREATE TABLE actionverb (
   -- remedies differ, and the spec means something different to each. Last of
   -- the columns because ADD COLUMN put it there. See 0033.
   requires_owner INTEGER NOT NULL DEFAULT 0 CHECK (requires_owner IN (0,1)),
+  -- whether the verb needs a tracker issue to be able to close. Same reason
+  -- again: the remedy is `roz action wait-issue`, and an error naming any of
+  -- the others would send somebody the wrong way. Last of the columns because
+  -- ADD COLUMN put it there. See 0034.
+  requires_issue INTEGER NOT NULL DEFAULT 0 CHECK (requires_issue IN (0,1)),
   -- a predicate_key exists exactly when the verb closes on one
   CHECK ((closes = 'predicate') = (predicate_key IS NOT NULL))
 ) STRICT;
@@ -130,47 +135,47 @@ CREATE TABLE actionverb (
 -- vocabulary can grow without a deploy, and a database may have gained or
 -- retired verbs since. Never delete a row -- closed actions and log entries
 -- reference retired verbs. Set active = 0 instead.
-INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires_pr, requires_ref, requires_owner, starts_pipeline, wait_days, description) VALUES
+INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires_pr, requires_ref, requires_owner, requires_issue, starts_pipeline, wait_days, description) VALUES
   -- Predicate-closed. These flow through on their own.
-  ('undraft',          'un-draft',          'predicate', 'pr_not_draft',      'click',   1, 0, 0, 0, NULL,
+  ('undraft',          'un-draft',          'predicate', 'pr_not_draft',      'click',   1, 0, 0, 0, 0, NULL,
    'Take the pull request out of draft.'),
-  ('send_for_review',  'send for review',   'predicate', 'pr_announced',      'click',   1, 0, 0, 0, NULL,
+  ('send_for_review',  'send for review',   'predicate', 'pr_announced',      'click',   1, 0, 0, 0, 0, NULL,
    'Announce it where reviewers will see it. The announcement is the one signal GitHub cannot supply.'),
-  ('wait_review',      'wait for review',   'predicate', 'pr_approved',       'wait',    1, 0, 0, 0, 3,
+  ('wait_review',      'wait for review',   'predicate', 'pr_approved',       'wait',    1, 0, 0, 0, 0, 3,
    'Nothing to do but wait. Closes when the review decision is APPROVED.'),
-  ('address_comments', 'address comments',  'predicate', 'pr_threads_clear',  'session', 1, 0, 0, 0, NULL,
+  ('address_comments', 'address comments',  'predicate', 'pr_threads_clear',  'session', 1, 0, 0, 0, 0, NULL,
    'Deal with review threads. Closes when none are unresolved against the current head.'),
-  ('rebase',           'rebase',            'predicate', 'pr_mergeable',      'click',   1, 0, 0, 0, NULL,
+  ('rebase',           'rebase',            'predicate', 'pr_mergeable',      'click',   1, 0, 0, 0, 0, NULL,
    'Bring it up to date. Closes when the merge state is neither BEHIND nor DIRTY.'),
-  ('merge',            'merge',             'predicate', 'pr_merged',         'click',   1, 0, 0, 0, 1,
+  ('merge',            'merge',             'predicate', 'pr_merged',         'click',   1, 0, 0, 0, 0, 1,
    'One click, once everything else is done.'),
   -- The one verb that waits on something other than a pull request. wait_days
   -- is NULL because a release date is not ours to influence and there is
   -- nobody to chase: since 0019 an overdue wait puts an item in the queue, so
   -- the noise would be durable rather than passing. See 0020.
-  ('wait_ref',         'wait for a ref',    'predicate', 'ref_exists',        'wait',    0, 1, 0, 0, NULL,
+  ('wait_ref',         'wait for a ref',    'predicate', 'ref_exists',        'wait',    0, 1, 0, 0, 0, NULL,
    'Wait for a branch or tag to appear. Closes when one matching the expression exists.'),
 
   -- Human-closed. These are the items worth spending attention on, and the
   -- only ones that reach the queue as thinking work.
-  ('decide',           'decide',            'human',     NULL,                'decide',  0, 0, 0, 0, NULL,
+  ('decide',           'decide',            'human',     NULL,                'decide',  0, 0, 0, 0, 0, NULL,
    'A judgement that has to be made before anything else can move.'),
-  ('write',            'write',             'human',     NULL,                'session', 0, 0, 0, 1, NULL,
+  ('write',            'write',             'human',     NULL,                'session', 0, 0, 0, 0, 1, NULL,
    'Actual work. Usually ends with a pull request.'),
-  ('announce',         'announce',          'human',     NULL,                'click',   0, 0, 0, 0, NULL,
+  ('announce',         'announce',          'human',     NULL,                'click',   0, 0, 0, 0, 0, NULL,
    'Tell someone something.'),
-  ('run',              'run',               'human',     NULL,                'click',   0, 0, 0, 0, NULL,
+  ('run',              'run',               'human',     NULL,                'click',   0, 0, 0, 0, 0, NULL,
    'Run a command or a job and see what it says.'),
-  ('file',             'file',              'human',     NULL,                'click',   0, 0, 0, 0, NULL,
+  ('file',             'file',              'human',     NULL,                'click',   0, 0, 0, 0, 0, NULL,
    'Raise a ticket or an issue somewhere else.'),
-  ('investigate',      'investigate',       'human',     NULL,                'session', 0, 0, 0, 0, NULL,
+  ('investigate',      'investigate',       'human',     NULL,                'session', 0, 0, 0, 0, 0, NULL,
    'Find out what is going on. Closes when you know.'),
 
   -- review is human-closed for now, though the sketch has it closing on a
   -- predicate. It needs to know that *we* submitted a review, which needs
   -- both the viewer's identity and pull requests tracked because they are
   -- assigned to us rather than authored by us. Neither exists yet.
-  ('review',           'review',            'human',     NULL,                'session', 1, 0, 0, 0, NULL,
+  ('review',           'review',            'human',     NULL,                'session', 1, 0, 0, 0, 0, NULL,
    'Review someone else''s pull request.'),
 
   -- One named group's review, rather than the pull request as a whole.
@@ -178,8 +183,14 @@ INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires
   -- three reviews in order, so this asks about the group its spec names. Its
   -- allowance matches wait_review: a tier is still one team being waited on.
   -- See 0033.
-  ('wait_review_from', 'wait for review from', 'predicate', 'pr_approved_by',  'wait',    1, 0, 1, 0, 3,
-   'Wait for one named group to approve, rather than for the pull request as a whole. Closes when somebody who stands for that group has approved.');
+  ('wait_review_from', 'wait for review from', 'predicate', 'pr_approved_by',  'wait',    1, 0, 1, 0, 0, 3,
+   'Wait for one named group to approve, rather than for the pull request as a whole. Closes when somebody who stands for that group has approved.'),
+
+  -- Waiting on work that is not ours. wait_days is NULL for wait_ref's reason:
+  -- somebody else's issue is not ours to chase, and an overdue wait puts an
+  -- item in the queue that would never go away. See 0034.
+  ('wait_issue',       'wait for an issue',  'predicate', 'issue_closed',    'wait',    0, 0, 0, 1, 0, NULL,
+   'Wait for a tracker issue to close. Closes when the tracker says it did.');
 
 -- ── pipelines ────────────────────────────────────────────────────────
 -- What closing a verb instantiates. Closing a `write` action produces the
@@ -528,6 +539,24 @@ CREATE TABLE project_tracker_issue (
 -- "one item covering two unrelated PRs" unrepresentable rather than merely wrong
 CREATE UNIQUE INDEX action_one_subject ON action_pr(action_id) WHERE role = 'subject';
 
+-- What an action is waiting for, when it waits on an issue. The same shape as
+-- action_pr, because it is the same relationship to a different kind of
+-- subject -- and not through project_tracker_issue, which is the wrong grain
+-- twice: a project may track two issues, so a wait through the project would
+-- close when either did, and an issue that is nobody's project has no project
+-- to hang from.
+--
+-- The foreign key is the point. IssueKeys drives the poll from tracker_issue,
+-- so linking is what makes the issue polled at all -- a wait on an issue
+-- nothing has recorded would be false for ever. One issue per action: waiting
+-- on two of them is two waits, which the blocking graph expresses better,
+-- since it can say which arrived first. See 0034.
+CREATE TABLE action_tracker_issue (
+  action_id  TEXT PRIMARY KEY REFERENCES action(id),
+  issue_id   TEXT NOT NULL REFERENCES tracker_issue(id),
+  created_at TEXT NOT NULL
+) STRICT;
+
 -- The owners a repository would rather go to first.
 --
 -- A preference, never an assertion: each is checked against what is actually
@@ -810,5 +839,7 @@ CREATE INDEX pr_merged_at ON pr(merged_at) WHERE merged_at IS NOT NULL;
 CREATE INDEX tracker_issue_closed_at ON tracker_issue(closed_at) WHERE closed_at IS NOT NULL;
 -- the poll set: open pull requests plus the ones that ended recently
 CREATE INDEX pr_poll_window ON pr(closed_at) WHERE closed_at IS NOT NULL;
+-- which actions are waiting on this issue
+CREATE INDEX action_tracker_issue_issue ON action_tracker_issue(issue_id);
 -- given a base_ref, which tracked pull request in the repository has that head
 CREATE INDEX pr_head_ref ON pr(repo, head_ref) WHERE head_ref IS NOT NULL;

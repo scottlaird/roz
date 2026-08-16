@@ -280,9 +280,14 @@ bites; not worth one before.
   observed a wait beginning.
 - **Idempotent through the log, with no new state.** A wait is already
   reported if an exception exists at or after its deadline. If the deadline
-  later moves out — a fresh review request, or a raised allowance — the old
-  exception falls before the new one and it is reported again, which is right:
-  it is a different wait.
+  later moves out — a fresh review request, a raised allowance, or another
+  announcement — the old exception falls before the new one and it is reported
+  again, which is right: it is a different wait.
+- **Announcing restarts the allowance, and the chases are counted.**
+  `waiting_since` never moves after the first review request, so a Slack chase
+  bought no patience: the wait went overdue again the moment it was pinged.
+  `announced_at` joins the same `max()`, so it can only defer a deadline, and
+  `pr.announce_count` keeps a fourth telling distinguishable from a first.
 - **Checked even when nothing is tracked.** A deadline is not a fact about
   GitHub, and `Sync`'s nothing-to-poll return used to skip it entirely.
 - **One project can block another, and the status follows the edge.**

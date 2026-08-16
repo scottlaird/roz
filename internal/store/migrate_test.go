@@ -887,3 +887,78 @@ func TestTrackerMigrationCarriesJiraData(t *testing.T) {
 		}
 	}
 }
+
+// TestAnnounceCountIsBackfilled covers the data half of 0039, which
+// TestSchemaMatchesMigrations cannot see: it compares schema, and a DEFAULT of
+// zero is right for a new row and wrong for every pull request already frozen
+// by an announcement. Left at zero, the next chase on one of those would read
+// as a first telling.
+func TestAnnounceCountIsBackfilled(t *testing.T) {
+	db := applyMigrationsBefore(t, 39)
+
+	// One announced before the column existed, and one never announced.
+	_, err := db.Exec(`
+		INSERT INTO github_repo (id, owner, name, tracked_since)
+		VALUES ('owner/repo', 'owner', 'repo', '2026-08-01T00:00:00.000Z');
+		INSERT INTO pr (id, repo, number, title, tracked_since, announced_at)
+		VALUES ('owner/repo#1', 'owner/repo', 1, 'told', '2026-08-01T00:00:00.000Z',
+		        '2026-08-02T00:00:00.000Z');
+		INSERT INTO pr (id, repo, number, title, tracked_since)
+		VALUES ('owner/repo#2', 'owner/repo', 2, 'never told', '2026-08-01T00:00:00.000Z')`)
+	if err != nil {
+		t.Fatalf("seeding pull requests from before the column: %v", err)
+	}
+
+	if _, _, err := migrate(context.Background(), db); err != nil {
+		t.Fatalf("migrate() returned error: %v", err)
+	}
+
+	for id, want := range map[string]int{"owner/repo#1": 1, "owner/repo#2": 0} {
+		var got int
+		if err := db.QueryRow("SELECT announce_count FROM pr WHERE id = ?", id).Scan(&got); err != nil {
+			t.Fatalf("reading announce_count for %s: %v", id, err)
+		}
+		if got != want {
+			t.Errorf("%s announce_count = %d, want %d", id, got, want)
+		}
+	}
+}
+
+// applyMigrationsBefore builds a database as it stood before a given
+// migration, so a data migration can be run against rows that predate it.
+//
+// It writes the bookkeeping the same way migrate does, so migrate itself picks
+// up from there rather than trying to apply what is already applied.
+func applyMigrationsBefore(t *testing.T, version int) *sql.DB {
+	t.Helper()
+	ctx := context.Background()
+
+	path := filepath.Join(t.TempDir(), "partial.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	migrations, err := schema.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations() returned error: %v", err)
+	}
+	if err := ensureBookkeeping(ctx, db); err != nil {
+		t.Fatalf("ensureBookkeeping() returned error: %v", err)
+	}
+	var reached bool
+	for _, m := range migrations {
+		if m.Version >= version {
+			reached = true
+			break
+		}
+		if err := applyMigration(ctx, db, m); err != nil {
+			t.Fatalf("applying %s: %v", m.Name, err)
+		}
+	}
+	if !reached {
+		t.Fatalf("no migration at or after %d; this test is about one that exists", version)
+	}
+	return db
+}

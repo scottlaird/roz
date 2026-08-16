@@ -41,18 +41,8 @@ type Overdue struct {
 // overdue report has to produce something else to look at.
 func (o Overdue) InQueue() bool { return o.RankClass != RankWait }
 
-// overdueQuery finds open actions past their deadline that have not already
-// been reported for this wait.
-//
-// The deadline is coalesced rather than stored: the action's own
-// okay_to_wait_until if it has one, otherwise the latest of when it was
-// created, when it last became actionable, and when its subject was first
-// waiting, plus the verb's wait_days. A verb with no wait_days can never be
-// overdue, which is what the join's NOT NULL enforces.
-//
-// # Why the latest of three clocks, and not waiting_since
-//
-// The three answer different questions and each is wrong alone:
+// waitClock is when the allowance starts running: the latest of four
+// timestamps, each of which is wrong alone.
 //
 //   - waiting_since is when reviewers could first have seen the pull request.
 //     Right for wait_review, and the common case — but it is written for every
@@ -63,12 +53,54 @@ func (o Overdue) InQueue() bool { return o.RankClass != RankWait }
 //     still nothing to do about it.
 //   - ready_since is when the action last became actionable. NULL until it is
 //     un-hidden or freed, which is why it is folded in rather than preferred.
+//   - announced_at is when the people being waited on were last actually told,
+//     which is a different fact from when they could first have seen it. See
+//     below.
 //
 // Taking the latest means a clock can only ever push the deadline out, so no
 // combination of them produces an action that is late before it is actionable.
 // Each is passed through datetime() first: they arrive in different precisions
 // — GitHub's timestamps carry no fraction, the store's carry milliseconds —
 // and comparing those as strings puts "…:58Z" after "…:58.500Z".
+//
+// # Why the announcement counts
+//
+// waiting_since dates the first review request and never moves again, so
+// chasing a stalled pull request in Slack bought no patience at all: the
+// action stayed measured from the original request and went overdue again the
+// moment it was pinged. In practice the ping is the thing that gets attention,
+// and it was invisible to the clock. Announcing is an explicit decision to
+// accept more waiting, so it starts the allowance afresh.
+//
+// It reaches every action on the pull request rather than the review step
+// alone, exactly as waiting_since does, and for the same reason it is safe to:
+// under max() a clock can only defer a deadline, never bring one forward.
+// A repository whose pipeline never announces has NULL here and is unaffected,
+// which is why this is folded in rather than preferred — waiting with no
+// announcement is perfectly legitimate and still has to be able to time out.
+//
+// What this does not do is treat the chase as free. pr.announce_count records
+// how many have been sent, so patience granted for the fourth time is visible
+// as such — a ping is sometimes the last thing before escalating, and nothing
+// here should read that as fresh calm.
+const waitClock = `max(datetime(a.created_at),
+                       datetime(coalesce(a.ready_since, a.created_at)),
+                       datetime(coalesce(a.waiting_since, a.created_at)),
+                       datetime(coalesce(p.announced_at, a.created_at)))`
+
+// overdueQuery finds open actions past their deadline that have not already
+// been reported for this wait.
+//
+// The deadline is coalesced rather than stored: the action's own
+// okay_to_wait_until if it has one, otherwise waitClock plus the verb's
+// wait_days. A verb with no wait_days can never be overdue, which is what the
+// join's NOT NULL enforces. waiting_from is the same clock returned as a
+// column, so a caller reporting "waiting N days" measures from the instant the
+// deadline was computed from rather than from a second guess at it.
+//
+// The subject pull request is joined in for announced_at alone, and joined
+// LEFT because most verbs have no pull request at all. It cannot multiply
+// rows: action_one_subject makes the subject role unique per action.
 //
 // hidden_behind is excluded outright, not folded into the clock. An action
 // folded out of the queue has, by construction, nothing to do about it other
@@ -79,19 +111,21 @@ func (o Overdue) InQueue() bool { return o.RankClass != RankWait }
 // The last clause is what makes this idempotent without new state. An
 // exception already raised at or after the deadline means this wait has been
 // reported; the log is the record, so nothing else has to remember. If the
-// deadline later moves out — the allowance was raised, or a fresh review was
-// requested — the old exception falls before the new deadline and the wait
-// can be reported again, which is right: it is a different wait.
-const overdueQuery = `
+// deadline later moves out — the allowance was raised, a fresh review was
+// requested, or the pull request was announced again — the old exception falls
+// before the new deadline and the wait can be reported again, which is right:
+// it is a different wait.
+var overdueQuery = `
 SELECT %s,
        datetime(coalesce(a.okay_to_wait_until,
-                         datetime(max(datetime(a.created_at),
-                                      datetime(coalesce(a.ready_since, a.created_at)),
-                                      datetime(coalesce(a.waiting_since, a.created_at))),
+                         datetime(` + waitClock + `,
                                   '+' || v.wait_days || ' days'))) AS deadline,
+       ` + waitClock + ` AS waiting_from,
        v.rank_class
   FROM action a
   JOIN actionverb v ON v.verb = a.verb
+  LEFT JOIN action_pr ap ON ap.action_id = a.id AND ap.role = 'subject'
+  LEFT JOIN pr p ON p.id = ap.pr_id
  WHERE a.closed_at IS NULL
    AND a.state = ?
    AND a.hidden_behind IS NULL
@@ -127,8 +161,8 @@ func (s *Store) LateActions(ctx context.Context) (map[string]int, error) {
 
 	late := map[string]int{}
 	for rows.Next() {
-		var id, deadline, rankClass string
-		if err := rows.Scan(&id, &deadline, &rankClass); err != nil {
+		var id, deadline, waitingFrom, rankClass string
+		if err := rows.Scan(&id, &deadline, &waitingFrom, &rankClass); err != nil {
 			return nil, fmt.Errorf("finding late actions: %w", err)
 		}
 		late[id] = daysPast(deadline, now)
@@ -171,20 +205,20 @@ func (s *Store) OverdueWaits(ctx context.Context, actor Actor) ([]Overdue, error
 	var overdue []Overdue
 	for rows.Next() {
 		var a Action
-		var deadline string
-		dest := make([]any, 0, len(fields)+1)
+		var deadline, waitingFrom string
+		dest := make([]any, 0, len(fields)+3)
 		for _, f := range fields {
 			dest = append(dest, f.pointerOf(&a))
 		}
 		var rankClass string
-		dest = append(dest, &deadline, &rankClass)
+		dest = append(dest, &deadline, &waitingFrom, &rankClass)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, fmt.Errorf("finding overdue waits: %w", err)
 		}
 		overdue = append(overdue, Overdue{
 			Action:    &a,
 			Deadline:  deadline,
-			Waiting:   daysSince(waitStartedAt(&a), now),
+			Waiting:   daysSince(waitingFrom, now),
 			RankClass: rankClass,
 		})
 	}
@@ -343,25 +377,16 @@ func daysPast(deadline string, now time.Time) int {
 	return days
 }
 
-// waitStartedAt is when the clock started: the latest of the three the query
-// takes, so the "waiting N days" in a message agrees with the deadline that
-// produced it. Reporting a longer wait than the deadline was measured from is
-// how an item reads as more overdue than it is.
-func waitStartedAt(a *Action) string {
-	since := a.CreatedAt
-	if a.ReadySince.Valid && a.ReadySince.String > since {
-		since = a.ReadySince.String
-	}
-	if a.WaitingSince.Valid && a.WaitingSince.String > since {
-		since = a.WaitingSince.String
-	}
-	return since
-}
-
 // daysSince is whole days, for a message rather than for a comparison — the
 // comparison is SQL's, against a real timestamp.
+//
+// It reads the query's waiting_from rather than working the clock out again
+// in Go, so the "waiting N days" in a message agrees with the deadline that
+// produced it. Reporting a longer wait than the deadline was measured from is
+// how an item reads as more overdue than it is, and a second implementation of
+// the clock is exactly how the two drift apart.
 func daysSince(from string, now time.Time) int {
-	started, err := time.Parse(timeFormat, from)
+	started, err := time.Parse(sqliteTime, from)
 	if err != nil {
 		return 0
 	}

@@ -77,6 +77,12 @@ type PR struct {
 	// GitHub cannot supply.
 	AnnouncedAt      sql.NullString `db:"announced_at" kind:"observed"`
 	AnnouncedChannel sql.NullString `db:"announced_channel" kind:"observed"`
+	// AnnounceCount is how many times it has been announced, because
+	// AnnouncedAt is overwritten by each one and a chase has to be
+	// distinguishable from the first telling. The wait clock reads the
+	// announcement, so a chase grants more patience; this is what says how
+	// much has already been granted. Zero means never announced.
+	AnnounceCount int64 `db:"announce_count" kind:"observed"`
 
 	// RequiredOwners is who this pull request needs, worked out from the files
 	// it touches against the repository's CODEOWNERS. Empty is ambiguous on

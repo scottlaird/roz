@@ -230,11 +230,12 @@ func (t *Tx) checkInsertPermission(r Record, fields []field) error {
 		if f.kind == allowed {
 			continue
 		}
-		text, err := renderValue(f.value(r))
+		value := f.value(r)
+		text, err := renderValue(value)
 		if err != nil {
 			return fmt.Errorf("%s.%s: %w", r.table(), f.column, err)
 		}
-		if isUnset(f, text) {
+		if isUnset(f, value, text) {
 			continue // nothing was claimed
 		}
 		return fmt.Errorf("%s may not set %s.%s at creation: it is %s, and %s writes only %s fields",
@@ -249,8 +250,17 @@ func (t *Tx) checkInsertPermission(r Record, fields []field) error {
 // Empty is empty whether it is spelled "", {} or []. Without this, the empty
 // containers a constructor supplies for JSON columns would read as a human
 // asserting observed facts, and tracking a pull request would be refused.
-func isUnset(f field, text string) bool {
+//
+// A plain int64 is the same argument in a different type. NOT NULL columns
+// counting occurrences start at zero and get there by nobody touching them, so
+// "0" renders as text but says no more than "" does — a nullable one would
+// have arrived here invalid and been let through already. Only the bare kind:
+// a sql.NullInt64 holding zero is a counted zero and is a claim.
+func isUnset(f field, value any, text string) bool {
 	if text == "" {
+		return true
+	}
+	if n, ok := value.(int64); ok && n == 0 {
 		return true
 	}
 	return f.format == formatJSON && (text == "{}" || text == "[]")

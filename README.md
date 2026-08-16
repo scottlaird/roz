@@ -139,6 +139,7 @@ $ roz pr announce example/server#812
 example/server#812 → #server-reviews (@example/backend, the owner this is waiting for)
 example/server#812 announced_at: "" → "2026-08-16T02:41:30.559Z"
 example/server#812 announced_channel: "" → "#server-reviews"
+example/server#812 announce_count: "0" → "1"
 NA3 closed: example/server#812 is send_for_review
 ```
 
@@ -146,6 +147,13 @@ She still posts the message herself — roz writes down that it happened, works
 out where it should go, and closes the step. Which channel is a lookup on the
 team being asked, because a change touching storage should reach the storage
 channel whichever repository it is in.
+
+Announcing it again three days later is how she chases a review that has
+stalled, and that restarts the clock roz measures the wait against: asking a
+second time is a decision to accept more waiting, and a pull request that goes
+overdue the instant it is pinged trains her to ignore the mechanism. The count
+is what keeps that honest — a fourth telling is not a first one, and sometimes
+a ping is the last thing before escalating.
 
 roz does not have chat integration yet; at some point it may gain the ability
 to listen to Slack review requests on its own. What it will not do is *infer*

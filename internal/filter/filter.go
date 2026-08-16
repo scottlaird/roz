@@ -91,6 +91,9 @@ type Filter struct {
 	// would refuse a filter that works.
 	traversesWhole    []string
 	traversesResidual []string
+	// chains are the terms that follow more than one relation. Kept because
+	// they can only be answered in the query: see Keep.
+	chains []string
 }
 
 // Compile builds a filter over the columns of blank, which is an empty record
@@ -142,7 +145,7 @@ func Compile(blank any, expr string) (*Filter, error) {
 		if err != nil {
 			return nil, err
 		}
-		sql, args, err := joinSQL(ast, env, joins, columns)
+		sql, args, isChain, err := joinSQL(ast, env, joins, columns)
 		// A refusal is not a demotion. errNotAJoin and errNotEquivalent say
 		// "somewhere else should run this"; anything else says the filter
 		// cannot be answered at all, and returning rows regardless would be a
@@ -174,6 +177,9 @@ func Compile(blank any, expr string) (*Filter, error) {
 			// runs in Go, where it is correct.
 			residual = append(residual, term)
 			continue
+		}
+		if isChain {
+			f.chains = append(f.chains, term)
 		}
 		pushed = append(pushed, "("+sql+")")
 		f.args = append(f.args, args...)
@@ -219,19 +225,36 @@ var errNotAJoin = errors.New("not a traversal")
 // the far table's columns declared under the iteration variable's name — so
 // `a.verb == "merge"` converts to `a.verb = ?`, and aliasing the table `a` in
 // the subquery is all it takes to make that valid.
-func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnType) (string, []any, error) {
+func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnType) (string, []any, bool, error) {
 	if joins == nil {
-		return "", nil, errNotAJoin
+		return "", nil, false, errNotAJoin
 	}
 	root := ast.NativeRep().Expr()
+	info := ast.NativeRep().SourceInfo()
+	top := topFor(joins, columns)
 
-	// Before anything decides where to run this: a second hop is refused
-	// outright. Checked on the expanded tree rather than on the recognised
-	// predicate, because a nested `c.actions.exists(...)` is a macro inside a
-	// macro, and the outer one's recorded argument is only a placeholder for
-	// it.
+	// A chain — more than one relation — goes through the recursive
+	// generator, which renders nested EXISTS and refuses outright if it
+	// cannot render the whole thing. Never a fallback to Go: see chain.go for
+	// why a false empty is the alternative.
+	if chained(root, top, info) {
+		sql, args, err := predicateSQL(env, info, root, top)
+		if err != nil {
+			if errors.Is(err, errNotEquivalent) {
+				return "", nil, false, fmt.Errorf(
+					"a filter that follows two relations has to run in the query, "+
+						"and this one cannot be converted: %w", errChainInGo)
+			}
+			return "", nil, false, err
+		}
+		return sql, args, true, nil
+	}
+
+	// Anything the generator does not take is still refused outright rather
+	// than demoted: a shape that reaches twice and falls through to Go is the
+	// false empty this whole path exists to prevent.
 	if err := joins.checkNoChains(root, "", ""); err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 
 	x, ok := asExists(ast, root, joins)
@@ -242,21 +265,21 @@ func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnT
 		reached := toOneRefs(root, joins)
 		switch len(reached) {
 		case 0:
-			return "", nil, errNotAJoin
+			return "", nil, false, errNotAJoin
 		case 1:
 			if !pushableShape(root, joins.scopeFor(columns, reached[0], reached[0])) {
-				return "", nil, errNotEquivalent
+				return "", nil, false, errNotEquivalent
 			}
 			sql, args, err := toSQL(ast, schemasFor(columns, joins, "", ""))
 			if err != nil {
-				return "", nil, err
+				return "", nil, false, err
 			}
 			rendered, params := joins.toOne(reached[0], sql, args)
-			return rendered, params, nil
+			return rendered, params, false, nil
 		default:
 			// Two relations in one term needs two subqueries and a decision
 			// about how they compose. Not in this spike.
-			return "", nil, fmt.Errorf("a filter reaching %d relations at once is not supported yet",
+			return "", nil, false, fmt.Errorf("a filter reaching %d relations at once is not supported yet",
 				len(reached))
 		}
 	}
@@ -265,14 +288,14 @@ func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnT
 	// whether anything is there.
 	if x.predicate == nil {
 		sql, args := joins.subquery(x, "", nil)
-		return sql, args, nil
+		return sql, args, false, nil
 	}
 
 	// A second hop inside the traversal is refused here rather than falling
 	// through to Go, where the far row is a map of columns and `a.project`
 	// evaluates to an error that reads as "no match" for every row.
 	if err := joins.checkNoChains(x.predicate, x.iter, x.relation); err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 
 	// The iteration variable is bound by the comprehension, so it exists
@@ -280,25 +303,25 @@ func joinSQL(ast *cel.Ast, env *cel.Env, joins *joinEnv, columns []store.ColumnT
 	// declared, which is what this extension is for.
 	scoped, err := env.Extend(cel.Variable(x.iter, cel.DynType))
 	if err != nil {
-		return "", nil, fmt.Errorf("scoping %q: %w", x.iter, err)
+		return "", nil, false, fmt.Errorf("scoping %q: %w", x.iter, err)
 	}
 	inner, err := celFor(scoped, x.predicate, ast.NativeRep().SourceInfo())
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	// The same allow-list as a top-level term, in the join's namespace. Two
 	// things go wrong without it: `a.verb.startsWith("W")` converts to a LIKE
 	// that is case-insensitive where CEL is not, and a bare name inside the
 	// predicate binds to the inner table in SQL and to the outer row in CEL.
 	if !pushableShape(inner.NativeRep().Expr(), joins.scopeFor(columns, x.iter, x.relation)) {
-		return "", nil, errNotEquivalent
+		return "", nil, false, errNotEquivalent
 	}
 	sql, args, err := toSQL(inner, schemasFor(columns, joins, x.iter, x.relation))
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	rendered, params := joins.subquery(x, sql, args)
-	return rendered, params, nil
+	return rendered, params, false, nil
 }
 
 // celFor lifts a sub-expression back into an AST the converter will take.
@@ -522,6 +545,19 @@ func (f *Filter) Keep(record any) (bool, error) {
 			return true, nil
 		}
 		program, source, needs = f.residual, f.residualSrc, f.traversesResidual
+	}
+
+	// A chain can only be answered in the query. If the listing did not take
+	// the SQL, evaluating here would read the far row as a map of columns,
+	// where the second hop is a missing key — an error CEL reports and the
+	// switch below swallows as "does not match", for every row. An empty
+	// listing that looks exactly like a correct one is the one answer this
+	// must never give.
+	if !f.pushedDown && len(f.chains) > 0 {
+		return false, fmt.Errorf(
+			"--filter %q follows two relations, which only the query can answer, "+
+				"and this listing does not push filters into its query yet",
+			strings.Join(f.chains, " && "))
 	}
 
 	if len(needs) > 0 && f.loader == nil {

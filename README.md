@@ -178,8 +178,21 @@ $ roz mcp
 ```
 
 That serves every command over MCP on stdin and stdout, so an agent can read
-the queue and record decisions without shelling out. `roz watch` gives it the
-change log as a stream.
+the queue and record decisions without shelling out. Alongside it, a `roz
+watch` process gives the agent the change log as a stream — a real monitor, not
+an MCP call, because over MCP `watch` is bounded to `--once` and a bounded read
+is not a stream.
+
+That turns the log into a trigger. Alice can have the agent tell roz about
+every pull request she opens and help her keep her projects in priority order,
+and the same stream lets it act without being asked: notice her working
+patterns, attach a Jira ticket to a PR that has none, close the ticket once the
+PR merges. The Jira half of that last one is the agent's own work — roz records
+what a tracker says and never writes to one — but roz is what tells it the
+merge happened. Each of those fires off something roz has already recorded, so
+nothing on the agent's side is polling for work. (roz polls — SQLite cannot
+push a notification — but it is one indexed query, once, no matter how many
+agents are reading.)
 
 The division that makes this safe is in the schema. Columns are either
 **authored** — written by a person or an agent — or **observed**, written only

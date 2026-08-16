@@ -1186,6 +1186,32 @@ and `q4` are fine and `two words`, `1st`, `with-hyphen` and an emoji are not.
 The rule is not "no spaces" but "nothing that has to be escaped": a name you
 cannot type without quoting is a name that defeats the point of having one.
 
+### The page asks its questions the same way
+
+Two views are seeded, and the status page reads them by name:
+
+| view | what it decides |
+|---|---|
+| `open_projects` | which projects the page's table shows |
+| `open_actions` | what "still to do" counts as, per project |
+
+So what the page means by *live work* is a row you can edit. Narrow
+`open_projects` and the table narrows on the next render, with no rebuild —
+which is the whole argument for views being an entity rather than a flag.
+
+If a view is dropped, or a later migration breaks the column it names, the page
+falls back to the definition it was seeded with rather than going blank. A page
+that emptied because somebody deleted a row would be the worst way to find that
+out.
+
+**Most of the page is not a view, and some of it never will be.** The queue and
+its waiting half read the verb's rank class and whether a project is blocked,
+neither of which is a column of an action — a ranking is not a predicate, which
+is the same conclusion `--sort` reached. The calendar strip needs date
+arithmetic on `now` that a filter cannot do. And the page loads every action,
+project, pull request and issue to caption links with, which is the absence of
+a filter rather than a filter.
+
 **A view supplies defaults; what you type wins.** `--view stalled --fields
 id,title` is somebody wanting that view shown differently, and a saved answer
 that ignored the flags beside it would be a saved answer nobody trusts.

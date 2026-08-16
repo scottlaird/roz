@@ -838,6 +838,31 @@ CREATE TABLE view (
   updated_at TEXT NOT NULL
 ) STRICT;
 
+-- The views as seeded, compared against the migration by TestSeededViews.
+--
+-- These are the page's own questions, moved out of Go: what "live projects"
+-- means is now a row somebody can edit rather than a filter compiled in.
+--
+-- Only two of the page's queries convert. The queue and its waiting half are
+-- rankings rather than predicates -- they read the verb's rank class and
+-- whether the project is blocked, neither a column of the action -- the
+-- calendar needs date arithmetic a filter cannot do, and the rest of what the
+-- page loads is everything, which is the absence of a filter. See 0036.
+INSERT INTO view (name, entity, filter, sort, description, created_at, updated_at) VALUES
+  ('open_projects', 'project',
+   'status != "done" && status != "retired" && status != "superseded"',
+   'priority',
+   'Live work, blocked included. A blocked project is still live, and hiding one is how SL22 sat unseen for a session.',
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+  ('open_actions', 'action',
+   'closed_at == null',
+   'priority',
+   'Everything still to do, in queue order — which is more than the queue shows, since the queue folds away what is blocked or waiting.',
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
 -- ── indexes for the queries that run every render ────────────────────
 CREATE INDEX action_open     ON action(state, verb) WHERE closed_at IS NULL;
 CREATE INDEX action_expired  ON action(snooze_until)

@@ -224,6 +224,16 @@ func stalenessOrder(prefix string) string {
 
 // ActionFilter narrows ListActions. The zero value selects everything.
 type ActionFilter struct {
+	// Where is a WHERE fragment somebody else compiled — the SQL half of a
+	// CEL filter. Opaque here: what it means is the filter package's business.
+	//
+	// Scalar fragments only, for now. This query aliases the table as `a`,
+	// while a correlated subquery from a traversal qualifies the outer row as
+	// `action.…`, so a filter reaching a relation would not resolve. Either
+	// the alias or the qualifier has to give; see scottlaird/roz#201.
+	Where string
+	// WhereArgs are its parameters, in the order the fragment names them.
+	WhereArgs []any
 	// State keeps actions in one state.
 	State string
 	// Verb keeps actions using one verb.
@@ -455,6 +465,10 @@ func (f ActionFilter) clauses(now string) ([]string, []any) {
 		// deciding not to finish.
 		where = append(where, "a.closed_reason = ?", staleSubjects)
 		args = append(args, ClosedCompleted, RoleSubject, PRStateOpen)
+	}
+	if f.Where != "" {
+		where = append(where, "("+f.Where+")")
+		args = append(args, f.WhereArgs...)
 	}
 	return where, args
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scottlaird/roz/internal/filter"
 	"github.com/scottlaird/roz/internal/markdown"
 	"github.com/scottlaird/roz/internal/store"
 )
@@ -317,11 +318,20 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	// is waiting on someone* -- ready, unhidden, and a wait verb. Blocked and
 	// hidden actions stay out of both: their blocker is already in the queue,
 	// and listing them is the noise the fold rule exists to stop.
+	//
+	// Neither is a view, and neither can be: both read the verb's rank class
+	// through actionverb and whether the action's project is blocked, and
+	// neither is a column of the action. A ranking is not a predicate -- the
+	// same conclusion #169 reached about --sort.
 	queue, err := st.ListActions(ctx, store.ActionFilter{Unblocked: true, Order: store.OrderPriority})
 	if err != nil {
 		return nil, err
 	}
-	open, err := st.ListActions(ctx, store.ActionFilter{Open: true, Order: store.OrderPriority})
+	openFilter := store.ActionFilter{Open: true, Order: store.OrderPriority}
+	if where, args, ok := savedFilter(ctx, st, "open_actions", &store.Action{}); ok {
+		openFilter = store.ActionFilter{Where: where, WhereArgs: args, Order: store.OrderPriority}
+	}
+	open, err := st.ListActions(ctx, openFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +345,15 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	// Open rather than active: a blocked project is live work, and hiding it
 	// is how one sat unseen for a session. It shows with its status, which is
 	// the whole information.
-	projects, err := st.ListProjects(ctx, store.ProjectFilter{Open: true, Order: store.OrderPriority})
+	//
+	// Read from the `open_projects` view where there is one, so that what the
+	// page means by live work is a row somebody can edit rather than a filter
+	// compiled in.
+	projectFilter := store.ProjectFilter{Open: true, Order: store.OrderPriority}
+	if where, args, ok := savedFilter(ctx, st, "open_projects", &store.Project{}); ok {
+		projectFilter = store.ProjectFilter{Where: where, WhereArgs: args, Order: store.OrderPriority}
+	}
+	projects, err := st.ListProjects(ctx, projectFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -727,4 +745,43 @@ func outstandingOwners(p *store.PR) []string {
 		}
 	}
 	return out
+}
+
+// savedFilter resolves a named view into a WHERE fragment for the page.
+//
+// The page falls back to its built-in filter when the view is missing, is of
+// the wrong listing, or no longer compiles. That is not defensiveness for its
+// own sake: a view is a row somebody can edit, and the page going blank
+// because one was dropped or broken by a migration would be the worst way to
+// find out. The fallback is the definition the view was seeded from, so the
+// page shows the same thing it always did.
+//
+// Only the filter and only where it converts whole. A view whose expression
+// has to be finished in Go would mean the page reading every row, which is a
+// cost the page cannot pay per render — so a partial conversion falls back too.
+func savedFilter(ctx context.Context, st *store.Store, name string, blank any) (string, []any, bool) {
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		return "", nil, false
+	}
+	defer tx.Rollback()
+
+	v, err := tx.LoadView(ctx, name)
+	if err != nil {
+		return "", nil, false
+	}
+	tx.Rollback()
+
+	if v.Filter == "" {
+		return "", nil, false
+	}
+	f, err := filter.Compile(blank, v.Filter)
+	if err != nil || f == nil {
+		return "", nil, false
+	}
+	where, args := f.SQL()
+	if where == "" || f.RunsInGo() {
+		return "", nil, false
+	}
+	return where, args, true
 }

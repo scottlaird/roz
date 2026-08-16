@@ -148,3 +148,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mid);width
 .noteset{color:var(--faint); font-size:.75rem; margin:.5rem 0 0}
 .empty{color:var(--faint);font-size:13.5px}
 footer{border-top:1px solid var(--rule);padding-top:12px;color:var(--faint);font-size:12px}
+/* The view picker on a listing. Reads as a row of choices rather than as
+   prose, and the one in force is not a link: a link to where you already are
+   is furniture, the same rule the last breadcrumb follows. */
+nav.views{display:flex;flex-wrap:wrap;gap:.75rem;margin:-.25rem 0 1rem;font-size:13.5px}
+nav.views .current{color:var(--fg);font-weight:600}
+nav.views a{color:var(--mid)}

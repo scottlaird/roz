@@ -4,6 +4,16 @@
        gone quiet. */}}
   <section>
     <h2>actions</h2>
+    {{if .ViewLinks}}
+    {{/* The saved views of this listing. A view is a named question, so the
+         picker is the list of questions somebody thought worth keeping. */}}
+    <nav class="views">
+      {{range .ViewLinks}}
+      {{if .Current}}<span class="current" title="{{.Description}}">{{.Label}}</span>
+      {{else}}<a href="{{.Href}}" title="{{.Description}}">{{.Label}}</a>{{end}}
+      {{end}}
+    </nav>
+    {{end}}
     {{if .AllActions}}
     <div class="tablewrap">
       <table>

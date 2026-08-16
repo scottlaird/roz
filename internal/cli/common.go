@@ -222,6 +222,16 @@ func sortFrom[T any](cmd *cobra.Command, set columnSet[T]) (ranking string, orde
 	if err != nil {
 		return "", store.Sort{}, err
 	}
+	return sortValue(value, set)
+}
+
+// sortValue is sortFrom without the command, for an order that arrives from
+// somewhere other than a flag — a saved view's, which the page reads.
+//
+// One resolver for both, so a view sorts the page the way it sorts the CLI.
+// The errors still name --sort, because that is what a view's sort was typed
+// as and where it can be corrected.
+func sortValue[T any](value string, set columnSet[T]) (ranking string, order store.Sort, err error) {
 	if strings.TrimSpace(value) == "" {
 		return "", store.Sort{}, nil
 	}

@@ -30,7 +30,20 @@ const shutdownGrace = 5 * time.Second
 
 // Page produces the page to serve. It is called per request, so what is
 // served is never staler than the request that asked for it.
-type Page func(ctx context.Context, kind, id string) ([]byte, error)
+type Page func(ctx context.Context, at PageQuery) ([]byte, error)
+
+// PageQuery is which page was asked for. A struct rather than a widening list
+// of parameters: what a listing can be asked to show is going to grow, and
+// each addition should not be a signature change through every caller.
+type PageQuery struct {
+	// Kind is the page: "", "projects", "actions", "project", "action".
+	Kind string
+	// ID is the entity a single-entity page is about.
+	ID string
+	// View is a saved view to build a listing from, taken from ?view=. Empty
+	// is the listing's own default.
+	View string
+}
 
 // ErrNoPage is a request for an entity that is not there.
 //
@@ -196,7 +209,11 @@ func (s *Server) pageHandler(kind, wildcard string) http.HandlerFunc {
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request, kind, id string) {
-	page, err := s.page(r.Context(), kind, id)
+	page, err := s.page(r.Context(), PageQuery{
+		Kind: kind,
+		ID:   id,
+		View: r.URL.Query().Get("view"),
+	})
 	if errors.Is(err, ErrNoPage) {
 		http.NotFound(w, r)
 		return

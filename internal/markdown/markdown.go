@@ -284,20 +284,25 @@ func (l *Linker) find(s string) []ref {
 	}
 	// The explicit form first: it is unambiguous, and claiming its span keeps
 	// the bare pass from linking the identifier inside the brackets as well.
-	if len(l.refs) > 0 {
-		for _, m := range wikiPattern.FindAllStringSubmatchIndex(s, -1) {
-			if overlaps(refs, m[0], m[1]) {
-				continue
-			}
-			// A reference to something that does not exist keeps its text and
-			// loses its brackets: the brackets are markup asking for a link,
-			// and showing them to a reader who did not write them says nothing.
-			r := ref{start: m[0], end: m[1], labelStart: m[2], labelEnd: m[3]}
-			if target, ok := l.refs[s[m[2]:m[3]]]; ok {
-				r.dest = target.Href
-			}
-			refs = append(refs, r)
+	//
+	// Not gated on there being anything to resolve against, unlike the passes
+	// below. Those find an identifier and need the map to say whether it is
+	// one; this one was told by the author, and the not-found case is already
+	// handled two lines down. Gating it made the brackets survive on a
+	// database with nothing in it yet, which is the opposite of what the
+	// comment there promises.
+	for _, m := range wikiPattern.FindAllStringSubmatchIndex(s, -1) {
+		if overlaps(refs, m[0], m[1]) {
+			continue
 		}
+		// A reference to something that does not exist keeps its text and
+		// loses its brackets: the brackets are markup asking for a link,
+		// and showing them to a reader who did not write them says nothing.
+		r := ref{start: m[0], end: m[1], labelStart: m[2], labelEnd: m[3]}
+		if target, ok := l.refs[s[m[2]:m[3]]]; ok {
+			r.dest = target.Href
+		}
+		refs = append(refs, r)
 	}
 	if len(l.refs) > 0 {
 		for _, m := range idPattern.FindAllStringSubmatchIndex(s, -1) {

@@ -107,6 +107,7 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	reportSettled(out, result.Settled)
 	reportEjected(out, result.Ejected)
 	reportOverdue(out, result.Overdue)
+	reportUnannounced(out, result.Unannounced)
 
 	if !quiet {
 		fmt.Fprintf(out, "polled %d, %d changed", result.Polled, result.ChangedCount())
@@ -121,6 +122,9 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		}
 		if result.OverdueCount() > 0 {
 			fmt.Fprintf(out, ", %d overdue", result.OverdueCount())
+		}
+		if n := len(result.Unannounced); n > 0 {
+			fmt.Fprintf(out, ", %d unannounced", n)
 		}
 		if result.IssuesPolled == 1 {
 			fmt.Fprint(out, ", 1 issue polled")
@@ -211,6 +215,17 @@ func reportOverdue(out io.Writer, overdue []store.Overdue) {
 		if o.Raised != nil {
 			fmt.Fprintf(out, "  %s added to the queue\n", o.Raised.ID)
 		}
+	}
+}
+
+// reportUnannounced says what is waiting for a review nobody asked for, and
+// says what to do about it: the whole point is that this is a different
+// problem from a slow review, wanting a different response.
+func reportUnannounced(out io.Writer, waits []store.Unannounced) {
+	for _, w := range waits {
+		fmt.Fprintf(out, "%s is waiting for a review of %s that nobody was asked for\n",
+			w.Action.ID, w.PR)
+		fmt.Fprintf(out, "  announce it, then `roz pr announce %s`\n", w.PR)
 	}
 }
 

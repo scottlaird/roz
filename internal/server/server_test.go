@@ -62,7 +62,7 @@ func get(t *testing.T, url string) (*http.Response, string) {
 }
 
 func TestServesThePage(t *testing.T) {
-	base := running(t, func(context.Context, string, string) ([]byte, error) {
+	base := running(t, func(context.Context, PageQuery) ([]byte, error) {
 		return []byte("<h1>the page</h1>"), nil
 	}, nil)
 
@@ -82,12 +82,49 @@ func TestServesThePage(t *testing.T) {
 	}
 }
 
+// TestTheRequestSaysWhichPageAndWhichView. The renderer decides what a view
+// means; the server's whole job here is to hand over what was asked for, and
+// a parameter dropped in the handler would look exactly like a view that
+// filtered nothing.
+func TestTheRequestSaysWhichPageAndWhichView(t *testing.T) {
+	var mu sync.Mutex
+	var asked []PageQuery
+	base := running(t, func(_ context.Context, at PageQuery) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, at)
+		return []byte("the page"), nil
+	}, nil)
+
+	for _, path := range []string{"/actions?view=writing", "/actions", "/action/NA1"} {
+		if resp, _ := get(t, base+path); resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []PageQuery{
+		{Kind: "actions", View: "writing"},
+		{Kind: "actions"},
+		{Kind: "action", ID: "NA1"},
+	}
+	if len(asked) != len(want) {
+		t.Fatalf("the page was built %d times, want %d", len(asked), len(want))
+	}
+	for i, w := range want {
+		if asked[i] != w {
+			t.Errorf("request %d = %+v, want %+v", i, asked[i], w)
+		}
+	}
+}
+
 // TestBuiltPerRequest: the point of rendering on demand is that a reload
 // shows what is true now.
 func TestBuiltPerRequest(t *testing.T) {
 	var mu sync.Mutex
 	var calls int
-	base := running(t, func(context.Context, string, string) ([]byte, error) {
+	base := running(t, func(context.Context, PageQuery) ([]byte, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		calls++
@@ -105,7 +142,7 @@ func TestBuiltPerRequest(t *testing.T) {
 // TestOnlyTheRootPath: a mistyped path should be visibly wrong rather than
 // quietly serving the page under a name that does not exist.
 func TestOnlyTheRootPath(t *testing.T) {
-	base := running(t, func(context.Context, string, string) ([]byte, error) {
+	base := running(t, func(context.Context, PageQuery) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil)
 
@@ -122,7 +159,7 @@ func TestOnlyTheRootPath(t *testing.T) {
 // server down, since the syncer running beside it would go too.
 func TestRenderFailureIsA500AndLogged(t *testing.T) {
 	var log lockedBuffer
-	base := running(t, func(context.Context, string, string) ([]byte, error) {
+	base := running(t, func(context.Context, PageQuery) ([]byte, error) {
 		return nil, errors.New("the database is on fire")
 	}, &log)
 
@@ -162,7 +199,7 @@ func (b *lockedBuffer) String() string {
 // TestCancellationIsNotAFailure: the service runner takes an error as a
 // reason to stop everything else, so stopping on request must return nil.
 func TestCancellationIsNotAFailure(t *testing.T) {
-	s := New("127.0.0.1:0", func(context.Context, string, string) ([]byte, error) {
+	s := New("127.0.0.1:0", func(context.Context, PageQuery) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil, nil)
 
@@ -197,7 +234,7 @@ func TestRunNeedsAPage(t *testing.T) {
 // TestAddressInUseIsReported: two `roz serve` processes should not leave the
 // second one silently serving nothing.
 func TestAddressInUseIsReported(t *testing.T) {
-	page := func(context.Context, string, string) ([]byte, error) { return []byte("the page"), nil }
+	page := func(context.Context, PageQuery) ([]byte, error) { return []byte("the page"), nil }
 	base := running(t, page, nil)
 	addr := strings.TrimPrefix(base, "http://")
 
@@ -211,7 +248,7 @@ func TestAddressInUseIsReported(t *testing.T) {
 func runningLive(t *testing.T, changes Changes, log io.Writer) string {
 	t.Helper()
 
-	page := func(context.Context, string, string) ([]byte, error) { return []byte("the page"), nil }
+	page := func(context.Context, PageQuery) ([]byte, error) { return []byte("the page"), nil }
 	s := New("127.0.0.1:0", page, changes, log)
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -421,7 +458,7 @@ func TestEventsSurviveAFailedFirstRead(t *testing.T) {
 // with nothing to watch should say so rather than hold a connection open
 // promising events that cannot come.
 func TestNoEventsWithoutAChangeSource(t *testing.T) {
-	base := running(t, func(context.Context, string, string) ([]byte, error) {
+	base := running(t, func(context.Context, PageQuery) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil)
 
@@ -444,7 +481,7 @@ func TestStoppingWithAStreamOpenIsPrompt(t *testing.T) {
 	defer cancel()
 
 	s := New("127.0.0.1:0",
-		func(context.Context, string, string) ([]byte, error) { return []byte("page"), nil },
+		func(context.Context, PageQuery) ([]byte, error) { return []byte("page"), nil },
 		func(context.Context) (int64, error) { return 1, nil },
 		nil)
 
@@ -496,7 +533,7 @@ func TestStoppingWithAStreamOpenIsPrompt(t *testing.T) {
 // test — what it carries is less sensitive than the page beside it, so making
 // it harder to reach than the thing it describes would gain nothing.
 func TestMetricsAreServed(t *testing.T) {
-	base := running(t, func(context.Context, string, string) ([]byte, error) {
+	base := running(t, func(context.Context, PageQuery) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil)
 

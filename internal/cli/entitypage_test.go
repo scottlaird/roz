@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -223,4 +224,107 @@ func crumbs(page string) string {
 	}
 	trail, _, _ := strings.Cut(rest, "</nav>")
 	return trail
+}
+
+// TestActionsPageShowsOneView is #218: a view could be created, named and
+// sorted, and the page had no way to be asked for it.
+func TestActionsPageShowsOneView(t *testing.T) {
+	db, ids := pageFixture(t)
+	// A second action the view will leave out.
+	other := addAction(t, db, "--title", "decide the thing", "--verb", "decide",
+		"--project", ids.project)
+	if _, err := runCLI(t, "view", "add", "writing", "--db", db,
+		"--entity", "action", "--filter", `verb == "write"`,
+		"--description", "What there is to write"); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	all := routeHTML(t, db, route{kind: pageActions})
+	if !strings.Contains(all, ids.action) || !strings.Contains(all, other) {
+		t.Fatalf("the unfiltered listing is missing an action:\n%s", all)
+	}
+
+	viewed := routeHTML(t, db, route{kind: pageActions, view: "writing"})
+	if !strings.Contains(viewed, ids.action) {
+		t.Errorf("the view dropped the action it selects:\n%s", viewed)
+	}
+	if strings.Contains(viewed, ">"+other+"<") {
+		t.Errorf("the view kept an action it filters out:\n%s", viewed)
+	}
+}
+
+// TestActionsPageOffersTheViewsThatExist. Without the picker, ?view= would be
+// a parameter only somebody who had read the source would know to type.
+func TestActionsPageOffersTheViewsThatExist(t *testing.T) {
+	db, _ := pageFixture(t)
+	if _, err := runCLI(t, "view", "add", "writing", "--db", db,
+		"--entity", "action", "--filter", `verb == "write"`); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+	// A project view, which belongs to another listing and not this picker.
+	if _, err := runCLI(t, "view", "add", "mine", "--db", db,
+		"--entity", "project", "--filter", `status != "done"`); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	all := routeHTML(t, db, route{kind: pageActions})
+	if !strings.Contains(all, `href="/actions?view=writing"`) {
+		t.Errorf("the picker does not offer the action view:\n%s", all)
+	}
+	if strings.Contains(all, "view=mine") {
+		t.Errorf("the picker offers a view of another listing:\n%s", all)
+	}
+	// The listing's own order is what "all" means, and it is where we are.
+	if !strings.Contains(all, `<span class="current"`) {
+		t.Errorf("the picker does not mark where it is:\n%s", all)
+	}
+
+	viewed := routeHTML(t, db, route{kind: pageActions, view: "writing"})
+	if !strings.Contains(viewed, `<span class="current" title="">writing</span>`) {
+		t.Errorf("the picker does not mark the view in force:\n%s", viewed)
+	}
+	if !strings.Contains(viewed, `href="/actions"`) {
+		t.Errorf("the picker offers no way back to everything:\n%s", viewed)
+	}
+}
+
+// TestActionsPageSortsTheWayTheViewSays is the other half of #218: the page
+// read a view's filter and then imposed its own order, so editing a view's
+// sort changed the CLI and left the page alone.
+func TestActionsPageSortsTheWayTheViewSays(t *testing.T) {
+	db, ids := pageFixture(t)
+	zebra := addAction(t, db, "--title", "zebra", "--verb", "write", "--project", ids.project)
+
+	if _, err := runCLI(t, "view", "add", "alphabetical", "--db", db,
+		"--entity", "action", "--filter", `verb == "write"`, "--sort", "title"); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	body := routeHTML(t, db, route{kind: pageActions, view: "alphabetical"})
+	// "do the thing" before "zebra", which is not creation order.
+	first, second := strings.Index(body, ids.action), strings.Index(body, zebra)
+	if first < 0 || second < 0 {
+		t.Fatalf("the view lost an action it selects:\n%s", body)
+	}
+	if first > second {
+		t.Errorf("the page ignored the view's sort: %s came after %s", ids.action, zebra)
+	}
+}
+
+// TestActionsPageRejectsAViewItCannotShow. A view named in a URL is a request,
+// not a default: showing a different list would be a lie about which question
+// was answered, so it is a wrong address instead.
+func TestActionsPageRejectsAViewItCannotShow(t *testing.T) {
+	db, _ := pageFixture(t)
+	if _, err := runCLI(t, "view", "add", "mine", "--db", db,
+		"--entity", "project", "--filter", `status != "done"`); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	for _, name := range []string{"nosuchview", "mine"} {
+		_, err := renderRouteFor(t, db, route{kind: pageActions, view: name})
+		if !errors.Is(err, errNoSuchPage) {
+			t.Errorf("?view=%s returned %v, want a no-such-page error", name, err)
+		}
+	}
 }

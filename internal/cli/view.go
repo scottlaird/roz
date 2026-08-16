@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"net/url"
 	"strings"
 	"time"
 
@@ -196,6 +197,10 @@ type pageContent struct {
 	// index's appendix of everything went.
 	AllProjects []projectView
 	AllActions  []actionView
+	// ViewLinks are the saved views this listing can be shown through, with
+	// the one in force marked. Without them ?view= would be a parameter only
+	// somebody who had read the source would know to type.
+	ViewLinks []viewLinkView
 	// Project and Action are the detail pages. One of them is set, and only
 	// on the page that is about it.
 	Project *projectView
@@ -349,6 +354,10 @@ func crumbsFor(kind, id string) []crumbView {
 type route struct {
 	kind string
 	id   string
+	// view is a saved view to build a listing from, named in ?view=. Empty
+	// builds the listing's own default, which is what every page did before
+	// there was anywhere to say otherwise.
+	view string
 }
 
 func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings) (*pageContent, error) {
@@ -411,8 +420,10 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 		return nil, err
 	}
 	openFilter := store.ActionFilter{Open: true, Order: store.OrderPriority}
-	if where, args, ok := savedFilter(ctx, st, "open_actions", &store.Action{}); ok {
-		openFilter = store.ActionFilter{Where: where, WhereArgs: args, Order: store.OrderPriority}
+	if v, ok := savedFilter(ctx, st, "open_actions", actionColumns); ok {
+		openFilter = store.ActionFilter{
+			Where: v.where, WhereArgs: v.args, Order: v.ranking, Sort: v.order,
+		}
 	}
 	open, err := st.ListActions(ctx, openFilter)
 	if err != nil {
@@ -433,8 +444,10 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 	// page means by live work is a row somebody can edit rather than a filter
 	// compiled in.
 	projectFilter := store.ProjectFilter{Open: true, Order: store.OrderPriority}
-	if where, args, ok := savedFilter(ctx, st, "open_projects", &store.Project{}); ok {
-		projectFilter = store.ProjectFilter{Where: where, WhereArgs: args, Order: store.OrderPriority}
+	if v, ok := savedFilter(ctx, st, "open_projects", projectColumns); ok {
+		projectFilter = store.ProjectFilter{
+			Where: v.where, WhereArgs: v.args, Order: v.ranking, Sort: v.order,
+		}
 	}
 	projects, err := st.ListProjects(ctx, projectFilter)
 	if err != nil {
@@ -571,7 +584,12 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			content.AllProjects = append(content.AllProjects, projectRow(p, node, openPerProject, issuesByProject, text, stamp))
 		}
 	case pageActions:
-		for _, a := range everyAction {
+		listed, err := listedActions(ctx, st, at.view, everyAction)
+		if err != nil {
+			return nil, err
+		}
+		content.ViewLinks = viewLinksFor(ctx, st, "action", "/actions", at.view)
+		for _, a := range listed {
 			row := actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late)
 			row.Href = actionHref(a.ID)
 			content.AllActions = append(content.AllActions, row)
@@ -919,6 +937,96 @@ func outstandingOwners(p *store.PR) []string {
 	return out
 }
 
+// viewLinkView is one entry in a listing's view picker.
+type viewLinkView struct {
+	Label       string
+	Href        string
+	Description string
+	Current     bool
+}
+
+// viewLinksFor is the picker: every saved view of this entity, plus the
+// listing's own default at the front, which is what "all" means and is how a
+// reader gets back.
+func viewLinksFor(ctx context.Context, st *store.Store, entity, path, current string) []viewLinkView {
+	saved, err := st.Views(ctx, entity)
+	if err != nil {
+		// A picker is navigation, not content. Losing it is worth less than
+		// losing the listing it sits above.
+		return nil
+	}
+	if len(saved) == 0 {
+		return nil
+	}
+
+	links := []viewLinkView{{
+		Label:       "all",
+		Href:        path,
+		Description: "everything, in the listing's own order",
+		Current:     current == "",
+	}}
+	for _, v := range saved {
+		links = append(links, viewLinkView{
+			Label:       v.Name,
+			Href:        path + "?view=" + url.QueryEscape(v.Name),
+			Description: v.Description,
+			Current:     v.Name == current,
+		})
+	}
+	return links
+}
+
+// listedActions is what the actions page shows: everything, or one saved
+// view's answer.
+//
+// Unlike savedFilter this reports its errors instead of falling back. The
+// difference is who named the view: a page reading `open_actions` for its own
+// filter should survive that row being edited, but a view named in a URL is a
+// request, and quietly showing a different list would be a lie about which
+// question was answered.
+func listedActions(ctx context.Context, st *store.Store, name string, every []*store.Action) ([]*store.Action, error) {
+	if name == "" {
+		return every, nil
+	}
+
+	tx, err := st.Begin(ctx, store.ActorHuman)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	v, err := tx.LoadView(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: no view called %q", errNoSuchPage, name)
+	}
+	tx.Rollback()
+
+	if v.Entity != "action" {
+		return nil, fmt.Errorf("%w: view %q is of %s", errNoSuchPage, v.Name, v.Entity)
+	}
+
+	f, err := filter.Compile(&store.Action{}, v.Filter)
+	if err != nil {
+		return nil, fmt.Errorf("view %q no longer compiles: %w", v.Name, err)
+	}
+	ranking, order, err := sortValue(v.Sort, actionColumns)
+	if err != nil {
+		return nil, fmt.Errorf("view %q has a sort this listing cannot take: %w", v.Name, err)
+	}
+
+	selection := store.ActionFilter{Order: ranking, Sort: order}
+	if f != nil {
+		selection.Where, selection.WhereArgs = f.SQL()
+	}
+	rows, err := st.ListActions(ctx, selection)
+	if err != nil {
+		return nil, err
+	}
+	// Whatever the query could not take. The page can afford it here because
+	// it is already holding every action for link resolution — the rows are
+	// read either way, so the Go pass costs a comparison and not a scan.
+	return keep(f, rows, actionColumns.recordOf)
+}
+
 // savedFilter resolves a named view into a WHERE fragment for the page.
 //
 // The page falls back to its built-in filter when the view is missing, is of
@@ -928,32 +1036,53 @@ func outstandingOwners(p *store.PR) []string {
 // find out. The fallback is the definition the view was seeded from, so the
 // page shows the same thing it always did.
 //
-// Only the filter and only where it converts whole. A view whose expression
+// Only the filter converts where it converts whole. A view whose expression
 // has to be finished in Go would mean the page reading every row, which is a
 // cost the page cannot pay per render — so a partial conversion falls back too.
-func savedFilter(ctx context.Context, st *store.Store, name string, blank any) (string, []any, bool) {
+//
+// The order comes back with it. A view is one named question, and answering it
+// with the view's rows in the page's order would be half of somebody's answer:
+// #218 was that editing a view's sort changed the CLI and left the page alone.
+func savedFilter[T any](ctx context.Context, st *store.Store, name string, set columnSet[T]) (savedListing, bool) {
 	tx, err := st.Begin(ctx, store.ActorHuman)
 	if err != nil {
-		return "", nil, false
+		return savedListing{}, false
 	}
 	defer tx.Rollback()
 
 	v, err := tx.LoadView(ctx, name)
 	if err != nil {
-		return "", nil, false
+		return savedListing{}, false
 	}
 	tx.Rollback()
 
 	if v.Filter == "" {
-		return "", nil, false
+		return savedListing{}, false
 	}
-	f, err := filter.Compile(blank, v.Filter)
+	f, err := filter.Compile(set.recordOf(set.blank), v.Filter)
 	if err != nil || f == nil {
-		return "", nil, false
+		return savedListing{}, false
 	}
 	where, args := f.SQL()
 	if where == "" || f.RunsInGo() {
-		return "", nil, false
+		return savedListing{}, false
 	}
-	return where, args, true
+	// A sort that no longer resolves falls back the same way the filter does,
+	// and takes the filter with it: half a view is not the view.
+	ranking, order, err := sortValue(v.Sort, set)
+	if err != nil {
+		return savedListing{}, false
+	}
+	return savedListing{where: where, args: args, ranking: ranking, order: order}, true
+}
+
+// savedListing is a view resolved into the parts a listing query takes.
+//
+// ranking and order are the two ways to say an order and are exclusive: a
+// ranking is a whole ordering, not the first key of one. See sortValue.
+type savedListing struct {
+	where   string
+	args    []any
+	ranking string
+	order   store.Sort
 }

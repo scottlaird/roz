@@ -1000,6 +1000,48 @@ stacked at the moment, so that path is unexercised on real data.
 An action's subject pull request is not an edge yet, so a stack and the work
 that produced it are two disconnected pictures.
 
+## Where a week begins
+
+The weekly wrap-up needs to know what "this week" covers, and that is two
+settings rather than one. `week_start` decides what "Week of ..." means in a
+heading. `review_day` decides the window: the seven days ending at the review.
+They are independent, and the interesting case is when they disagree, which is
+the normal case for anybody who reviews on a Friday and thinks of weeks as
+starting on Monday.
+
+```console
+$ roz config show
+review_day  friday
+this_week   Week of August 10 (Sat 8 Aug to Fri 14 Aug)
+week_start  monday
+```
+
+`this_week` is derived rather than stored, and it is there because the two
+settings are each legible alone and say nothing together.
+
+**The window is seven days ending at the review, that day included.** A review
+run at five on a Friday afternoon has to cover that Friday's merges — "since
+Friday" read as midnight silently drops the day being reviewed. Every day then
+belongs to exactly one window, which is the property worth having and is
+tested by walking a year of reviews and checking each window abuts the last.
+
+**The label is the `week_start` of whichever week most of the window is in.**
+One rule, and it settles the case the issue said had to be chosen. Monday weeks
+with a Friday review give a Sat–Fri window whose five weekdays are in the week
+beginning that Monday, so it is headed with it — and the window therefore opens
+two days *before* the date in its own heading, which is right rather than a
+bug: the previous review was the Friday before, so the weekend after it has not
+been reported yet.
+
+Where the two coincide — reviewing on a Monday, weeks starting Monday — the
+window is Tue–Mon and six of its seven days fall in the *earlier* week, so that
+is the label. The other reading would head a report with a week it contains one
+day of.
+
+`review_day` is a window definition and **not a schedule**. Nothing fires on
+it; the report is run when somebody runs it. Making it a schedule is a larger
+feature.
+
 ## The page links to itself
 
 Every action and project has an anchor, which is its identifier verbatim:

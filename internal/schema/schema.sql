@@ -76,7 +76,19 @@ CREATE TABLE config (
   -- how many days after a pull request ends to keep polling it. Days rather
   -- than hours: what it covers is review comments landing after a merge.
   -- Last because ADD COLUMN put it there. See 0029.
-  poll_window_days INTEGER NOT NULL DEFAULT 14 CHECK (poll_window_days >= 0)
+  poll_window_days INTEGER NOT NULL DEFAULT 14 CHECK (poll_window_days >= 0),
+  -- Where a week begins, which is two settings rather than one: the day a week
+  -- is labelled from, and the day the review is actually done. They disagree
+  -- for anybody who reviews on a Friday and thinks of weeks as starting on
+  -- Monday, which is ordinary rather than an edge case. Names rather than
+  -- numbers, so the log reads. See 0041.
+  week_start    TEXT NOT NULL DEFAULT 'monday'
+                  CHECK (week_start IN ('monday','tuesday','wednesday','thursday','friday','saturday','sunday')),
+  -- The window is the seven days ending at the review, so everything since the
+  -- last one is covered exactly once. A window definition, not a schedule:
+  -- nothing fires on it. See 0041.
+  review_day    TEXT NOT NULL DEFAULT 'friday'
+                  CHECK (review_day IN ('monday','tuesday','wednesday','thursday','friday','saturday','sunday'))
 ) STRICT;
 
 INSERT INTO config (id, created_at, updated_at)

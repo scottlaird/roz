@@ -42,6 +42,19 @@ type Config struct {
 	// test for belonging here: how far back to look does not change between
 	// two commands run a minute apart.
 	PollWindowDays int64 `db:"poll_window_days"`
+
+	// WeekStart is the day a week is labelled from — what "Week of ..." means
+	// in a heading, and nothing else. ReviewDay is the day the review is
+	// actually done, which decides the window: the seven days ending at it.
+	//
+	// Two settings rather than one because they answer different questions and
+	// routinely disagree — reviewing on a Friday while thinking of weeks as
+	// starting on Monday is ordinary. See WeekOf for what falls out of that.
+	//
+	// ReviewDay is a window definition and not a schedule. Nothing fires on
+	// it; the report is run when somebody runs it.
+	WeekStart string `db:"week_start"`
+	ReviewDay string `db:"review_day"`
 }
 
 func (c *Config) table() string       { return "config" }

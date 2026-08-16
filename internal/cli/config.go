@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -13,12 +14,15 @@ const (
 	flagOwner       = "owner"
 	flagJiraBaseURL = "jira-base-url"
 	flagPollWindow  = "poll-window-days"
+	flagWeekStart   = "week-start"
+	flagReviewDay   = "review-day"
 	flagJiraPrefix  = "jira-prefix"
 )
 
 // configFieldFlags are the settable columns. All authored: there is nothing
 // here for sync to write.
-var configFieldFlags = []string{flagOwner, flagJiraBaseURL, flagJiraPrefix, flagPollWindow}
+var configFieldFlags = []string{flagOwner, flagJiraBaseURL, flagJiraPrefix, flagPollWindow,
+	flagWeekStart, flagReviewDay}
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -73,6 +77,21 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// What the two week settings actually produce, which is the only way to
+	// see that they disagree on purpose. week_start and review_day are each
+	// legible on their own and say nothing together, and the window they make
+	// is what a report is bounded by.
+	week, err := store.WeekOf(time.Now(), cfg.WeekStart, cfg.ReviewDay)
+	if err != nil {
+		return err
+	}
+	encoded, err = withKeys(encoded, map[string]string{
+		"this_week": fmt.Sprintf("%s (%s to %s)", week.Title(),
+			week.Start.Format("Mon 2 Jan"), week.End.Format("Mon 2 Jan")),
+	})
+	if err != nil {
+		return err
+	}
 	if format == outputJSON {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
 		return err
@@ -116,6 +135,10 @@ func newConfigSetCmd() *cobra.Command {
 	f.StringArray(flagJiraPrefix, nil,
 		"a project key worth linking, e.g. CDSS; repeat for more, and replaces the whole list. "+
 			"Without one, no key is linked: the pattern also matches UTF-8 and SHA-256.")
+	f.String(flagWeekStart, "monday",
+		"the day a week is labelled from: what \"Week of ...\" means in a heading")
+	f.String(flagReviewDay, "friday",
+		"the day the review is done, which ends the window; a window definition, not a schedule")
 	f.Int64(flagPollWindow, 14,
 		"how many days after a pull request ends to keep polling it; 0 polls only what is open")
 	addActorFlag(cmd)
@@ -187,6 +210,27 @@ func applyConfigFlags(cmd *cobra.Command, cfg *store.Config) error {
 			return err
 		}
 		cfg.Owner = v
+	}
+	for _, setting := range []struct {
+		flag string
+		into *string
+	}{
+		{flagWeekStart, &cfg.WeekStart},
+		{flagReviewDay, &cfg.ReviewDay},
+	} {
+		if !f.Changed(setting.flag) {
+			continue
+		}
+		v, err := f.GetString(setting.flag)
+		if err != nil {
+			return err
+		}
+		// Validated here rather than left to the CHECK, so a typo is answered
+		// with the seven days rather than with a constraint.
+		if err := store.ValidateWeekday("--"+setting.flag, v); err != nil {
+			return err
+		}
+		*setting.into = strings.ToLower(strings.TrimSpace(v))
 	}
 	if f.Changed(flagJiraBaseURL) {
 		v, err := f.GetString(flagJiraBaseURL)

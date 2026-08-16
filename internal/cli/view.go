@@ -197,6 +197,10 @@ type pageContent struct {
 	// index's appendix of everything went.
 	AllProjects []projectView
 	AllActions  []actionView
+	// Title is what the browser tab says. It names the page rather than the
+	// tool: a row of tabs all reading "roz" is a row of tabs nobody can pick
+	// from, and the identifier is what somebody is looking for.
+	Title string
 	// ViewLinks are the saved views this listing can be shown through, with
 	// the one in force marked. Without them ?view= would be a parameter only
 	// somebody who had read the source would know to type.
@@ -344,6 +348,25 @@ func crumbsFor(kind, id string) []crumbView {
 	default:
 		return nil
 	}
+}
+
+// titleFor is the browser's title, most specific part first after the name of
+// the tool. A tab is truncated from the right, so `roz: SL41: Improve Review
+// Management` still says SL41 at the width a tab actually gets.
+//
+// The owner sits with the tool name rather than the page, because it labels
+// the whole queue and is usually unset.
+func titleFor(owner string, detail ...string) string {
+	title := "roz"
+	if owner != "" {
+		title += " · " + owner
+	}
+	for _, part := range detail {
+		if part != "" {
+			title += ": " + part
+		}
+	}
+	return title
 }
 
 // buildPage assembles everything the template needs.
@@ -505,6 +528,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 
 	content := &pageContent{
 		Owner:       cfg.owner,
+		Title:       titleFor(cfg.owner),
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Live:        live,
 		Favicon:     favicon,
@@ -603,6 +627,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			return nil, err
 		}
 		content.ViewLinks = viewLinksFor(ctx, st, "project", "/projects", at.view)
+		content.Title = titleFor(cfg.owner, "projects", at.view)
 		for _, node := range listed {
 			content.AllProjects = append(content.AllProjects,
 				projectRow(node.Project, node, openPerProject, issuesByProject, text, stamp))
@@ -618,6 +643,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			return nil, err
 		}
 		content.ViewLinks = viewLinksFor(ctx, st, "action", "/actions", at.view)
+		content.Title = titleFor(cfg.owner, "actions", at.view)
 		for _, a := range listed {
 			row := actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late)
 			row.Href = actionHref(a.ID)
@@ -630,6 +656,9 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			case p.ID == at.id:
 				row := projectRow(p, store.TreeNode{Project: p}, openPerProject, issuesByProject, text, stamp)
 				content.Project, found = &row, true
+				// The stored title, not the row's: the row's has been through
+				// the prose renderer and carries markup a title bar cannot use.
+				content.Title = titleFor(cfg.owner, p.ID, p.Title)
 			case p.ParentID.Valid && p.ParentID.String == at.id:
 				content.Children = append(content.Children,
 					projectRow(p, store.TreeNode{Project: p}, openPerProject, issuesByProject, text, stamp))
@@ -650,6 +679,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			if a.ID == at.id {
 				row := actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late)
 				content.Action = &row
+				content.Title = titleFor(cfg.owner, a.ID, a.Title)
 			}
 		}
 		if content.Action == nil {

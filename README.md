@@ -69,6 +69,7 @@ directory.
 | `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves, and `/metrics` says what roz is doing. Loopback, no authentication. |
 | **vocabulary** | |
 | `roz codeowners` | Who has to approve a set of changed files, and who is still worth asking. |
+| `roz view add` / `list` / `show` / `drop` | Name a listing — its filter, order and columns — and come back to it with `--view`. |
 | `roz owner set` / `list` | Where a group is reached, which is what `roz pr announce` looks up. Groups only. |
 | `roz verb set` | Change a verb's `wait_days` or `rank_class`. Settings, not definitions. |
 | `roz verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
@@ -1151,6 +1152,53 @@ like that is only worth printing if something checks it.
 `--unblocked` and `--waiting` have no equivalent and say so: they are the queue,
 which reads the verb's rank class and whether the project is blocked, neither
 of which is a column of the action.
+
+### Saving one
+
+A view is a listing you named. Which listing, which columns, which order,
+which filter — all of it exists as flags already; the name is what a view
+adds, so a question worth asking twice is not retyped:
+
+```console
+$ roz view add stalled --entity project \
+    --filter 'status != "done" && status != "retired" && snooze_until == null &&
+              !actions.exists(a, a.closed_at == null)' \
+    --description 'Live work with nothing open against it'
+stalled: project, where status != "done" && …
+
+$ roz project list --view stalled
+ID    TITLE
+SL41  Improve Review Management
+SL42  The week in review
+SL44  Sync polls less and survives more
+```
+
+**Adding one needs no code.** A filter is an expression over the columns a
+listing already declares, so a new question is a row in a table rather than a
+flag, a query and a release. That is the whole argument for it being an entity.
+
+Named rather than numbered, unlike everything else here. A project is one of
+many similar things and `SL7` is how you point at it; a view is referred to by
+what it is *for*, and `--view stalled` reads as a sentence.
+
+**A view supplies defaults; what you type wins.** `--view stalled --fields
+id,title` is somebody wanting that view shown differently, and a saved answer
+that ignored the flags beside it would be a saved answer nobody trusts.
+
+**It is checked when it is saved**, against the listing it names — a view is
+written once and read for months, so the moment to reject one is while
+somebody is still looking at it:
+
+```console
+$ roz view add broken --entity project --filter 'stat == "done"'
+Error: view "broken": --filter "stat == \"done\"": ERROR: <input>:1:1:
+undeclared reference to 'stat'
+```
+
+A view belongs to one listing, and applying it elsewhere says so rather than
+failing on a column that does not exist there. `roz view show` re-runs the
+check against the listing as it is now, so a view broken by a later migration
+says `broken:` instead of quietly returning nothing.
 
 ## For an agent
 

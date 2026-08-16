@@ -810,6 +810,32 @@ CREATE TABLE team_member (
   PRIMARY KEY (team, login)
 ) STRICT;
 
+-- ── view ─────────────────────────────────────────────────────────────
+-- A listing you can name and come back to: which listing, which columns,
+-- which order, which filter. Everything it holds already exists as a flag;
+-- what it adds is a name, so a question worth asking twice does not have to
+-- be retyped.
+--
+-- The point is that adding one needs no code — a filter is an expression over
+-- columns a listing already declares, so a new question is a row rather than
+-- a flag, a query and a release.
+--
+-- Named rather than numbered, because a view is referred to by what it is for
+-- and not as one of many similar things. entity is unconstrained here: which
+-- listings exist is a fact about the command tree, and a CHECK naming them
+-- would be a second place to edit. See 0035.
+CREATE TABLE view (
+  name       TEXT PRIMARY KEY CHECK (
+               name <> '' AND name = lower(name) AND instr(name, ' ') = 0),
+  entity     TEXT NOT NULL CHECK (entity <> ''),
+  filter     TEXT NOT NULL DEFAULT '',
+  sort       TEXT NOT NULL DEFAULT '',
+  fields     TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
 -- ── indexes for the queries that run every render ────────────────────
 CREATE INDEX action_open     ON action(state, verb) WHERE closed_at IS NULL;
 CREATE INDEX action_expired  ON action(snooze_until)
@@ -841,5 +867,7 @@ CREATE INDEX tracker_issue_closed_at ON tracker_issue(closed_at) WHERE closed_at
 CREATE INDEX pr_poll_window ON pr(closed_at) WHERE closed_at IS NOT NULL;
 -- which actions are waiting on this issue
 CREATE INDEX action_tracker_issue_issue ON action_tracker_issue(issue_id);
+-- the listing's own question: which views can it offer
+CREATE INDEX view_entity ON view(entity);
 -- given a base_ref, which tracked pull request in the repository has that head
 CREATE INDEX pr_head_ref ON pr(repo, head_ref) WHERE head_ref IS NOT NULL;

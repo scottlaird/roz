@@ -235,10 +235,29 @@ func quantifiedSQL(env *cel.Env, info *celast.SourceInfo, x exists, l level) (st
 	return sql, params, nil
 }
 
+// aliasFor names a level's row so that no two levels share a name.
+//
+// The relation's own name where it is free, which keeps the common case
+// readable — `parent.priority` renders against a table aliased `parent`. A
+// suffix where it is taken, which is what `parent.parent` needs: two levels
+// called `parent` would correlate the inner row to itself.
+func aliasFor(relation string, visible map[string][]store.ColumnType) string {
+	if _, taken := visible[relation]; !taken {
+		return relation
+	}
+	for n := 2; ; n++ {
+		candidate := fmt.Sprintf("%s_%d", relation, n)
+		if _, taken := visible[candidate]; !taken {
+			return candidate
+		}
+	}
+}
+
 // reachedSQL renders a term that reaches through a to-one relation, with
 // whatever it compares rendered against the far row.
 func reachedSQL(env *cel.Env, info *celast.SourceInfo, term celast.Expr, relation string, l level) (string, []any, error) {
-	child, err := l.descend(relation, relation)
+	alias := aliasFor(relation, l.visible)
+	child, err := l.descend(relation, alias)
 	if err != nil {
 		return "", nil, err
 	}
@@ -256,17 +275,17 @@ func reachedSQL(env *cel.Env, info *celast.SourceInfo, term celast.Expr, relatio
 	// is `project`. Rewritten on the tree rather than on the unparsed text,
 	// because a filter is somebody's typing and string surgery on it is how
 	// the wrong column gets compared.
-	rebased := rebase(term, l.alias, relation)
+	rebased := rebase(term, l.alias, relation, alias, l.depth == 0)
 
-	scoped, err := env.Extend(cel.Variable(relation, cel.DynType))
+	scoped, err := env.Extend(cel.Variable(alias, cel.DynType))
 	if err != nil {
-		return "", nil, fmt.Errorf("scoping %q: %w", relation, err)
+		return "", nil, fmt.Errorf("scoping %q: %w", alias, err)
 	}
 	inner, args, err := predicateSQL(scoped, info, rebased, child)
 	if err != nil {
 		return "", nil, err
 	}
-	sql, params := l.env.toOne(relation, inner, args)
+	sql, params := l.env.toOneAs(relation, alias, inner, args)
 	return sql, params, nil
 }
 
@@ -275,7 +294,7 @@ func reachedSQL(env *cel.Env, info *celast.SourceInfo, term celast.Expr, relatio
 //
 // Only that shape, and only at this level: everything else is copied through,
 // so a comparison against the outer row keeps naming the outer row.
-func rebase(e celast.Expr, alias, relation string) celast.Expr {
+func rebase(e celast.Expr, alias, relation, to string, bare bool) celast.Expr {
 	if e == nil {
 		return nil
 	}
@@ -287,13 +306,20 @@ func rebase(e celast.Expr, alias, relation string) celast.Expr {
 			return nil
 		}
 		switch n.Kind() {
+		case celast.IdentKind:
+			// At the top level a relation is named on its own — `parent` — and
+			// what it becomes is the alias its table was given.
+			if bare && n.AsIdent() == relation {
+				return f.NewIdent(n.ID(), to)
+			}
+			return f.CopyExpr(n)
 		case celast.SelectKind:
 			sel := n.AsSelect()
 			operand := sel.Operand()
 			// The reference being rewritten: `a.project` becomes `project`.
 			if operand != nil && operand.Kind() == celast.IdentKind &&
 				operand.AsIdent() == alias && sel.FieldName() == relation {
-				return f.NewIdent(n.ID(), relation)
+				return f.NewIdent(n.ID(), to)
 			}
 			return f.NewSelect(n.ID(), walk(operand), sel.FieldName())
 		case celast.CallKind:
@@ -475,6 +501,12 @@ func toOneAt(e celast.Expr, l level) (string, bool) {
 			for _, element := range n.AsList().Elements() {
 				walk(element)
 			}
+		case celast.ComprehensionKind:
+			// `subject_pr.issues.exists(i, …)`: the range of a traversal can
+			// itself reach through a to-one, which is a hop before the
+			// quantifier rather than inside it. The range is the only part
+			// written against this level — the rest is about the far row.
+			walk(n.AsComprehension().IterRange())
 		}
 	}
 	walk(e)
@@ -483,15 +515,6 @@ func toOneAt(e celast.Expr, l level) (string, bool) {
 		return "", false
 	}
 	for name := range seen {
-		// A relation whose name is already an alias in scope cannot be
-		// descended into: the subquery aliases the far table by the relation's
-		// name, and two levels called `parent` would correlate the inner row
-		// to itself — `parent.id = parent.parent_id`, which is SQL that runs
-		// and answers nonsense. `parent.parent.title` is the case, and it
-		// stays refused until levels carry distinct aliases.
-		if _, taken := l.visible[name]; taken {
-			return "", false
-		}
 		return name, true
 	}
 	return "", false
@@ -563,7 +586,14 @@ func chained(e celast.Expr, l level, info *celast.SourceInfo) bool {
 		}
 		switch n.Kind() {
 		case celast.SelectKind:
-			walk(n.AsSelect().Operand(), at)
+			sel := n.AsSelect()
+			// `parent.parent.title`: a select whose operand is a select is a
+			// chain by construction.
+			if operand := sel.Operand(); operand != nil && operand.Kind() == celast.SelectKind {
+				found = true
+				return
+			}
+			walk(sel.Operand(), at)
 		case celast.CallKind:
 			call := n.AsCall()
 			walk(call.Target(), at)
@@ -573,6 +603,17 @@ func chained(e celast.Expr, l level, info *celast.SourceInfo) bool {
 		case celast.ListKind:
 			for _, element := range n.AsList().Elements() {
 				walk(element, at)
+			}
+		case celast.ComprehensionKind:
+			// A traversal whose range reaches through a relation is two hops
+			// with the quantifier at the far end.
+			if r := n.AsComprehension().IterRange(); r != nil && r.Kind() == celast.SelectKind {
+				if name, ok := relationNameAt(r.AsSelect().Operand(), at); ok {
+					if _, isRelation := at.env.joins[name]; isRelation {
+						found = true
+						return
+					}
+				}
 			}
 		}
 	}

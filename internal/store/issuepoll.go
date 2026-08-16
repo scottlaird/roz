@@ -84,7 +84,15 @@ func (s *Store) IssuesToPoll(ctx context.Context, tracker string, schedule Issue
 	args := []any{tracker}
 	var previous time.Duration
 	for _, step := range schedule.Steps {
+		// Inclusive on the rung that means "every cycle": with Every of zero
+		// the cutoff is now, and `synced_at < now` drops a row that was read
+		// in this same millisecond — which is exactly what happens when a
+		// sync is followed immediately by another, and is how a test that
+		// closes an issue and then reopens it went intermittently green.
 		clause := "synced_at < ?"
+		if step.Every == 0 {
+			clause = "synced_at <= ?"
+		}
 		stepArgs := []any{at.Add(-step.Every).Format(timeFormat)}
 		if previous > 0 {
 			clause = "closed_at < ? AND " + clause

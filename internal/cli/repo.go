@@ -390,7 +390,17 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	repos, err := st.ListGitHubRepos(ctx, sort)
+	// Into the query rather than over the rows: whatever SQLite can take, it
+	// takes, and runListing runs what is left. See #201.
+	cel, err := filterFrom(cmd, &store.GitHubRepo{})
+	if err != nil {
+		return err
+	}
+	var pushed store.SQLWhere
+	pushed.Where, pushed.WhereArgs = cel.SQL()
+	cel.WithLoader(cmd.Context(), storeLoader{st: st})
+
+	repos, err := st.ListGitHubRepos(ctx, sort, pushed)
 	if err != nil {
 		return err
 	}

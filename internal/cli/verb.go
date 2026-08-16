@@ -73,7 +73,17 @@ func runVerbList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	verbs, err := st.ListVerbs(ctx, !all, sort)
+	// Into the query rather than over the rows: whatever SQLite can take, it
+	// takes, and runListing runs what is left. See #201.
+	cel, err := filterFrom(cmd, &store.ActionVerb{})
+	if err != nil {
+		return err
+	}
+	var pushed store.SQLWhere
+	pushed.Where, pushed.WhereArgs = cel.SQL()
+	cel.WithLoader(cmd.Context(), storeLoader{st: st})
+
+	verbs, err := st.ListVerbs(ctx, !all, sort, pushed)
 	if err != nil {
 		return err
 	}

@@ -227,6 +227,13 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	cel, err := filterFrom(cmd, &store.TrackerIssue{})
+	if err != nil {
+		return err
+	}
+	filter.Where, filter.WhereArgs = cel.SQL()
+	cel.WithLoader(ctx, storeLoader{st: st})
+
 	issues, err := st.ListTrackerIssues(ctx, filter)
 	if err != nil {
 		return err

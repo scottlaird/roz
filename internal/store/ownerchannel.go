@@ -122,7 +122,7 @@ func (s *Store) ClearOwnerChannel(ctx context.Context, actor Actor, owner string
 }
 
 // OwnerChannels returns every recorded channel, by owner.
-func (s *Store) OwnerChannels(ctx context.Context) ([]*OwnerChannel, error) {
+func (s *Store) OwnerChannels(ctx context.Context, filter SQLWhere) ([]*OwnerChannel, error) {
 	fields, err := fieldsOf(&OwnerChannel{})
 	if err != nil {
 		return nil, err
@@ -132,9 +132,13 @@ func (s *Store) OwnerChannels(ctx context.Context) ([]*OwnerChannel, error) {
 		columns[i] = f.column
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM owner_channel ORDER BY owner",
-		strings.Join(columns, ", "))
-	rows, err := s.db.QueryContext(ctx, query)
+	where, args := filter.clause(nil, nil)
+	query := fmt.Sprintf("SELECT %s FROM owner_channel", strings.Join(columns, ", "))
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY owner"
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading owner channels: %w", err)
 	}

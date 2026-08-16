@@ -403,6 +403,13 @@ func runCalendarList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
+	cel, err := filterFrom(cmd, &store.CalendarWindow{})
+	if err != nil {
+		return err
+	}
+	filter.Where, filter.WhereArgs = cel.SQL()
+	cel.WithLoader(ctx, storeLoader{st: st})
+
 	entries, err := st.ListCalendarWindows(ctx, filter)
 	if err != nil {
 		return err

@@ -484,7 +484,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 	if err != nil {
 		return nil, err
 	}
-	verbs, err := st.ListVerbs(ctx, false, store.Sort{})
+	verbs, err := st.ListVerbs(ctx, false, store.Sort{}, store.SQLWhere{})
 	if err != nil {
 		return nil, err
 	}

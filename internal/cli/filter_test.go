@@ -94,11 +94,11 @@ func TestExplainFilterSaysWhereItRan(t *testing.T) {
 			want: "which ran in Go",
 		},
 		{
-			// action list pushes down now (#201). The listing that still does
-			// not is `ref list`, which takes no filter struct to carry a
-			// WHERE fragment.
-			name: "no pushdown on this listing",
-			args: []string{"ref", "list", "--filter", `kind == "tag"`},
+			// Every listing pushes down now except `page list`, whose rows are
+			// the slots rather than the table: a WHERE would drop the empty
+			// ones, which is the opposite of what that listing is for.
+			name: "the one listing that deliberately does not",
+			args: []string{"page", "list", "--filter", `body != ""`},
 			want: "does not push one down",
 		},
 		{
@@ -185,5 +185,45 @@ func TestARowWithNothingToCompareIsSkipped(t *testing.T) {
 	}
 	if strings.Contains(out, "owner/repo#1") {
 		t.Errorf("a row with no value to compare was kept:\n%s", out)
+	}
+}
+
+// TestEveryListingPushesItsFilterDown is #201 stated as a property rather than
+// a list, so a listing added later is caught by the same test.
+//
+// page list is the exception and says why: its rows are the slots on the page
+// rather than rows of a table, so a WHERE would drop the empty ones — and an
+// empty slot is the thing that listing exists to show.
+func TestEveryListingPushesItsFilterDown(t *testing.T) {
+	db := initDB(t)
+
+	tests := []struct {
+		listing []string
+		filter  string
+	}{
+		{[]string{"action", "list"}, `verb == "decide"`},
+		{[]string{"project", "list"}, `status == "active"`},
+		{[]string{"pr", "list"}, `state == "MERGED"`},
+		{[]string{"issue", "list"}, `tracker == "github"`},
+		{[]string{"ref", "list"}, `kind == "tag"`},
+		{[]string{"repo", "list"}, `id == "owner/repo"`},
+		{[]string{"verb", "list"}, `closes == "predicate"`},
+		{[]string{"pipeline", "list"}, `active == true`},
+		{[]string{"calendar", "list"}, `kind == "pto"`},
+		{[]string{"owner", "list"}, `owner == "@example/backend"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.listing, " "), func(t *testing.T) {
+			args := append(append([]string{}, tt.listing...),
+				"--db", db, "--filter", tt.filter, "--explain-filter")
+			out, err := runCLI(t, args...)
+			if err != nil {
+				t.Fatalf("%v returned error: %v", tt.listing, err)
+			}
+			if !strings.Contains(out, "filter ran in SQL") {
+				t.Errorf("%v did not push its filter down:\n%s", tt.listing, out)
+			}
+		})
 	}
 }

@@ -74,7 +74,17 @@ func runPipelineList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	pipelines, err := st.ListPipelines(ctx, !all, sort)
+	// Into the query rather than over the rows: whatever SQLite can take, it
+	// takes, and runListing runs what is left. See #201.
+	cel, err := filterFrom(cmd, &store.Pipeline{})
+	if err != nil {
+		return err
+	}
+	var pushed store.SQLWhere
+	pushed.Where, pushed.WhereArgs = cel.SQL()
+	cel.WithLoader(cmd.Context(), storeLoader{st: st})
+
+	pipelines, err := st.ListPipelines(ctx, !all, sort, pushed)
 	if err != nil {
 		return err
 	}

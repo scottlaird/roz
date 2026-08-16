@@ -345,7 +345,17 @@ func runRefList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	refs, err := st.ListRefs(cmd.Context(), repo, sort)
+	// Into the query rather than over the rows: whatever SQLite can take, it
+	// takes, and runListing runs what is left. See #201.
+	cel, err := filterFrom(cmd, &store.GitRef{})
+	if err != nil {
+		return err
+	}
+	var pushed store.SQLWhere
+	pushed.Where, pushed.WhereArgs = cel.SQL()
+	cel.WithLoader(cmd.Context(), storeLoader{st: st})
+
+	refs, err := st.ListRefs(cmd.Context(), repo, sort, pushed)
 	if err != nil {
 		return err
 	}

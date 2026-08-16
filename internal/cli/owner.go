@@ -160,7 +160,16 @@ func runOwnerList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	channels, err := st.OwnerChannels(cmd.Context())
+	// Into the query rather than over the rows. See #201.
+	cel, err := filterFrom(cmd, &store.OwnerChannel{})
+	if err != nil {
+		return err
+	}
+	var pushed store.SQLWhere
+	pushed.Where, pushed.WhereArgs = cel.SQL()
+	cel.WithLoader(cmd.Context(), storeLoader{st: st})
+
+	channels, err := st.OwnerChannels(cmd.Context(), pushed)
 	if err != nil {
 		return err
 	}

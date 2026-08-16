@@ -156,12 +156,18 @@ func (t *Tx) LoadPipeline(ctx context.Context, name string) (*Pipeline, error) {
 //
 // activeOnly drops retired ones. Like verbs they are deactivated rather than
 // deleted, since a repository may still name one.
-func (s *Store) ListPipelines(ctx context.Context, activeOnly bool, sort Sort) ([]*Pipeline, error) {
-	where := ""
+func (s *Store) ListPipelines(ctx context.Context, activeOnly bool, sort Sort, filter SQLWhere) ([]*Pipeline, error) {
+	var clauses []string
+	var args []any
 	if activeOnly {
-		where = "WHERE active = 1"
+		clauses = append(clauses, "active = 1")
 	}
-	return readPipelines(ctx, s.db, sort, where)
+	clauses, args = filter.clause(clauses, args)
+	where := ""
+	if len(clauses) > 0 {
+		where = "WHERE " + strings.Join(clauses, " AND ")
+	}
+	return readPipelines(ctx, s.db, sort, where, args...)
 }
 
 // DefaultPipeline returns the lowest-numbered active pipeline, which is what

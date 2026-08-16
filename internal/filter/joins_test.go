@@ -356,25 +356,21 @@ func TestAChainBecomesNestedExists(t *testing.T) {
 	}
 }
 
-// TestAChainWillNotRunInGo is the safety property the whole design turns on.
-//
-// In Go the far row is a map of columns, so the second hop is a missing key,
-// which CEL reports as an error and Keep swallows as "does not match" — for
-// every row. An empty listing that looks exactly like a correct one is the one
-// answer this must never give, so a listing that did not take the SQL is told
-// so instead.
-func TestAChainWillNotRunInGo(t *testing.T) {
+// TestAChainInGoNeedsSomewhereToRead. The Go pass can follow a chain now — a
+// far row loads the relations the expression names — but only if it was given
+// a loader. Without one the second hop is a missing key, which CEL reports as
+// an error and Keep would otherwise read as "does not match", for every row.
+func TestAChainInGoNeedsSomewhereToRead(t *testing.T) {
 	f, err := Compile(&store.PR{}, `actions.exists(a, a.project.priority == 1)`)
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
 
-	// Keep without SQL: the listing never put the clause in its query.
 	_, err = f.Keep(&store.PR{ID: "owner/repo#1"})
 	if err == nil {
-		t.Fatal("Keep answered without the query having run the chain")
+		t.Fatal("Keep answered with nowhere to read the far side from")
 	}
-	for _, want := range []string{"two relations", "does not push filters"} {
+	for _, want := range []string{"two relations", "nowhere to read"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %v, want it to say %q", err, want)
 		}
@@ -523,5 +519,69 @@ func TestATraversalCanStartBehindAToOne(t *testing.T) {
 	// order the statement writes them in.
 	if len(args) != 2 || args[0] != store.RoleSubject || args[1] != "CLOSED" {
 		t.Errorf("args = %v, want the role then the status", args)
+	}
+}
+
+// TestGoFollowsASecondRelation is the last piece of #200: a far row loads the
+// relations the expression names, so a chain evaluates here rather than being
+// refused.
+//
+// It was refused because a far row was a map of columns, where `a.project` is
+// a missing key — CEL calls that an error and Keep reads an error as "does not
+// match", so every row silently failed. This is the same expression answering.
+func TestGoFollowsASecondRelation(t *testing.T) {
+	f, err := Compile(&store.PR{}, `actions.exists(a, a.project.priority == 1)`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+
+	loader := &countingLoader{rows: map[string][]map[string]any{
+		"action":  {{"id": "NA1", "verb": "merge"}},
+		"project": {{"id": "SL1", "priority": int64(1)}},
+	}}
+	keep, err := f.WithLoader(context.Background(), loader).Keep(&store.PR{ID: "owner/repo#1"})
+	if err != nil {
+		t.Fatalf("Keep returned error: %v", err)
+	}
+	if !keep {
+		t.Error("a row whose action advances a priority-1 project did not match")
+	}
+	// Both levels were read, and only those: the far row followed the one
+	// relation the expression names.
+	if len(loader.asked) != 2 || loader.asked[0] != "action" || loader.asked[1] != "project" {
+		t.Errorf("read %v, want action then project", loader.asked)
+	}
+
+	// And the opposite answer, from the same shape.
+	f, err = Compile(&store.PR{}, `actions.exists(a, a.project.priority == 9)`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	loader.asked = nil
+	keep, err = f.WithLoader(context.Background(), loader).Keep(&store.PR{ID: "owner/repo#1"})
+	if err != nil {
+		t.Fatalf("Keep returned error: %v", err)
+	}
+	if keep {
+		t.Error("a row matched a priority its project does not have")
+	}
+}
+
+// TestGoReadsOnlyTheRelationsNamed. The second hop is a query per far row, so
+// following one the expression never mentions is the difference between a
+// filter and a table scan of everything.
+func TestGoReadsOnlyTheRelationsNamed(t *testing.T) {
+	f, err := Compile(&store.PR{}, `actions.exists(a, a.verb == "merge")`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	loader := &countingLoader{rows: map[string][]map[string]any{
+		"action": {{"id": "NA1", "verb": "merge"}},
+	}}
+	if _, err := f.WithLoader(context.Background(), loader).Keep(&store.PR{ID: "owner/repo#1"}); err != nil {
+		t.Fatalf("Keep returned error: %v", err)
+	}
+	if len(loader.asked) != 1 || loader.asked[0] != "action" {
+		t.Errorf("read %v, want the one relation the filter names", loader.asked)
 	}
 }

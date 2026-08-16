@@ -722,3 +722,47 @@ func qualify(e celast.Expr, alias string, columns map[string]store.ColumnType) c
 	}
 	return walk(e)
 }
+
+// selectedNames is every field an expression selects.
+//
+// What a far row consults to decide which of its own relations to read. Only
+// selects, never bare identifiers: `actions.exists(a, a.project.priority ==
+// 1)` selects `project` and names `actions`, and following a name would have
+// each project reading its own actions and each of those reading its project
+// again — a walk back up the chain it came from, one query per row per level.
+//
+// Wider than the relations even so — a column name lands here too — which is
+// harmless, since it is only ever intersected with an entity's actual joins.
+func selectedNames(e celast.Expr) map[string]bool {
+	seen := map[string]bool{}
+	var walk func(celast.Expr)
+	walk = func(n celast.Expr) {
+		if n == nil {
+			return
+		}
+		switch n.Kind() {
+		case celast.SelectKind:
+			sel := n.AsSelect()
+			seen[sel.FieldName()] = true
+			walk(sel.Operand())
+		case celast.CallKind:
+			call := n.AsCall()
+			walk(call.Target())
+			for _, arg := range call.Args() {
+				walk(arg)
+			}
+		case celast.ListKind:
+			for _, element := range n.AsList().Elements() {
+				walk(element)
+			}
+		case celast.ComprehensionKind:
+			c := n.AsComprehension()
+			walk(c.IterRange())
+			walk(c.LoopCondition())
+			walk(c.LoopStep())
+			walk(c.Result())
+		}
+	}
+	walk(e)
+	return seen
+}

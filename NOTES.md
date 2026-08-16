@@ -1000,6 +1000,35 @@ stacked at the moment, so that path is unexercised on real data.
 An action's subject pull request is not an edge yet, so a stack and the work
 that produced it are two disconnected pictures.
 
+## --json is an escape hatch, not a way round the verbs
+
+`--json` writes authored columns directly, which is what makes it a good base
+for an agent to generate. It also let it write columns a purpose-built command
+exists to guard:
+
+```console
+$ roz project set SL7 --json '{"superseded_by":"SL94"}'
+Error: project.superseded_by is what `roz project supersede` is for, and that
+checks things this cannot; set it there instead
+```
+
+The damage was bounded — the foreign key still caught a target that did not
+exist, so the cost was a rawer error rather than a bad row. The quiet half is
+what settled it: `supersede` also writes the *other end* of the pair, and the
+raw path skipped that silently.
+
+What is on the list is not every column a command can touch. `project set
+--status` writes status and so does `--json`, and that is fine. What belongs
+there is a column whose command does something **besides** the write: checking a
+target exists, recording both ends, or coupling two columns that have to move
+together — a snooze date with no snooze is invisible, and a snooze with no date
+never wakes.
+
+Keeping a list is a second place to stay in step with the verbs, which was the
+argument for leaving this alone. The answer is a test that fails if an entry
+stops being an authored column, which turns drift into a build failure rather
+than a hole nobody notices.
+
 ## The page links to itself
 
 Every action and project has an anchor, which is its identifier verbatim:

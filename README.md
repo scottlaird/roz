@@ -55,6 +55,20 @@ $ roz project add --title "Rate-limit the public API" --priority 2 --effort days
 ROZ1
 ```
 
+`NA` is for *next action* and `ROZ` is the tool's own name, but both are worth
+a moment's thought, because **`init` is the only time they can be set**:
+
+```console
+$ roz init --project-prefix API --action-prefix TODO
+initialised /Users/alice/.local/share/roz/roz.db (schema 36, action=TODO, project=API)
+```
+
+They cannot change afterwards without orphaning every identifier already
+issued, and those identifiers end up in commit messages, in chat, and in
+whatever an agent has written down. That is the argument for picking them
+deliberately: a stable, distinctive prefix means `API12` refers to one thing
+and can be said out loud to an agent without a sentence of context around it.
+
 Then she tracks the pull request and says she has written it:
 
 ```console

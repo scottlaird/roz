@@ -1,0 +1,68 @@
+{{define "body"}}
+  {{with .Project}}
+  <section>
+    <h2>{{.ID}} · {{.Title}}</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>status</th><th>pri</th><th>effort</th><th>open</th><th>issues</th><th>snoozed</th>
+        </tr></thead>
+        <tbody>
+          <tr{{if .Expired}} class="expired"{{end}}>
+            <td>{{.Status}}</td>
+            <td class="num">{{.Priority}}</td>
+            <td>{{.Effort}}</td>
+            <td class="num">{{if .Actions}}{{.Actions}}{{else}}·{{end}}</td>
+            <td>{{range $i, $j := .Issues}}{{if $i}}, {{end}}{{template "issue" $j}}{{else}}-{{end}}</td>
+            <td>{{if .Snoozed}}{{.Snoozed}}{{else}}-{{end}}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    {{if .Summary}}<div class="why prose">{{.Summary}}</div>{{end}}
+  </section>
+  {{end}}
+
+  {{/* The projects this one is made of. Nested actions are a bigger rendering
+       question and deliberately not here. */}}
+  {{if .Children}}
+  <section>
+    <h2>parts of this</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>id</th><th>title</th><th>status</th><th>pri</th><th>open</th></tr></thead>
+        <tbody>
+          {{range .Children}}
+          <tr class="depth{{.Depth}}{{if .Expired}} expired{{end}}">
+            <td class="n"><a href="{{.Href}}">{{.ID}}</a></td>
+            <td>{{.Title}}</td>
+            <td>{{.Status}}</td>
+            <td class="num">{{.Priority}}</td>
+            <td class="num">{{if .Actions}}{{.Actions}}{{else}}·{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .OwnActions}}
+  <section>
+    <h2>what it takes</h2>
+    <ol class="queue">
+      {{range .OwnActions}}
+      <li id="{{.ID}}" class="{{.RankClass}}{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
+        <div class="do">
+          {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
+          <span class="id"><a href="{{.Href}}">{{.ID}}</a></span>{{.Title}}<span class="verb">{{.Verb}}</span>
+          {{if .Late}}<span class="overdue">{{.Late}}</span>{{end}}
+        </div>
+        {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}
+        {{template "refs" .}}
+      </li>
+      {{end}}
+    </ol>
+  </section>
+  {{end}}
+{{end}}

@@ -1,0 +1,98 @@
+{{define "body"}}
+  {{template "note" (index .Notes "intro")}}
+
+  <section>
+    <h2>next fortnight</h2>
+    {{if .Windows}}
+    <div class="cal">
+      {{range .Windows}}
+      <div{{if .Current}} class="now"{{end}}><b>{{.Label}}</b> {{.Range}} · {{.Capacity}}</div>
+      {{end}}
+    </div>
+    {{else}}<p class="empty">no calendar entries</p>{{end}}
+  </section>
+
+  {{template "note" (index .Notes "before-queue")}}
+
+  <section>
+    <h2>queue</h2>
+    {{if .Queue}}
+    <ol class="queue">
+      {{range .Queue}}
+      <li id="{{.ID}}" class="{{.RankClass}}{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
+        <div class="do">
+          {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
+          <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
+          {{if .Late}}<span class="overdue">{{.Late}}</span>{{end}}
+        </div>
+        {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}
+        {{template "refs" .}}
+      </li>
+      {{end}}
+    </ol>
+    {{else}}<p class="empty">nothing to do</p>{{end}}
+  </section>
+
+  {{if .Waiting}}
+  <section>
+    <h2>waiting — not the queue, but not nothing</h2>
+    <ol class="queue">
+      {{range .Waiting}}
+      <li id="{{.ID}}" class="wait{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
+        <div class="do">
+          {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
+          <span class="id">{{.ID}}</span>{{.Title}}<span class="verb">{{.Verb}}</span>
+        </div>
+        {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}
+        {{template "refs" .}}
+      </li>
+      {{end}}
+    </ol>
+  </section>
+  {{end}}
+
+  {{template "note" (index .Notes "before-projects")}}
+
+  <section>
+    <h2>projects</h2>
+    {{if .Projects}}
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>id</th><th>title</th><th>status</th><th>pri</th><th>effort</th>
+          <th>open</th><th>issues</th><th>snoozed</th>
+        </tr></thead>
+        <tbody>
+          {{range .Projects}}
+          <tr id="{{.ID}}" class="depth{{.Depth}}{{if .Expired}} expired{{end}}{{if .Context}} context{{end}}">
+            <td class="n">{{.ID}}</td>
+            <td>{{.Title}}</td>
+            <td>{{.Status}}</td>
+            <td class="num">{{.Priority}}</td>
+            <td>{{.Effort}}</td>
+            <td class="num">{{if .Actions}}{{.Actions}}{{else}}·{{end}}</td>
+            <td>{{range $i, $j := .Issues}}{{if $i}}, {{end}}{{template "issue" $j}}{{else}}-{{end}}</td>
+            <td class="n">{{.Snooze}}</td>
+          </tr>
+          {{/* The summary is prose and does not fit a cell, so it gets a row
+               of its own spanning the rest of the table, indented under the
+               title it belongs to. Only when there is one: most rows are the
+               table, and this is the exception that explains one.
+
+               It carries the same depth as its title, so prose under an
+               indented project lines up with the project rather than with the
+               margin — otherwise a child's summary reads as belonging to
+               whatever is furthest left. */}}
+          {{if .Summary}}
+          <tr class="detail depth{{.Depth}}{{if .Expired}} expired{{end}}{{if .Context}} context{{end}}">
+            <td></td>
+            <td colspan="7"><div class="prose">{{.Summary}}</div></td>
+          </tr>
+          {{end}}
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty">no active projects</p>{{end}}
+  </section>
+{{end}}

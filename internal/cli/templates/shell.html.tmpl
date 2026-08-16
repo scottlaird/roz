@@ -1,0 +1,85 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>roz{{with .Owner}} · {{.}}{{end}}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="{{.Favicon}}">
+{{/* One stylesheet, and how it gets here depends on where "here" is.
+     `roz serve` links it, so a browser revalidates once and is told 304;
+     `roz render` inlines it, because that file is opened from disk as often
+     as it is served and a second request is a thing that can fail. One
+     source either way -- internal/static/roz.css -- so the two cannot
+     drift. Colours come from the verb's rank class, so a class that was
+     never styled is not expressible. */}}
+{{if .StylesheetURL -}}
+<link rel="stylesheet" href="{{.StylesheetURL}}">
+{{- else -}}
+<style>
+{{.Stylesheet}}
+</style>
+{{- end}}
+
+<div class="wrap">
+  <header>
+    {{/* The owner is a label from `roz config`, and usually unset. When it
+         is, the heading is what it always was rather than a dangling
+         separator. */}}
+    <h1><a href="/">roz</a>{{with .Owner}} <span class="owner">· {{.}}</span>{{end}}</h1>
+    <div class="stamp">{{.GeneratedAt}} · {{.Stamp}}</div>
+  </header>
+
+  {{/* Where this page sits. Absent on the index, which is the root: a
+       breadcrumb of one crumb pointing at itself is furniture. */}}
+  {{if .Crumbs}}
+  <nav class="crumbs">
+    {{range $i, $c := .Crumbs}}{{if $i}} <span class="sep">›</span> {{end}}{{if $c.Href}}<a href="{{$c.Href}}">{{$c.Label}}</a>{{else}}<span>{{$c.Label}}</span>{{end}}{{end}}
+  </nav>
+  {{end}}
+
+{{template "body" .}}
+
+  {{template "note" (index .Notes "footer")}}
+
+  <footer>The page is a view; the database is the truth. Nothing reads it back.</footer>
+</div>
+{{if .Live}}
+{{/* The server streams a line on /events whenever the log moves. Reloading
+     whole is crude and correct: the page is cheap to build and holds no state
+     worth keeping. Comments inside <script> are stripped by html/template,
+     which is why this one is out here. */}}
+<script>new EventSource("/events").onmessage = () => location.reload();</script>
+{{end}}
+
+
+{{define "refs"}}
+{{if or .PRs .Issues .Project}}
+<div class="refs">
+  {{if .Project}}<span class="mono">{{.Project}}</span>{{end}}
+  {{range .PRs}}
+  <span>
+    {{if .URL}}<a href="{{.URL}}" class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</a>{{else}}<span class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</span>{{end}}
+    {{if .Status}}<span class="{{if .Bad}}bad{{else}}state{{end}}">{{.Status}}</span>{{end}}
+  </span>
+  {{end}}
+  {{range .Issues}}<span>{{template "issue" .}}</span>{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{/* A slot's prose, or nothing at all. Absent is the ordinary state — most
+     slots are empty on most pages — so this draws no container when there is
+     nothing to put in one. */}}
+{{define "note"}}
+{{/* On .Body, not on the value: a missing key yields a zero struct, and a
+     struct is always truthy in a template, so `{{if .}}` would draw an empty
+     box for every slot nobody has written to. */}}
+{{if .Body}}<section class="note"><div class="prose">{{.Body}}</div>
+<p class="noteset">written {{.Set}}</p></section>{{end}}
+{{end}}
+
+{{/* The whole thing is one span so the key and its state cannot be split by
+     a line break, and the template trims its own edges: the newlines around a
+     definition are text, and they were reaching the page as a stray space
+     before every separating comma. */}}
+{{define "issue" -}}
+<span class="issue">{{if .URL}}<a href="{{.URL}}" class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</a>{{else}}<span class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}</span>
+{{- end}}

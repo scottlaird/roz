@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"strings"
@@ -119,13 +120,32 @@ func titlesFrom(prs []*store.PR, issues []*store.TrackerIssue,
 // be the same. It is also what a person would guess, which matters: an anchor
 // is a public surface, and once a link to one exists in somebody's notes,
 // changing the scheme breaks it silently.
-func refsFor(actions []*store.Action, projects []*store.Project) map[string]markdown.Ref {
+// refsFor says where a link to each entity should go.
+//
+// An anchor where the entity is on this page, and its own page otherwise. That
+// is the rule the index needed once it stopped carrying an appendix of
+// everything: a reference to something in the queue jumps to the row, and a
+// reference to something closed six weeks ago leaves for /project/SL7 rather
+// than dangling.
+//
+// onPage is what this document actually renders. Nothing else can be anchored,
+// because an anchor to an id that is not in the document is a link that
+// silently does nothing.
+func refsFor(actions []*store.Action, projects []*store.Project, onPage map[string]bool) map[string]markdown.Ref {
 	refs := make(map[string]markdown.Ref, len(actions)+len(projects))
 	for _, a := range actions {
-		refs[a.ID] = markdown.Ref{Kind: markdown.KindAction, Href: "#" + a.ID}
+		href := actionHref(a.ID)
+		if onPage[a.ID] {
+			href = "#" + a.ID
+		}
+		refs[a.ID] = markdown.Ref{Kind: markdown.KindAction, Href: href}
 	}
 	for _, p := range projects {
-		refs[p.ID] = markdown.Ref{Kind: markdown.KindProject, Href: "#" + p.ID}
+		href := projectHref(p.ID)
+		if onPage[p.ID] {
+			href = "#" + p.ID
+		}
+		refs[p.ID] = markdown.Ref{Kind: markdown.KindProject, Href: href}
 	}
 	return refs
 }
@@ -169,12 +189,21 @@ type pageContent struct {
 	Queue       []actionView
 	Waiting     []actionView
 	Projects    []projectView
-	// Elsewhere is every action the two lists above leave out: closed,
-	// blocked, hidden, or snoozed and not yet due. It exists so that a
-	// reference to any action has somewhere to land.
-	Elsewhere []actionView
-	// Closed is the same for projects the table above omits.
-	Closed []projectView
+	// Crumbs are where this page sits: roz › projects › SL99. Empty on the
+	// index, which is the root.
+	Crumbs []crumbView
+	// AllProjects and AllActions are the listing pages, which is where the
+	// index's appendix of everything went.
+	AllProjects []projectView
+	AllActions  []actionView
+	// Project and Action are the detail pages. One of them is set, and only
+	// on the page that is about it.
+	Project *projectView
+	Action  *actionView
+	// Children are the projects this one is made of, on a project page.
+	Children []projectView
+	// OwnActions are the actions advancing it.
+	OwnActions []actionView
 	// Notes is the authored prose, by slot. A slot with nothing in it is
 	// absent rather than empty, so the template can ask without guarding.
 	Notes map[string]noteView
@@ -217,6 +246,8 @@ type actionView struct {
 	PRs       []prView
 	Issues    []issueView
 	Expired   bool
+	// Href is this action's own page.
+	Href string
 	// Late is how many days past its allowance this action is, empty when it
 	// is not. An action already in the queue is told about by marking it here
 	// rather than by raising a second item about itself, so without this the
@@ -271,13 +302,64 @@ type projectView struct {
 	// shown only to hold its children up — closed, above open work.
 	Depth   int
 	Context bool
+	// Href is this project's own page, for a listing that links to it. The
+	// index anchors instead, because the row is already there.
+	Href string
+	// Snoozed is the date it sleeps until, as the listing pages print it.
+	Snoozed string
+}
+
+// crumbView is one step of the breadcrumb. An empty Href is the page you are
+// on, which is a label rather than a link.
+type crumbView struct {
+	Label string
+	Href  string
+}
+
+// The routes a page can live at.
+//
+// The linker owns the shapes, because it has to read back what it wrote: a
+// destination it cannot parse is a link without a tooltip. These are here so
+// the page code reads as page code.
+func projectHref(id string) string { return markdown.ProjectHref(id) }
+func actionHref(id string) string  { return markdown.ActionHref(id) }
+
+// crumbsFor is where a page sits: roz › projects › SL99.
+//
+// The last crumb is the page itself and carries no link. `roz` is the home
+// link and lives in the heading as well, which is deliberate — the heading is
+// where a reader looks first, and the trail is where they look when they want
+// the level above.
+func crumbsFor(kind, id string) []crumbView {
+	switch kind {
+	case pageProjects:
+		return []crumbView{{Label: "roz", Href: "/"}, {Label: "projects"}}
+	case pageActions:
+		return []crumbView{{Label: "roz", Href: "/"}, {Label: "actions"}}
+	case pageProject:
+		return []crumbView{{Label: "roz", Href: "/"}, {Label: "projects", Href: "/projects"}, {Label: id}}
+	case pageAction:
+		return []crumbView{{Label: "roz", Href: "/"}, {Label: "actions", Href: "/actions"}, {Label: id}}
+	default:
+		return nil
+	}
 }
 
 // buildPage assembles everything the template needs.
 //
 // Every lookup here is batched. A per-row query would be invisible at this
 // size and wrong at any other, and the shape is the thing that gets copied.
+// route says which page is being built: the index, a listing, or one entity.
+type route struct {
+	kind string
+	id   string
+}
+
 func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings) (*pageContent, error) {
+	return buildRoute(ctx, st, now, live, cfg, route{})
+}
+
+func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings, at route) (*pageContent, error) {
 	// Loaded before the prose renderer, which needs them to caption links.
 	// Everything tracked, not only what this page happens to draw: prose can
 	// reference a pull request no action on the page is about.
@@ -312,10 +394,6 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 	// A calendar window is a span of days and asks about the date; a snooze is
 	// compared against the instant the queries use. See expired.
 	stamp := now.UTC().Format(store.TimeFormat)
-	text := newProse(cfg.jiraBase, cfg.jiraPrefixes, shortNames,
-		refsFor(everyAction, everyProject),
-		titlesFrom(allPRs, allIssues, everyAction, everyProject))
-
 	windows, err := st.ListCalendarWindows(ctx, store.WindowFilter{
 		Upcoming: true,
 		Through:  now.Add(horizon).UTC().Format(store.DateFormat),
@@ -383,6 +461,39 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		rank[v.Verb] = v.RankClass
 	}
 
+	// Which entities this document will actually draw, which decides whether a
+	// link to one is an anchor or a trip to its own page. Built before the
+	// prose renderer because the renderer needs the answer, and after the
+	// queries because they are the answer.
+	connected, err := st.WithAncestors(ctx, projects)
+	if err != nil {
+		return nil, err
+	}
+	tree := store.Tree(connected)
+
+	onPage := map[string]bool{}
+	switch at.kind {
+	case pageIndex:
+		for _, a := range append(ids(queue), ids(waiting)...) {
+			onPage[a] = true
+		}
+		for _, node := range tree {
+			onPage[node.Project.ID] = true
+		}
+	case pageProjects:
+		for _, p := range everyProject {
+			onPage[p.ID] = true
+		}
+	case pageActions:
+		for _, a := range everyAction {
+			onPage[a.ID] = true
+		}
+	}
+
+	text := newProse(cfg.jiraBase, cfg.jiraPrefixes, shortNames,
+		refsFor(everyAction, everyProject, onPage),
+		titlesFrom(allPRs, allIssues, everyAction, everyProject))
+
 	content := &pageContent{
 		Owner:       cfg.owner,
 		GeneratedAt: now.UTC().Format(time.RFC3339),
@@ -431,22 +542,10 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			openPerProject[a.ProjectID.String]++
 		}
 	}
-	// Every action the two lists above left out, so a reference to any of them
-	// has a row to land on.
-	for _, a := range remaining(everyAction, func(a *store.Action) string { return a.ID },
-		ids(queue), ids(waiting)) {
-		content.Elsewhere = append(content.Elsewhere,
-			actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late))
-	}
-
 	// Drawn as a hierarchy, with any closed parent above open work pulled back
 	// in so the shape has no gaps. The order within each level is the one the
 	// sort chose: a hierarchy is a way of reading the list, not a reranking.
-	connected, err := st.WithAncestors(ctx, projects)
-	if err != nil {
-		return content, err
-	}
-	for _, node := range store.Tree(connected) {
+	for _, node := range tree {
 		p := node.Project
 		content.Projects = append(content.Projects, projectView{
 			Depth:    node.Depth,
@@ -461,17 +560,6 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 			Actions:  openPerProject[p.ID],
 			Issues:   issueViews(issuesByProject[p.ID], text),
 			Expired:  expired(p.SnoozeUntil, stamp),
-		})
-	}
-
-	for _, p := range remaining(everyProject, func(p *store.Project) string { return p.ID },
-		projectIDs(projects)) {
-		content.Closed = append(content.Closed, projectView{
-			ID:       p.ID,
-			Title:    text.links.Text(p.Title),
-			Status:   p.Status,
-			Priority: nullIntText(p.Priority),
-			Effort:   nullText(p.Effort),
 		})
 	}
 
@@ -490,9 +578,87 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		}
 	}
 
+	content.Crumbs = crumbsFor(at.kind, at.id)
+	switch at.kind {
+	case pageProjects:
+		for _, node := range store.Tree(everyProject) {
+			p := node.Project
+			content.AllProjects = append(content.AllProjects, projectRow(p, node, openPerProject, issuesByProject, text, stamp))
+		}
+	case pageActions:
+		for _, a := range everyAction {
+			row := actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late)
+			row.Href = actionHref(a.ID)
+			content.AllActions = append(content.AllActions, row)
+		}
+	case pageProject:
+		found := false
+		for _, p := range everyProject {
+			switch {
+			case p.ID == at.id:
+				row := projectRow(p, store.TreeNode{Project: p}, openPerProject, issuesByProject, text, stamp)
+				content.Project, found = &row, true
+			case p.ParentID.Valid && p.ParentID.String == at.id:
+				content.Children = append(content.Children,
+					projectRow(p, store.TreeNode{Project: p}, openPerProject, issuesByProject, text, stamp))
+			}
+		}
+		if !found {
+			return nil, errNoSuchPage
+		}
+		for _, a := range everyAction {
+			if a.ProjectID.Valid && a.ProjectID.String == at.id {
+				row := actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late)
+				row.Href = actionHref(a.ID)
+				content.OwnActions = append(content.OwnActions, row)
+			}
+		}
+	case pageAction:
+		for _, a := range everyAction {
+			if a.ID == at.id {
+				row := actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late)
+				content.Action = &row
+			}
+		}
+		if content.Action == nil {
+			return nil, errNoSuchPage
+		}
+	}
+
 	content.Stamp = fmt.Sprintf("%d in the queue · %d waiting · %d open projects",
 		len(content.Queue), len(content.Waiting), len(content.Projects))
 	return content, nil
+}
+
+// errNoSuchPage is a request for an entity that is not there. The server
+// turns it into a 404 rather than a 500: a mistyped identifier is a wrong
+// address, not a broken one.
+var errNoSuchPage = errors.New("no such page")
+
+// projectRow is one project as a table row, wherever that table is.
+//
+// Href is its own page. The index overrides nothing — it anchors instead,
+// because the row is already in the document — so this is the answer for every
+// listing that is not the index.
+func projectRow(p *store.Project, node store.TreeNode, openPerProject map[string]int,
+	issuesByProject map[string][]*store.TrackerIssue, text *prose, stamp string) projectView {
+
+	return projectView{
+		Depth:    node.Depth,
+		Context:  node.Context,
+		ID:       p.ID,
+		Href:     projectHref(p.ID),
+		Title:    text.links.Text(p.Title),
+		Summary:  text.markdown.Render(p.Summary),
+		Status:   p.Status,
+		Priority: nullIntText(p.Priority),
+		Effort:   nullText(p.Effort),
+		Snooze:   nullText(p.SnoozeUntil),
+		Snoozed:  nullText(p.SnoozeUntil),
+		Actions:  openPerProject[p.ID],
+		Issues:   issueViews(issuesByProject[p.ID], text),
+		Expired:  expired(p.SnoozeUntil, stamp),
+	}
 }
 
 func ids(actions []*store.Action) []string {

@@ -1231,6 +1231,35 @@ failing on a column that does not exist there. `roz view show` re-runs the
 check against the listing as it is now, so a view broken by a later migration
 says `broken:` instead of quietly returning nothing.
 
+### A page per thing
+
+`roz serve` renders more than the index. Every project and action has its own
+page, and the two listings the index used to carry as an appendix have theirs:
+
+| | |
+|---|---|
+| `/` | the queue, what is waiting, and live projects |
+| `/projects` `/actions` | everything, including what is finished |
+| `/project/SL7` `/action/NA12` | one entity, with a project's child projects |
+
+All of them wear the same shell — head, heading, stylesheet, footer — written
+once, so a page nobody thought about still has them. A trail across the top
+says where you are: `roz › projects › SL7`, with the last step a label rather
+than a link, since a link to where you already are is furniture.
+
+**A link goes to the row or to the page.** A reference to something on the page
+you are reading is an anchor — the row is right there. A reference to anything
+else leaves for that entity's own page. That rule is what let the index drop
+its appendix of everything: the appendix existed only so that a reference to
+something closed had somewhere to land, and now it lands on `/project/SL7`.
+
+The tooltip survives either way, which took teaching the linker to read back
+the URLs it writes. What an identifier means does not depend on where the link
+goes.
+
+`roz render` still writes the index as one file, stylesheet inlined. It cannot
+write the entity pages: they live at URLs, and a URL is not a file.
+
 ## For an agent
 
 `roz mcp` serves the same commands over the Model Context Protocol, on stdin

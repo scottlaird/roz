@@ -1,0 +1,18 @@
+{{define "body"}}
+  {{with .Action}}
+  <section>
+    <h2>{{.ID}} · {{.Title}}</h2>
+    <ol class="queue">
+      <li class="{{.RankClass}}{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
+        <div class="do">
+          {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
+          <span class="id">{{.State}}</span><span class="verb">{{.Verb}}</span>
+          {{if .Late}}<span class="overdue">{{.Late}}</span>{{end}}
+        </div>
+        {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}
+        {{template "refs" .}}
+      </li>
+    </ol>
+  </section>
+  {{end}}
+{{end}}

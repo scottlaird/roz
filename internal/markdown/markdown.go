@@ -124,6 +124,30 @@ type Config struct {
 var prURLPattern = regexp.MustCompile(
 	`^https?://(?:www\.)?github\.com/([\w.-]+)/([\w.-]+)/(?:pull|issues)/(\d+)(?:[/?#].*)?$`)
 
+// ProjectHref and ActionHref are where an entity's own page lives.
+//
+// Here rather than in the page package, because the linker has to be able to
+// read back what it wrote: a destination it cannot parse is a link without a
+// tooltip, and two definitions of the same path would drift into exactly that.
+func ProjectHref(id string) string { return projectPrefix + id }
+func ActionHref(id string) string  { return actionPrefix + id }
+
+const (
+	projectPrefix = "/project/"
+	actionPrefix  = "/action/"
+)
+
+// splitEntityHref takes an entity page's path apart.
+func splitEntityHref(dest string) (kind, id string, ok bool) {
+	switch {
+	case strings.HasPrefix(dest, projectPrefix):
+		return KindProject, strings.TrimPrefix(dest, projectPrefix), true
+	case strings.HasPrefix(dest, actionPrefix):
+		return KindAction, strings.TrimPrefix(dest, actionPrefix), true
+	}
+	return "", "", false
+}
+
 // Resolve says what a link destination points at.
 //
 // Only shapes roz can name are resolved: a pull request in a repository it
@@ -132,6 +156,17 @@ var prURLPattern = regexp.MustCompile(
 func (l *Linker) Resolve(dest string) (Target, bool) {
 	if m := prURLPattern.FindStringSubmatch(dest); m != nil {
 		return Target{Kind: KindPR, Key: m[1] + "/" + m[2] + "#" + m[3]}, true
+	}
+	// An entity's own page. The same identifier as an anchor, reached a
+	// different way — so it has to resolve the same, or a link to something
+	// not on this page would quietly lose its tooltip. That was a real defect:
+	// the tooltip is what the identifier means, and what it means does not
+	// depend on where the link goes.
+	if kind, id, ok := splitEntityHref(dest); ok {
+		if _, known := l.refs[id]; known {
+			return Target{Kind: kind, Key: id}, true
+		}
+		return Target{}, false
 	}
 	if after, found := strings.CutPrefix(dest, "#"); found {
 		if target, ok := l.refs[after]; ok {

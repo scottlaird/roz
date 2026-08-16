@@ -1,0 +1,26 @@
+{{define "body"}}
+  {{/* Every action, closed ones included. The index shows what to do; this
+       shows what there is, which is the question you ask when something has
+       gone quiet. */}}
+  <section>
+    <h2>actions</h2>
+    {{if .AllActions}}
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>id</th><th>title</th><th>state</th><th>verb</th><th>project</th></tr></thead>
+        <tbody>
+          {{range .AllActions}}
+          <tr{{if .Expired}} class="expired"{{end}}>
+            <td class="n"><a href="{{.Href}}">{{.ID}}</a></td>
+            <td>{{.Title}}</td>
+            <td>{{.State}}</td>
+            <td>{{.Verb}}</td>
+            <td class="n">{{.Project}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty">no actions</p>{{end}}
+  </section>
+{{end}}

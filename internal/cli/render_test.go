@@ -76,21 +76,17 @@ func TestRender(t *testing.T) {
 		}
 	}
 
-	// The index of everything sits below the blocks and holds what they leave
-	// out, so "not in the queue" is now a claim about the part above it.
-	blocks, index := aboveTheIndex(t, out)
-
+	// The index shows live work. What it leaves out -- closed, blocked,
+	// hidden -- is no longer appended to the bottom of it: each of those has
+	// its own page now, and a reference to one leaves rather than jumping.
 	for _, unwanted := range []string{
 		"Roll the change out", // blocked
 		"Tidy up after",       // hidden
 		"Retire the old pool", // superseded
 	} {
-		if strings.Contains(blocks, unwanted) {
-			t.Errorf("the page shows %q in a block it does not belong in:\n%s", unwanted, blocks)
-		}
-		// But it is still reachable, which is the point of the index.
-		if !strings.Contains(index, unwanted) {
-			t.Errorf("%q is nowhere on the page, so a reference to it lands nowhere", unwanted)
+		if strings.Contains(out, unwanted) {
+			t.Errorf("the page still carries %q, which belongs on its own page now:\n%s",
+				unwanted, out)
 		}
 	}
 
@@ -104,16 +100,6 @@ func TestRender(t *testing.T) {
 	if strings.Contains(out, "november pto") {
 		t.Errorf("the page contains a window beyond the horizon:\n%s", out)
 	}
-}
-
-// aboveTheIndex splits the page at the index of everything.
-func aboveTheIndex(t *testing.T, page string) (blocks, index string) {
-	t.Helper()
-	blocks, index, found := strings.Cut(page, `<section class="index">`)
-	if !found {
-		t.Fatalf("the page has no index section:\n%s", page)
-	}
-	return blocks, index
 }
 
 func TestRenderToAFile(t *testing.T) {
@@ -198,13 +184,22 @@ func TestRenderEmpty(t *testing.T) {
 // TestTemplateIsTheOneOnDisk guards the embed: an edit to the .tmpl file
 // should reach the page, and nothing should be answering from a copy in Go.
 func TestTemplateIsTheOneOnDisk(t *testing.T) {
-	onDisk, err := templates.ReadFile("templates/page.html.tmpl")
+	shell, err := templates.ReadFile("templates/shell.html.tmpl")
 	if err != nil {
-		t.Fatalf("reading the embedded template: %v", err)
+		t.Fatalf("reading the embedded shell: %v", err)
 	}
-	for _, want := range []string{"{{.Stamp}}", "range .Queue", "range .Projects", "{{.GeneratedAt}}"} {
-		if !strings.Contains(string(onDisk), want) {
-			t.Errorf("the template does not use %s", want)
+	index, err := templates.ReadFile("templates/index.html.tmpl")
+	if err != nil {
+		t.Fatalf("reading the embedded index: %v", err)
+	}
+	for _, want := range []string{"{{.Stamp}}", "{{.GeneratedAt}}", `{{template "body" .}}`} {
+		if !strings.Contains(string(shell), want) {
+			t.Errorf("the shell does not use %s", want)
+		}
+	}
+	for _, want := range []string{"range .Queue", "range .Projects"} {
+		if !strings.Contains(string(index), want) {
+			t.Errorf("the index body does not use %s", want)
 		}
 	}
 
@@ -404,7 +399,7 @@ func TestRenderShowsTheOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
-	if !strings.Contains(before, "<h1>roz</h1>") {
+	if !strings.Contains(before, `<h1><a href="/">roz</a></h1>`) {
 		t.Errorf("an unconfigured page has an odd heading:\n%s", before)
 	}
 
@@ -558,15 +553,11 @@ func TestPageLeavesALiveSnoozeHidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
-	// Deferring means out of the queue, not out of existence: the index below
-	// still lists it, so a reference to it has somewhere to land. What a
-	// snooze promises is that it is not competing for attention.
-	blocks, index := aboveTheIndex(t, page)
-	if strings.Contains(blocks, "still deferred") {
-		t.Errorf("a snooze that has not expired reached the queue:\n%s", blocks)
-	}
-	if !strings.Contains(index, "still deferred") {
-		t.Errorf("a snoozed action is nowhere on the page, so a reference to it lands nowhere")
+	// Deferring means out of the queue, not out of existence. It is off the
+	// index entirely now, and reachable at its own page — what a snooze
+	// promises is that it is not competing for attention, not that it is gone.
+	if strings.Contains(page, "still deferred") {
+		t.Errorf("a snooze that has not expired reached the index:\n%s", page)
 	}
 }
 

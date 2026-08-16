@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/scottlaird/roz/internal/github"
 	"github.com/scottlaird/roz/internal/store"
@@ -318,15 +319,21 @@ func TestSyncRecordsWhenAnIssueClosed(t *testing.T) {
 	st := newBareStore(t)
 	trackIssue(t, st, "owner/repo#7")
 
+	// Closed minutes ago rather than on a fixed date, because the poll
+	// schedule reads closed_at: an issue that closed within the hour is asked
+	// about every cycle, which is what lets the second sync below see the
+	// reopening. See store.IssuesToPoll.
+	closedAt := time.Now().UTC().Add(-10 * time.Minute).Format("2006-01-02T15:04:05.000Z")
+
 	client := &issueFetcher{fakeFetcher: &fakeFetcher{}, issues: []github.Issue{{
 		Key: "owner/repo#7", Title: "Make it work", State: "CLOSED",
-		ClosedAt: "2026-08-07T14:30:00Z",
+		ClosedAt: closedAt,
 	}}}
 	if _, err := Sync(ctx, st, client); err != nil {
 		t.Fatalf("Sync() returned error: %v", err)
 	}
-	if got := loadIssue(t, st, "owner/repo#7").ClosedAt.String; got != "2026-08-07T14:30:00Z" {
-		t.Errorf("closed_at = %q, want GitHub's timestamp", got)
+	if got := loadIssue(t, st, "owner/repo#7").ClosedAt.String; got != closedAt {
+		t.Errorf("closed_at = %q, want GitHub's timestamp %q", got, closedAt)
 	}
 
 	// An open issue reports no closedAt. That silence must not clear one:
@@ -339,7 +346,7 @@ func TestSyncRecordsWhenAnIssueClosed(t *testing.T) {
 		t.Fatalf("Sync() returned error: %v", err)
 	}
 	issue := loadIssue(t, st, "owner/repo#7")
-	if got := issue.ClosedAt.String; got != "2026-08-07T14:30:00Z" {
+	if got := issue.ClosedAt.String; got != closedAt {
 		t.Errorf("closed_at = %q after a poll that said nothing, want it kept", got)
 	}
 	if issue.Status.String != "OPEN" {

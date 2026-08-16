@@ -9,7 +9,7 @@ import (
 // WaitOnIssue records the issue an action is waiting for, creating the issue
 // row if nothing has recorded it yet.
 //
-// Creating the row is not a convenience. IssueKeys drives the poll from
+// Creating the row is not a convenience. IssuesToPoll drives the poll from
 // tracker_issue, so an issue nothing has recorded is never read, and a wait on
 // it would be false for ever — the same trap requires_pr exists to prevent.
 // Linking is therefore what puts the issue into the poll.

@@ -3,6 +3,7 @@ package ghsync
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/scottlaird/roz/internal/github"
 	"github.com/scottlaird/roz/internal/store"
@@ -175,4 +176,47 @@ func equal(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// TestABackfilledIssueIsAskedAboutOnce is the cost #167 created and this
+// answers: a closing reference adds an issue that has never been read, so the
+// first sync asks about it — and then the schedule takes over rather than
+// asking again on every cycle for ever.
+func TestABackfilledIssueIsAskedAboutOnce(t *testing.T) {
+	st, key := newStore(t)
+	ctx := context.Background()
+
+	pr := observed(key)
+	pr.ClosingIssues = []string{"otherorg/other#5"}
+	client := &issueFetcher{
+		fakeFetcher: &fakeFetcher{result: github.Result{
+			PullRequests: []github.PullRequest{pr},
+		}},
+		// Closed a year ago, which is where most backfilled references land.
+		issues: []github.Issue{{
+			Key: "otherorg/other#5", Title: "an old one", State: "CLOSED",
+			ClosedAt: time.Now().UTC().AddDate(-1, 0, 0).Format("2006-01-02T15:04:05.000Z"),
+		}},
+	}
+
+	// Three cycles, and the issue is asked about exactly once across them.
+	//
+	// Not on the first: issues are read before pull requests are applied, so
+	// the link that creates the row lands after this cycle's issue read. A
+	// cycle of latency, which costs nothing — nothing is waiting on it — and
+	// is worth knowing rather than asserting away.
+	var polled []int
+	for i := 0; i < 3; i++ {
+		result, err := Sync(ctx, st, client)
+		if err != nil {
+			t.Fatalf("Sync() %d returned error: %v", i, err)
+		}
+		polled = append(polled, result.IssuesPolled)
+	}
+
+	total := polled[0] + polled[1] + polled[2]
+	if total != 1 {
+		t.Errorf("polled %v across three cycles, want exactly one read: it closed a "+
+			"year ago, so the schedule should not ask again for a week", polled)
+	}
 }

@@ -515,8 +515,11 @@ func (s *Store) IssuesByProject(ctx context.Context) (map[string][]*TrackerIssue
 
 // IssueKeys returns the keys of every issue held for one tracker.
 //
-// Keys rather than records, because the caller is about to ask the tracker
-// about them: what roz has stored is exactly what a poll is going to replace.
+// Every issue, which is no longer what a sync asks for: IssuesToPoll is the
+// scheduled subset, and this is the whole set behind it. Kept apart because
+// they answer different questions — "what is recorded" does not change with
+// the clock, and a caller wanting one and getting the other would be wrong in
+// a way nothing would report.
 func (s *Store) IssueKeys(ctx context.Context, tracker string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT key FROM tracker_issue WHERE tracker = ? ORDER BY key", tracker)

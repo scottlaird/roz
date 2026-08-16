@@ -99,15 +99,31 @@ func arrowFor(kind string) string {
 
 // mermaidLabel makes a title safe inside a quoted mermaid label.
 //
-// Mermaid reads # as the start of an entity code and " as the end of the
-// label, so both have to become entity codes themselves — and # first, or the
-// escape introduced for the quote is itself mangled. Everything else a title
-// can hold is safe once it is inside the quotes; the page's own escaping
-// happens afterwards and separately, since this text reaches the browser as
-// HTML text and is read back out of the DOM.
+// Everything here was checked against mermaid in a browser rather than reasoned
+// about, because the rules are not what the syntax suggests and the failures
+// are silent. With htmlLabels off — which is what keeps a title from becoming
+// markup — a label is SVG text, and mermaid does not decode into it.
+//
+//   - A bare # is fine. The entity code #35; that mermaid's own documentation
+//     gives for it renders as the literal text "&#35;", because the decode
+//     that would turn it back happens only on the html-label path. Escaping it
+//     is what put "cel2sql&#35;168" on the page.
+//   - A double quote ends the label and cannot be escaped back: #quot; renders
+//     as literal "&quot;", and a backslash renders as a backslash. So it
+//     becomes a typographic quote, which is lossy and legible, and is the only
+//     one of these that changes a character rather than leaving it alone.
+//   - Backticks are removed rather than kept. A pair of them delimits a
+//     markdown string, and mermaid drops what is between: "refuse
+//     `superseded_by` now" renders as "refuse now". Losing the word silently is
+//     worse than losing the quoting, and roz titles are full of backticks.
+//   - < > and & are left exactly as they are, and render as "&lt;", "&gt;" and
+//     "&amp;". Passing the entity form instead produces the same output, so
+//     there is nothing to choose between them; the only fix would be to
+//     substitute a character the title does not contain, which is worse than
+//     showing it awkwardly.
 func mermaidLabel(s string) string {
-	s = strings.ReplaceAll(s, "#", "#35;")
-	s = strings.ReplaceAll(s, `"`, "#quot;")
+	s = strings.ReplaceAll(s, "`", "")
+	s = strings.ReplaceAll(s, `"`, "\u201d")
 	// Newlines end a statement in mermaid. Titles are single-line by
 	// construction, so this is a backstop rather than a case.
 	s = strings.ReplaceAll(s, "\n", " ")

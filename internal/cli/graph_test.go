@@ -272,3 +272,111 @@ func TestAPageAboutOneThingBuildsNoGraph(t *testing.T) {
 		}
 	}
 }
+
+// TestAnActionAdvancesItsProjectOnce is the arrow that was drawn twice. An
+// action reached by blocking names the project it advances, and the project
+// then enumerates its open actions and names the same edge coming back — so
+// every action seeded by a dependency had two arrows to its project.
+func TestAnActionAdvancesItsProjectOnce(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "cel2sql generates invalid SQLite")
+	first := addAction(t, db, "--title", "wait for upstream", "--verb", "write",
+		"--project", project)
+	second := addAction(t, db, "--title", "update the dependency", "--verb", "write",
+		"--project", project)
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", second, "--to", first); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	g := graphFor(t, db)
+	for _, action := range []string{first, second} {
+		var n int
+		for _, e := range g.Edges {
+			if e.From == action && e.To == project && e.Kind == edgeAdvances {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s advances %s %d times, want once", action, project, n)
+		}
+	}
+
+	// Stated once more as the invariant, so a second path to the same edge is
+	// caught wherever it is added rather than only for this shape.
+	seen := map[graphEdge]bool{}
+	for _, e := range g.Edges {
+		if seen[e] {
+			t.Errorf("edge drawn twice: %+v", e)
+		}
+		seen[e] = true
+	}
+}
+
+// TestTheLegendSaysOnlyWhatWasDrawn. A legend listing eight states beside a
+// diagram using two is a second thing to read before the first makes sense.
+func TestTheLegendSaysOnlyWhatWasDrawn(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "one")
+	first := addAction(t, db, "--title", "a", "--verb", "write", "--project", project)
+	second := addAction(t, db, "--title", "b", "--verb", "write", "--project", project)
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", second, "--to", first); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	g := graphFor(t, db)
+	legend := g.Legend
+	if legend.Empty() {
+		t.Fatal("a drawn diagram has an empty legend")
+	}
+
+	// Every entry names something the diagram used.
+	states, kinds, shapes := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, n := range g.Nodes {
+		states[className(n.Class)] = true
+		shapes[n.Kind] = true
+	}
+	for _, e := range g.Edges {
+		kinds[e.Kind] = true
+	}
+	for _, e := range legend.States {
+		if !states[e.Key] {
+			t.Errorf("legend explains state %q, which nothing is drawn in", e.Key)
+		}
+	}
+	for _, e := range legend.Shapes {
+		if !shapes[e.Key] {
+			t.Errorf("legend explains shape %q, which nothing is drawn as", e.Key)
+		}
+	}
+	for _, e := range legend.Edges {
+		if !kinds[e.Key] {
+			t.Errorf("legend explains edge %q, which nothing is drawn with", e.Key)
+		}
+	}
+	// And nothing the diagram used goes unexplained.
+	if len(legend.States) != len(states) || len(legend.Edges) != len(kinds) ||
+		len(legend.Shapes) != len(shapes) {
+		t.Errorf("legend has %d/%d/%d entries for %d states, %d edge kinds, %d shapes",
+			len(legend.States), len(legend.Edges), len(legend.Shapes),
+			len(states), len(kinds), len(shapes))
+	}
+	// No pull request is drawn here, so the legend must not mention one.
+	for _, e := range legend.Shapes {
+		if e.Key == nodePR {
+			t.Error("legend explains pull requests in a diagram with none")
+		}
+	}
+}
+
+// TestAnEmptyGraphHasNoLegend: there is nothing to explain, and a legend for a
+// sentence is furniture.
+func TestAnEmptyGraphHasNoLegend(t *testing.T) {
+	db := initDB(t)
+	addProject(t, db, "nothing blocked on anything")
+
+	if g := graphFor(t, db); !g.Legend.Empty() {
+		t.Errorf("an empty diagram has a legend: %+v", g.Legend)
+	}
+}

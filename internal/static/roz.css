@@ -210,3 +210,30 @@ h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
 .graph .node.open rect,.graph .node.open path{
   fill:var(--raise)!important;stroke:var(--link)!important}
 .graph .node.clickable{cursor:pointer}
+
+/* The diagram's legend. The swatch classes are the diagram's own, so a legend
+   that disagrees with the picture is one stylesheet bug rather than two lists
+   drifting apart. Only what the diagram used is drawn -- see legendFor. */
+.legend{margin:6px 0 0;font-size:12.5px;color:var(--mid)}
+.legend .lg{display:flex;flex-wrap:wrap;gap:4px 14px;margin:.3em 0}
+.legend .lg span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.legend i{display:inline-block;flex:none}
+.legend .sw{width:11px;height:11px;border-radius:3px;
+            background:var(--raise);border:1px solid var(--rule)}
+.legend .sw.blocked,.legend .sw.late{background:var(--bad-bg);border-color:var(--bad)}
+.legend .sw.snoozed,.legend .sw.wait{background:var(--wait-bg);border-color:var(--wait)}
+.legend .sw.click{background:var(--click-bg);border-color:var(--click)}
+.legend .sw.decide{background:var(--decide-bg);border-color:var(--decide)}
+.legend .sw.session{border-color:var(--session)}
+.legend .sw.open{border-color:var(--link)}
+.legend .sw.plain{background:var(--sink)}
+/* Outlines, matching shapeFor: a project is a box, an action is rounded, a
+   pull request is a stadium. */
+.legend .sh{width:18px;height:11px;border:1px solid var(--faint);background:none}
+.legend .sh.action{border-radius:4px}
+.legend .sh.pr{border-radius:6px}
+/* Lines, matching arrowFor. */
+.legend .ln{width:20px;height:0;border-top:3px solid var(--faint)}
+.legend .ln.advances{border-top-width:1px}
+.legend .ln.contains{border-top:1px dotted var(--faint)}
+.legend .ln.hides{border-top:1px dashed var(--faint)}

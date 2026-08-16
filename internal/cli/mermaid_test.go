@@ -5,19 +5,30 @@ import (
 	"testing"
 )
 
-// TestALabelCannotEndItsOwnLabel. Titles are free text and go straight into a
-// quoted mermaid label, so the two characters that mean something there have
-// to stop meaning it.
-func TestALabelCannotEndItsOwnLabel(t *testing.T) {
+// TestALabelSurvivesMermaid covers what a title has to go through, and every
+// case here was found by rendering it in a browser rather than by reading the
+// syntax. With htmlLabels off — which is what stops a title becoming markup —
+// mermaid does not decode into SVG text, so its documented escapes are the
+// wrong answer and two of them fail silently.
+func TestALabelSurvivesMermaid(t *testing.T) {
 	tests := []struct {
 		name, in, want string
 	}{
-		{"a quote would close the label", `say "no"`, `say #quot;no#quot;`},
-		{"a hash starts an entity code", "fixes #812", "fixes #35;812"},
-		// The order matters: escaping the quote introduces a hash, and
-		// escaping hashes afterwards would mangle it into #35;quot;.
-		{"both at once", `"#1"`, `#quot;#35;1#quot;`},
+		// The bug: #35; is mermaid's own entity code for a hash and renders as
+		// the literal text "&#35;", which put "cel2sql&#35;168" on the page.
+		{"a hash is left alone", "fixes #812", "fixes #812"},
+		// A pair of backticks delimits a markdown string and mermaid drops
+		// what is between them, so keeping them loses the word.
+		{"backticks are removed, not their contents",
+			"refuse `superseded_by` now", "refuse superseded_by now"},
+		{"a lone backtick goes too", "a ` b", "a  b"},
+		// A quote ends the label and no escape brings it back: #quot; renders
+		// as "&quot;" and a backslash renders as a backslash.
+		{"a quote cannot be represented, so it changes", `say "no"`, "say \u201dno\u201d"},
 		{"a newline would end the statement", "one\ntwo", "one two"},
+		// Left alone deliberately: the entity form produces identical output,
+		// so there is nothing to gain by sending it.
+		{"angle brackets are left as they are", "a < b > c", "a < b > c"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -25,6 +36,20 @@ func TestALabelCannotEndItsOwnLabel(t *testing.T) {
 				t.Errorf("mermaidLabel(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestNoLabelCarriesAnEntityCode is the rule the cases above are instances of:
+// nothing mermaid would have to decode may reach a label, because in this mode
+// nothing decodes it and the code itself is what the reader sees.
+func TestNoLabelCarriesAnEntityCode(t *testing.T) {
+	for _, in := range []string{"#812", `"quoted"`, "a#b", `#"#`} {
+		got := mermaidLabel(in)
+		for _, bad := range []string{"#35;", "#quot;", "&#", "&quot;"} {
+			if strings.Contains(got, bad) {
+				t.Errorf("mermaidLabel(%q) = %q, which carries %q", in, got, bad)
+			}
+		}
 	}
 }
 

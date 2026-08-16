@@ -42,6 +42,8 @@ type dependencyGraph struct {
 	// distinguishable at a glance.
 	OmittedProjects int
 	OmittedActions  int
+	// Legend says what the colours and lines mean, for the ones used.
+	Legend graphLegend
 }
 
 // Empty reports whether there is nothing to draw, which is a real answer
@@ -123,6 +125,7 @@ func buildGraph(ctx context.Context, st *store.Store,
 		rank:     rank,
 		late:     late,
 		seen:     map[string]bool{},
+		drawn:    map[graphEdge]bool{},
 	}
 	return g.build(projectBlocks, actionBlocks, hidden, stacked), nil
 }
@@ -143,6 +146,7 @@ type graphBuilder struct {
 	late     map[string]int
 
 	seen  map[string]bool
+	drawn map[graphEdge]bool
 	nodes []graphNode
 	edges []graphEdge
 }
@@ -220,6 +224,7 @@ func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked []stor
 		return a.IsOpen() && !g.seen[a.ID]
 	})
 	graph.Coverage = coverage(graph)
+	graph.Legend = legendFor(graph)
 	graph.Mermaid = mermaid(graph)
 	return graph
 }
@@ -312,8 +317,21 @@ func (g *graphBuilder) addPR(id string) {
 	})
 }
 
+// addEdge records one edge once.
+//
+// The dedupe is load-bearing rather than defensive. An action reached by
+// blocking names the project it advances, and the project then enumerates its
+// open actions and names the same edge coming back — so every action that was
+// seeded by a dependency drew its advances edge twice, which mermaid renders
+// as two arrows between the same pair of boxes. Keyed on the whole edge, so two
+// kinds between one pair still draw as two.
 func (g *graphBuilder) addEdge(from, to, kind string) {
-	g.edges = append(g.edges, graphEdge{From: from, To: to, Kind: kind})
+	e := graphEdge{From: from, To: to, Kind: kind}
+	if g.drawn[e] {
+		return
+	}
+	g.drawn[e] = true
+	g.edges = append(g.edges, e)
 }
 
 func countOpen[T any](rows map[string]T, keep func(T) bool) int {
@@ -378,4 +396,87 @@ func countEdges(g *dependencyGraph, kind string) int {
 		}
 	}
 	return n
+}
+
+// graphLegend says what the diagram's colours and lines mean.
+//
+// Built from what was drawn rather than from the full vocabulary. A legend
+// listing eight states beside a diagram using two is a second thing to read
+// before the first one makes sense, and the states a queue happens to be in
+// change from day to day.
+type graphLegend struct {
+	// States are the node colours, Shapes the node outlines, Edges the lines.
+	States []legendEntry
+	Shapes []legendEntry
+	Edges  []legendEntry
+}
+
+// legendEntry is one swatch. Key is the CSS class the stylesheet draws it
+// with, which is the same class the diagram itself carries — so a legend that
+// disagrees with the picture is a stylesheet bug rather than a drift between
+// two lists.
+type legendEntry struct {
+	Key   string
+	Label string
+}
+
+func (l graphLegend) Empty() bool {
+	return len(l.States) == 0 && len(l.Shapes) == 0 && len(l.Edges) == 0
+}
+
+// The glosses, in the order a legend reads. Slices rather than maps: the order
+// is part of the answer, and ranging a map would reshuffle the legend on every
+// request for a diagram that had not changed.
+var (
+	stateLabels = []legendEntry{
+		{"active", "active"},
+		{"blocked", "blocked"},
+		{"snoozed", "snoozed"},
+		{"click", "one click"},
+		{"decide", "a judgement"},
+		{"session", "real work"},
+		{"wait", "waiting on somebody"},
+		{"late", "past its allowance"},
+		{"open", "open"},
+		{"plain", "no state worth colouring"},
+	}
+	shapeLabels = []legendEntry{
+		{nodeProject, "project"},
+		{nodeAction, "action"},
+		{nodePR, "pull request"},
+	}
+	edgeLabels = []legendEntry{
+		{edgeBlocks, "must finish first"},
+		{edgeAdvances, "advances it"},
+		{edgeContains, "is part of"},
+		{edgeHides, "folded behind"},
+		{edgeStacks, "stacked on"},
+	}
+)
+
+// legendFor keeps the entries the diagram used, in the order above.
+func legendFor(g *dependencyGraph) graphLegend {
+	states, shapes, kinds := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, n := range g.Nodes {
+		states[className(n.Class)] = true
+		shapes[n.Kind] = true
+	}
+	for _, e := range g.Edges {
+		kinds[e.Kind] = true
+	}
+	return graphLegend{
+		States: used(stateLabels, states),
+		Shapes: used(shapeLabels, shapes),
+		Edges:  used(edgeLabels, kinds),
+	}
+}
+
+func used(all []legendEntry, present map[string]bool) []legendEntry {
+	var kept []legendEntry
+	for _, e := range all {
+		if present[e.Key] {
+			kept = append(kept, e)
+		}
+	}
+	return kept
 }

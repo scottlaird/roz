@@ -12,7 +12,7 @@ func TestSeededPipelinesHaveTheirSteps(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	pipelines, err := st.ListPipelines(ctx, true, Sort{})
+	pipelines, err := st.ListPipelines(ctx, true, Sort{}, SQLWhere{})
 	if err != nil {
 		t.Fatalf("ListPipelines() returned error: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestPipelinesAreOrderedByNumber(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
-	pipelines, err := st.ListPipelines(ctx, true, Sort{})
+	pipelines, err := st.ListPipelines(ctx, true, Sort{}, SQLWhere{})
 	if err != nil {
 		t.Fatalf("ListPipelines() returned error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestDefaultPipelineSkipsRetiredOnes(t *testing.T) {
 		t.Errorf("DefaultPipeline() = %q, want %q", got.Name, PipelineDirect)
 	}
 
-	listed, err := st.ListPipelines(ctx, true, Sort{})
+	listed, err := st.ListPipelines(ctx, true, Sort{}, SQLWhere{})
 	if err != nil {
 		t.Fatalf("ListPipelines() returned error: %v", err)
 	}

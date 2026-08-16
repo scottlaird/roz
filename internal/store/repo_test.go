@@ -139,7 +139,7 @@ func TestListGitHubRepos(t *testing.T) {
 	trackRepo(t, st, "anotherowner/thing")
 	trackRepo(t, st, "scottlaird/other")
 
-	got, err := st.ListGitHubRepos(ctx, Sort{})
+	got, err := st.ListGitHubRepos(ctx, Sort{}, SQLWhere{})
 	if err != nil {
 		t.Fatalf("ListGitHubRepos() returned error: %v", err)
 	}

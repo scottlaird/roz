@@ -378,6 +378,8 @@ func (t *Tx) issueStrings(ctx context.Context, query string, args ...any) ([]str
 // IssueFilter selects a subset of the issues that have been observed. The
 // zero value selects everything.
 type IssueFilter struct {
+	// SQLWhere is the compiled half of a CEL filter. See #201.
+	SQLWhere
 	// Tracker keeps one tracker's issues.
 	Tracker string
 	// Closed keeps issues the tracker has said closed.
@@ -419,6 +421,7 @@ func (f IssueFilter) clauses() ([]string, []any) {
 		where = append(where, "closed_at >= ?")
 		args = append(args, f.Since)
 	}
+	where, args = f.clause(where, args)
 	return where, args
 }
 

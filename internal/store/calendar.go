@@ -158,6 +158,9 @@ func (w *CalendarWindow) Covers(day string) bool {
 // WindowFilter narrows ListCalendarWindows. The zero value selects
 // everything.
 type WindowFilter struct {
+	// SQLWhere is the compiled half of a CEL filter. See #201.
+	SQLWhere
+
 	// Sort orders by columns instead of the usual earliest-first.
 	Sort Sort
 
@@ -249,5 +252,6 @@ func (f WindowFilter) clauses(today string) ([]string, []any) {
 		where = append(where, "starts_on <= ?")
 		args = append(args, f.Through)
 	}
+	where, args = f.clause(where, args)
 	return where, args
 }

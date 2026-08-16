@@ -195,20 +195,6 @@ func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// referencedBy is the columns a term names.
-//
-// Textual containment, which is crude: a string literal holding a column name
-// counts. Over-counting costs probe rows rather than an answer.
-func referencedBy(term string, columns []store.ColumnType) []store.ColumnType {
-	var found []store.ColumnType
-	for _, c := range columns {
-		if strings.Contains(term, c.Name) {
-			found = append(found, c)
-		}
-	}
-	return found
-}
-
 // nullableCount is how many of a term's columns may be absent.
 //
 // A term over one nullable column is settled by the probe: there is exactly
@@ -216,12 +202,27 @@ func referencedBy(term string, columns []store.ColumnType) []store.ColumnType {
 // over two is not — NULL in the first and a value in the second is a shape the
 // probe never sees — so it goes to Go rather than being pushed down on a
 // partial check. Rare, and cheap to be wrong about in this direction.
-func nullableCount(term string, columns []store.ColumnType) int {
+func nullableCount(referenced []store.ColumnType) int {
 	var n int
-	for _, c := range columns {
-		if c.Nullable && strings.Contains(term, c.Name) {
+	for _, c := range referenced {
+		if c.Nullable {
 			n++
 		}
 	}
 	return n
+}
+
+// hasJSON reports whether a term reads a JSON column.
+//
+// cel2sql converts `approvals.exists(a, a == "x")` into a json_each subquery
+// and then compares the alias as a scalar, which SQLite rejects with "no such
+// column: a" — SQL that is generated, accepted and wrong. Until that is fixed
+// upstream, such a term runs in Go, where it is correct.
+func hasJSON(referenced []store.ColumnType) bool {
+	for _, c := range referenced {
+		if c.JSON {
+			return true
+		}
+	}
+	return false
 }

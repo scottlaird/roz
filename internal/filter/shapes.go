@@ -77,6 +77,51 @@ func (s scope) resolve(e celast.Expr) (store.ColumnType, bool) {
 	return store.ColumnType{}, false
 }
 
+// columnsIn resolves every column an expression names.
+//
+// Through the same scope the allow-list uses, so a name is a column because
+// the tree says it is one rather than because it appears in the text. The
+// earlier version matched with strings.Contains, which counted a column named
+// in a string literal — `title == "state"` looked like a filter on `state` —
+// and had no way to tell `a.verb` from a bare `verb` at all.
+func columnsIn(e celast.Expr, columns scope) []store.ColumnType {
+	var found []store.ColumnType
+	seen := map[string]bool{}
+
+	var walk func(celast.Expr)
+	walk = func(n celast.Expr) {
+		if n == nil {
+			return
+		}
+		if c, ok := columns.resolve(n); ok && !seen[c.Name] {
+			seen[c.Name] = true
+			found = append(found, c)
+		}
+		switch n.Kind() {
+		case celast.SelectKind:
+			walk(n.AsSelect().Operand())
+		case celast.CallKind:
+			call := n.AsCall()
+			walk(call.Target())
+			for _, arg := range call.Args() {
+				walk(arg)
+			}
+		case celast.ListKind:
+			for _, element := range n.AsList().Elements() {
+				walk(element)
+			}
+		case celast.ComprehensionKind:
+			c := n.AsComprehension()
+			walk(c.IterRange())
+			walk(c.LoopCondition())
+			walk(c.LoopStep())
+			walk(c.Result())
+		}
+	}
+	walk(e)
+	return found
+}
+
 // pushableShape reports whether an expression is a shape known to mean the
 // same thing in SQLite and in CEL.
 func pushableShape(e celast.Expr, columns scope) bool {

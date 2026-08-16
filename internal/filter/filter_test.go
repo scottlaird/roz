@@ -526,3 +526,29 @@ func TestOnlyTheIdentifierIsAClock(t *testing.T) {
 		t.Errorf("the identifier was not: %#v", args[1])
 	}
 }
+
+// TestAColumnNameInAStringIsNotAColumn is what the textual matching got wrong.
+//
+// `title == "approvals"` mentions a JSON column's name and reads none, so the
+// old check held it back from the query for nothing. Resolving through the
+// scope asks the tree instead, which knows a literal from an identifier.
+func TestAColumnNameInAStringIsNotAColumn(t *testing.T) {
+	f := compile(t, `title == "approvals"`)
+
+	where, args := f.SQL()
+	if want := "(title = ?)"; where != want {
+		t.Errorf("SQL = %q, want %q", where, want)
+	}
+	if len(args) != 1 || args[0] != "approvals" {
+		t.Errorf("args = %v, want the string as a value", args)
+	}
+}
+
+// TestAJSONColumnIsStillHeldBack, now decided by resolving the term rather
+// than by searching it.
+func TestAJSONColumnIsStillHeldBack(t *testing.T) {
+	f := compile(t, `approvals.exists(a, a == "alice")`)
+	if where, _ := f.SQL(); where != "" {
+		t.Errorf("a JSON term was pushed down as %q", where)
+	}
+}

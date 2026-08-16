@@ -47,7 +47,7 @@ directory.
 | **actions** | |
 | `roz action add` | Allocate an action and print its id. `--pr` names the pull request it is about, which a predicate verb requires. |
 | `roz action show` | Print one action, with what blocks it, what it blocks, and its pull requests. `-o json` carries the same. |
-| `roz action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--waiting`, `--stale`, `--open`, `--expired` and filters. |
+| `roz action list` | Actions in creation order, or `--sort priority`; with `--unblocked`, `--waiting`, `--stale`, `--open`, `--expired`, and `--filter` for anything else. |
 | `roz action set` | Change authored columns. Closing is not one of them. |
 | `roz action snooze` | Defer an action to a real date. |
 | `roz action wake` | Clear a snooze. |
@@ -1052,6 +1052,105 @@ only text that gets there came off a record's own struct tags.
 
 `--sort` works with `--tree`, where it orders the roots and each parent's
 children without flattening the shape.
+
+### Filtering by them too
+
+`--filter` takes a [CEL](https://cel.dev) expression over the same names:
+
+```console
+$ roz pr list --filter 'state == "CLOSED" || state == "MERGED"'
+$ roz project list --filter 'priority <= 2 && snooze_until == null'
+$ roz action list --filter 'verb in ["merge", "undraft"]'
+```
+
+CEL rather than a query language of roz's own, because a listing already
+declares its columns and their types — so the vocabulary is something to hand
+an expression language rather than something to invent — and because a filter
+typed into a form is untrusted input. CEL has no I/O, no unbounded loops, a
+type checker that rejects a bad expression when it is written, and a cost limit
+per row.
+
+**Where it runs is reported, not hidden:**
+
+| | `--explain-filter` says |
+|---|---|
+| `state == "MERGED"` | `filter ran in SQL` |
+| `state == "MERGED" && title.matches("^A ")` | `filter ran in SQL, except title.matches("^A "), which ran in Go` |
+| a listing with no pushdown wired | `filter ran in Go over every row` |
+
+Whether a filter reached the query decides whether the listing read four rows
+or forty thousand, and nothing else on the screen would say which happened.
+
+**CEL decides what a filter means, and reaching the query may not change that.**
+An expression is pushed down only if its shape is on a list known to mean the
+same thing in both engines, *and* a probe against a scratch database then
+agrees. Both gates, because the two disagree in ways nobody guesses correctly:
+`state != "OPEN"` keeps a NULL state in CEL and drops it in SQLite, `'abc' > 5`
+is true in SQLite and an error in CEL, and `NOT merged_at` is not a null check
+at all — it is SQLite reading a timestamp as a number.
+
+A shape nobody has checked runs in Go, which is slower and right.
+
+### Following a relation
+
+A filter can cross into what a record is connected to, and every such question
+turns out to be existential:
+
+```console
+$ roz project list --filter 'actions.exists(a, a.verb == "wait_review")'
+$ roz project list --filter 'issues.size() == 0'
+$ roz project list --filter 'children.exists(c, c.priority < project.priority)'
+$ roz pr list      --filter 'actions.exists(a, a.project_id == "SL43")'
+$ roz action list  --filter 'subject_pr.state == "MERGED"'
+```
+
+Each becomes one correlated `EXISTS` — no join in the `SELECT`, no duplicated
+rows, no `DISTINCT` to undo them. `EXISTS` is never NULL and CEL's `exists`
+over an empty list is always false, so the two agree at the join by
+construction; only the predicate inside it plays by the scalar rules.
+
+**Inside a traversal, the row being filtered is named by its table.** SQLite
+resolves a bare column against the innermost `FROM`, so `children.exists(c,
+c.priority < priority)` would compare the child to itself; `project.priority`
+says which row is meant. A bare name there is refused rather than guessed at.
+
+One hop. `actions.exists(a, a.project.priority == 1)` reaches through two
+relations and is refused by name, because the alternative was an empty listing
+indistinguishable from a correct one.
+
+### The clock
+
+`now` is the one name that is not a column or a relation, and it is the moment
+the filter was compiled:
+
+```console
+$ roz project list --filter 'status == "snoozed" && snooze_until < now'
+```
+
+Substituted into the expression rather than bound to it, so a comparison
+against it is a comparison against a literal and reaches the query like any
+other. One moment for the whole filter: a clock that moved between terms could
+answer a question no instant would.
+
+### What a flag means
+
+The hand-written filter flags say what they would be as an expression, which is
+how the vocabulary is discoverable from something you already use:
+
+```console
+$ roz project list --orphaned --explain-filter
+--orphaned is --filter 'status != "done" && status != "retired" && status !=
+"superseded" && snooze_until == null && !actions.exists(a, a.closed_at == null)'
+```
+
+They are not implemented that way — a tested one-line `WHERE` clause beats a
+parse, a check, a probe and a conversion producing the same SQL — so a test
+runs the flag and the expression against the same rows and compares. A claim
+like that is only worth printing if something checks it.
+
+`--unblocked` and `--waiting` have no equivalent and say so: they are the queue,
+which reads the verb's rank class and whether the project is blocked, neither
+of which is a column of the action.
 
 ## For an agent
 

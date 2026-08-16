@@ -162,7 +162,7 @@ func Compile(blank any, expr string) (*Filter, error) {
 				}
 			}
 		}
-		if err != nil || mentionsJSON(term, columns) {
+		if err != nil {
 			// Not a failure: this is the term that has to run in Go.
 			//
 			// A JSON column is here rather than in the converter's own refusal
@@ -340,7 +340,14 @@ func celFor(env *cel.Env, e celast.Expr, info *celast.SourceInfo) (*cel.Ast, err
 func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	columns []store.ColumnType, fragment string, args []any) (bool, error) {
 
-	if !pushableShape(ast.NativeRep().Expr(), topLevel(columnsByName(columns))) {
+	at := topLevel(columnsByName(columns))
+	root := ast.NativeRep().Expr()
+	if !pushableShape(root, at) {
+		return false, nil
+	}
+
+	referenced := columnsIn(root, at)
+	if hasJSON(referenced) {
 		return false, nil
 	}
 
@@ -348,7 +355,7 @@ func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	// build — NULL in the first with a value in the second — so it is not
 	// pushed down on a partial check. Rare, and cheap to be wrong about in
 	// this direction.
-	if nullableCount(term, columns) > 1 {
+	if nullableCount(referenced) > 1 {
 		return false, nil
 	}
 
@@ -356,7 +363,7 @@ func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	if err != nil {
 		return false, fmt.Errorf("planning --filter %q: %w", term, err)
 	}
-	return probe.agrees(fragment, args, program, referencedBy(term, columns))
+	return probe.agrees(fragment, args, program, referenced)
 }
 
 // compileTerm parses and checks one term, reporting CEL's own diagnostic.
@@ -597,20 +604,6 @@ func (f *Filter) Explain() string {
 
 // columns is the vocabulary this filter was compiled against.
 func (f *Filter) columns() []string { return f.declared }
-
-// mentionsJSON reports whether a term names one of the record's JSON columns.
-//
-// By name, which is crude: a string literal containing a column name counts.
-// Being wrong here costs a pushdown rather than an answer, and this is a
-// demonstration of where the seam falls rather than the seam to keep.
-func mentionsJSON(term string, columns []store.ColumnType) bool {
-	for _, c := range columns {
-		if c.JSON && strings.Contains(term, c.Name) {
-			return true
-		}
-	}
-	return false
-}
 
 // conjuncts splits an expression at top-level `&&`, exactly.
 //

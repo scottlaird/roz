@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/scottlaird/roz/internal/filter"
+	"github.com/scottlaird/roz/internal/markdown"
 	"github.com/scottlaird/roz/internal/service"
 	"github.com/scottlaird/roz/internal/store"
 )
@@ -375,7 +376,13 @@ func eventDetail(e *store.Event) string {
 	case e.Field != "":
 		return fmt.Sprintf("%s: %q → %q", e.Field, e.OldValue, e.NewValue)
 	case e.Note != "":
-		return e.Note
+		// A note is a Markdown field, so it can be several paragraphs and a
+		// list. The table is one line per event — that is what makes it
+		// readable and what anything parsing it relies on — so the note
+		// arrives as text on one line rather than as its source across
+		// seven. -o json still carries what was written: the raw field is
+		// what a consumer wants, and this is a rendering.
+		return markdown.Line(e.Note)
 	default:
 		return ""
 	}

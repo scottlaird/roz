@@ -624,3 +624,49 @@ func TestWatchFilterAdvancesTheCursorOverWhatItHides(t *testing.T) {
 		t.Errorf("watch printed %d lines, want only the matching one:\n%s", len(lines), out.String())
 	}
 }
+
+// TestWatchKeepsANoteOnOneLine. The table is one line per event, which is what
+// makes it readable and what anything parsing it relies on — and a note is a
+// Markdown field, so it can be several paragraphs and a list.
+func TestWatchKeepsANoteOnOneLine(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "the subject")
+	note := "First paragraph about `code`.\n\n- a bullet\n- another\n\nSee [[" + project + "]] and **bold**."
+	if _, err := runCLI(t, "note", "--db", db, project, note); err != nil {
+		t.Fatalf("note returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "watch", "--db", db, "--once", "-n", "5", "--kind", "note")
+	if err != nil {
+		t.Fatalf("watch returned error: %v", err)
+	}
+	if got := len(nonEmptyLines(out)); got != 1 {
+		t.Errorf("one note printed as %d lines:\n%s", got, out)
+	}
+	for _, want := range []string{"First paragraph about code.", "- a bullet", project + " and bold"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the line is missing %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"`code`", "**bold**", "[[" + project + "]]"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("the line still carries markup %q:\n%s", unwanted, out)
+		}
+	}
+
+	// -o json carries what was written. The raw field is what a consumer
+	// wants; the one-line form is a rendering for the table.
+	shown, err := runCLI(t, "watch", "--db", db, "--once", "-n", "5", "--kind", "note", "-o", "json")
+	if err != nil {
+		t.Fatalf("watch -o json returned error: %v", err)
+	}
+	var event struct {
+		Note string `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(shown)), &event); err != nil {
+		t.Fatalf("watch -o json printed %q: %v", shown, err)
+	}
+	if event.Note != note {
+		t.Errorf("json note = %q, want the source as written", event.Note)
+	}
+}

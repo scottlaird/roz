@@ -216,8 +216,13 @@ The useful arrangement is the agent doing the bookkeeping and the high-level
 prioritising, and roz doing the mechanical tracking — because roz does it
 correctly and for free, where an agent does it approximately and per token.
 
-There is not yet a skill telling an agent how to work this way; writing one is
-[#211](https://github.com/scottlaird/roz/issues/211).
+[skills/roz/SKILL.md](skills/roz/SKILL.md) is the skill that tells an agent how
+to work this way — the arrangement above, the actor rule, which closes belong to
+roz rather than to the agent, and what to do with the stream. It is a first
+draft written from one agent's experience of using roz; [#211] is where it gets
+better.
+
+[#211]: https://github.com/scottlaird/roz/issues/211
 
 ## Alice needs two teams to approve
 
@@ -392,6 +397,8 @@ directory.
   signal roz will not infer, why a predicate answers false when it has read
   nothing, what went wrong before each rule existed. It is long and it is
   greppable.
+- **[skills/roz/SKILL.md](skills/roz/SKILL.md)** — what an agent should know
+  before touching a roz queue. Copy or symlink it into `~/.claude/skills/roz/`.
 - **[TODO.md](TODO.md)** — what is open and has no issue yet.
 - `roz <command> --help` for flags, which are documented at the command rather
   than in a table that would drift from them.

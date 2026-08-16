@@ -371,6 +371,7 @@ func listings() map[string]listing {
 		"verb":     viewOf(verbColumns),
 		"pipeline": viewOf(pipelineColumns),
 		"owner":    viewOf(ownerColumns),
+		"page":     viewOf(pageColumns),
 		// The log, which is a filter source without being a listing: `roz
 		// watch` takes --filter and --view, and has no --fields or --sort
 		// because a tail is one line per event in the order they happened.

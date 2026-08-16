@@ -308,7 +308,35 @@ func (r *PR) relations() []Relation {
 				Blank: func() any { return &Action{} },
 			},
 		},
+		{
+			// The issues it is against, which is the edge the weekly wrap-up
+			// reads and the one that existed only in prose until 0038.
+			Name: "issues", Load: prIssueIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "tracker_issue", Near: "id", Far: "id",
+				Via:   &Junction{Table: "pr_tracker_issue", Near: "pr_id", Far: "issue_id"},
+				Blank: func() any { return &TrackerIssue{} },
+			},
+		},
 		{Name: "checks", Load: checkStates},
+	}
+}
+
+// relations for an issue: the pull requests against it.
+//
+// The direction "which pull requests moved this issue" is asked from the
+// issue as often as from the pull request, and a junction read one way is not
+// readable the other without saying so.
+func (i *TrackerIssue) relations() []Relation {
+	return []Relation{
+		{
+			Name: "prs", Load: issuePRIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "pr", Near: "id", Far: "id",
+				Via:   &Junction{Table: "pr_tracker_issue", Near: "issue_id", Far: "pr_id"},
+				Blank: func() any { return &PR{} },
+			},
+		},
 	}
 }
 
@@ -408,6 +436,22 @@ func projectBlockingIDs(ctx context.Context, tx *Tx, id string) (any, error) {
 
 func issueIDs(ctx context.Context, tx *Tx, id string) (any, error) {
 	ids, err := tx.IssueIDsForProject(ctx, id)
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func prIssueIDs(ctx context.Context, tx *Tx, id string) (any, error) {
+	ids, err := tx.IssueIDsForPR(ctx, id)
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func issuePRIDs(ctx context.Context, tx *Tx, id string) (any, error) {
+	ids, err := tx.PRIDsForIssue(ctx, id)
 	if err != nil || len(ids) == 0 {
 		return nil, err
 	}

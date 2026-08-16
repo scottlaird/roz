@@ -557,6 +557,29 @@ CREATE TABLE action_tracker_issue (
   created_at TEXT NOT NULL
 ) STRICT;
 
+-- Which issues a pull request is against.
+--
+-- Many-to-many both ways: one pull request can close two issues, and one issue
+-- routinely takes three pull requests.
+--
+-- source exists for deletion rather than for the authored/observed split -- no
+-- link table carries an actor, because who linked is in the event log. sync
+-- reconciles what GitHub reports, so it must be able to delete its own rows
+-- and only its own: `github` is closingIssuesReferences and is sync's
+-- entirely, `manual` is a person's and is the only path for Jira. It is in the
+-- primary key so the same association can be both observed and asserted. See
+-- 0038.
+CREATE TABLE pr_tracker_issue (
+  pr_id      TEXT NOT NULL REFERENCES pr(id),
+  issue_id   TEXT NOT NULL REFERENCES tracker_issue(id),
+  source     TEXT NOT NULL CHECK (source IN ('github','manual')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (pr_id, issue_id, source)
+) STRICT;
+
+-- The reverse direction, which is the question the weekly wrap-up asks.
+CREATE INDEX pr_tracker_issue_by_issue ON pr_tracker_issue(issue_id);
+
 -- The owners a repository would rather go to first.
 --
 -- A preference, never an assertion: each is checked against what is actually

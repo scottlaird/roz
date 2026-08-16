@@ -63,6 +63,11 @@ type PullRequest struct {
 	// measured from. GitHub sets it on a merge as well as on a close.
 	ClosedAt string
 
+	// ClosingIssues are the issues GitHub will close when this merges, as
+	// owner/repo#number. Empty is a fact rather than an absence: it is GitHub
+	// saying the body names none, which is what makes reconciling safe.
+	ClosingIssues []string
+
 	// UnresolvedThreads counts review threads that are unresolved and not
 	// outdated. Outdated means the thread hangs off a commit that is no
 	// longer the head, which is GitHub's way of saying it has been overtaken
@@ -179,6 +184,15 @@ type wirePullRequest struct {
 			IsOutdated bool `json:"isOutdated"`
 		} `json:"nodes"`
 	} `json:"reviewThreads"`
+
+	ClosingIssuesReferences struct {
+		Nodes []struct {
+			Number     int64 `json:"number"`
+			Repository struct {
+				NameWithOwner string `json:"nameWithOwner"`
+			} `json:"repository"`
+		} `json:"nodes"`
+	} `json:"closingIssuesReferences"`
 }
 
 type wireAlias struct {
@@ -230,11 +244,31 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 	if len(p.TimelineItems.Nodes) > 0 {
 		pr.FirstReviewRequestedAt = p.TimelineItems.Nodes[0].CreatedAt
 	}
+	pr.ClosingIssues = closingIssues(p)
 	pr.HumanCommentedAt = humanCommentedAt(p)
 	pr.ChecksState, pr.Checks = checks(p)
 	pr.UnresolvedThreads = unresolvedThreads(p)
 
 	return pr, nil
+}
+
+// closingIssues names each referenced issue the way roz keys one: the
+// repository it lives in and its number, which is not always this pull
+// request's repository.
+//
+// Sorted, so a first sync logs its links in a stable order rather than in
+// whatever order the API listed them.
+func closingIssues(p *wirePullRequest) []string {
+	var keys []string
+	for _, node := range p.ClosingIssuesReferences.Nodes {
+		repo := node.Repository.NameWithOwner
+		if repo == "" || node.Number == 0 {
+			continue
+		}
+		keys = append(keys, fmt.Sprintf("%s#%d", repo, node.Number))
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func mergeState(status string) string {

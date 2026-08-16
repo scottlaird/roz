@@ -169,13 +169,33 @@ type ProjectFilter struct {
 // projectOrder is the ORDER BY for a listing. Under OrderPriority the
 // unprioritised sort last: unstated is not the same as low, but it has to go
 // somewhere, and behind the stated ones is the reading that does no harm.
+// actionableOrder breaks a priority tie on how actionable a project is.
+//
+// Creation order is not wrong as a tiebreak, it is just missing a signal that
+// is already on the row: within a tier, a blocked project sorted ahead of an
+// unblocked one purely because it was created first, and the unblocked one is
+// the only one anybody can pick up. See scottlaird/roz#159.
+//
+// Three buckets rather than a rank per status, because that is the number of
+// distinctions that matter here: something to do now, something waiting on
+// time or on another project, and something finished. Ordering inside a
+// bucket stays creation order, which is what n is for.
+//
+// The row's own status only. A blocked parent with an active child does not
+// push the child down — inheriting blockedness through the tree is a
+// different feature, and the naive version of it would bury exactly the work
+// this is trying to surface.
+var actionableOrder = fmt.Sprintf(
+	`CASE status WHEN '%s' THEN 0 WHEN '%s' THEN 1 WHEN '%s' THEN 1 ELSE 2 END`,
+	ProjectActive, ProjectBlocked, ProjectSnoozed)
+
 func projectOrder(filter ProjectFilter) string {
 	if sql := filter.Sort.SQL(""); sql != "" {
 		return sql
 	}
 	switch filter.Order {
 	case OrderPriority:
-		return "priority IS NULL, priority, n"
+		return "priority IS NULL, priority, " + actionableOrder + ", n"
 	case OrderStaleness:
 		return stalenessOrder("")
 	default:

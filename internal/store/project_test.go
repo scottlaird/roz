@@ -794,3 +794,77 @@ func TestPriorityRange(t *testing.T) {
 		}
 	}
 }
+
+// TestPriorityTiesBreakOnActionability is scottlaird/roz#159: within a
+// priority tier, a blocked project used to sort ahead of an unblocked one
+// purely because it was created first — and the unblocked one is the only one
+// anybody can pick up.
+func TestPriorityTiesBreakOnActionability(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+
+	// Created blocked-first, all at the same priority, which is the shape
+	// that produced the report.
+	for _, p := range []struct {
+		title  string
+		status string
+	}{
+		{"blocked, and created first", ProjectBlocked},
+		{"active, and created second", ProjectActive},
+		{"snoozed, created third", ProjectSnoozed},
+		{"done, created fourth", ProjectDone},
+		{"active, created last", ProjectActive},
+	} {
+		created := addProject(t, st, p.title)
+		if p.status == ProjectActive {
+			continue
+		}
+		id := created.ID
+		tx, err := st.Begin(ctx, ActorHuman)
+		if err != nil {
+			t.Fatalf("Begin() returned error: %v", err)
+		}
+		before, err := tx.LoadProject(ctx, id)
+		if err != nil {
+			t.Fatalf("LoadProject() returned error: %v", err)
+		}
+		after := before.Clone()
+		after.Status = p.status
+		if p.status == ProjectSnoozed {
+			// The schema keeps the pair consistent: a snoozed project has a
+			// date and only a snoozed project has one.
+			after.SnoozeUntil = sql.NullString{String: "2099-01-01", Valid: true}
+		}
+		if _, err := tx.Update(ctx, before, after); err != nil {
+			t.Fatalf("Update() returned error: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit() returned error: %v", err)
+		}
+	}
+
+	projects, err := st.ListProjects(ctx, ProjectFilter{Order: OrderPriority})
+	if err != nil {
+		t.Fatalf("ListProjects() returned error: %v", err)
+	}
+
+	var order []string
+	for _, p := range projects {
+		order = append(order, p.Status)
+	}
+	want := []string{ProjectActive, ProjectActive, ProjectBlocked, ProjectSnoozed, ProjectDone}
+	if len(order) != len(want) {
+		t.Fatalf("listed %d projects, want %d", len(order), len(want))
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("order = %v, want %v", order, want)
+		}
+	}
+
+	// Creation order still decides inside a bucket: the two active ones came
+	// second and last, and stay in that order.
+	if projects[0].Title != "active, and created second" {
+		t.Errorf("first active project = %q, want the earlier one", projects[0].Title)
+	}
+}

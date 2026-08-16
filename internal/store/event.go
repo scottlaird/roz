@@ -69,6 +69,16 @@ type EventQuery struct {
 	// Newest takes the last n matching rows instead of the first. The result
 	// is still returned oldest first.
 	Newest int
+	// Where is a WHERE fragment somebody else compiled — the SQL half of a
+	// CEL filter. Opaque here: what it means is the filter package's
+	// business.
+	//
+	// It matters more on the log than on a listing. A tail re-runs its query
+	// every interval, so a predicate that ran in Go would read every new row
+	// and discard most of them, for ever, rather than once.
+	Where string
+	// WhereArgs are its parameters, in the order the fragment names them.
+	WhereArgs []any
 }
 
 // Events reads the log, always returning rows oldest first so a caller can
@@ -158,6 +168,10 @@ func (q EventQuery) clauses() ([]string, []any) {
 	if q.SinceAt != "" {
 		where = append(where, "at >= ?")
 		args = append(args, q.SinceAt)
+	}
+	if q.Where != "" {
+		where = append(where, "("+q.Where+")")
+		args = append(args, q.WhereArgs...)
 	}
 	if len(q.ExcludeActors) > 0 {
 		placeholders := make([]string, len(q.ExcludeActors))

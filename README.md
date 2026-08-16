@@ -94,7 +94,7 @@ at every step.
 
 **That is the whole idea.** The rest of this is detail.
 
-## What roz reads, and the one thing it will not guess
+## What roz reads from GitHub
 
 Sync is read-only and batched into one GraphQL query. It records what GitHub
 says: state, draftness, the review decision, the merge state, unresolved review
@@ -133,11 +133,13 @@ out where it should go, and closes the step. Which channel is a lookup on the
 team being asked, because a change touching storage should reach the storage
 channel whichever repository it is in.
 
-roz has **no chat integration**. It has a hole shaped like one, and declines to
-fill it by guessing. That is a deliberate choice: inferring "announced" from
-GitHub state would make the one failure this catches invisible again.
+roz does not have chat integration yet; at some point it may gain the ability
+to listen to Slack review requests on its own. What it will not do is *infer*
+the announcement from GitHub state, because that would make the one failure
+this catches invisible again — the pull request that is technically fine and
+that nobody has been asked to look at.
 
-## Alice wants to see it without asking
+## Alice wants a web interface to view the status of all of her projects
 
 ```console
 $ roz serve
@@ -210,7 +212,7 @@ change is skipped rather than asked, so a hint cannot quietly become a habit
 nobody revisits. Ask the first team, and re-running the command shows what is
 still outstanding once their approval lands.
 
-## Alice wants to see everything at once
+## Alice wants a list of all her open PRs across every repo
 
 ```console
 $ roz pr list --filter 'state == "OPEN"' --fields id,title,review_decision,unresolved_threads
@@ -223,7 +225,7 @@ example/server#812    Rate-limit the public API   REVIEW_REQUIRED    0
 `--filter` takes an expression over whatever columns the listing has, and is
 pushed into SQL where it provably means the same thing there.
 
-## Alice wants the ones stuck on comments
+## Alice wants to know which open PRs are blocked on comments
 
 ```console
 $ roz pr list --filter 'unresolved_threads > 0' --fields id,title,unresolved_threads

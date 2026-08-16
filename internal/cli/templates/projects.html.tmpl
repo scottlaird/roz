@@ -4,6 +4,16 @@
        go" is a page rather than a block nobody reads top to bottom. */}}
   <section>
     <h2>projects</h2>
+    {{if .ViewLinks}}
+    {{/* The saved views of this listing. A view is a named question, so the
+         picker is the list of questions somebody thought worth keeping. */}}
+    <nav class="views">
+      {{range .ViewLinks}}
+      {{if .Current}}<span class="current" title="{{.Description}}">{{.Label}}</span>
+      {{else}}<a href="{{.Href}}" title="{{.Description}}">{{.Label}}</a>{{end}}
+      {{end}}
+    </nav>
+    {{end}}
     {{if .AllProjects}}
     <div class="tablewrap">
       <table>

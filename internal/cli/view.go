@@ -579,12 +579,41 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 	content.Crumbs = crumbsFor(at.kind, at.id)
 	switch at.kind {
 	case pageProjects:
-		for _, node := range store.Tree(everyProject) {
-			p := node.Project
-			content.AllProjects = append(content.AllProjects, projectRow(p, node, openPerProject, issuesByProject, text, stamp))
+		// The hierarchy is what the page shows by default and a view is not:
+		// a view is an answer to a question, and indenting a project that
+		// survived it under a parent that did not would draw a tree that is
+		// not there. So the rows come back flat when a view is in force,
+		// which is also what the CLI does with --filter.
+		listed, err := listedRows(ctx, st, at.view, "project", projectColumns,
+			store.Tree(everyProject),
+			func(where string, args []any, ranking string, order store.Sort) ([]store.TreeNode, error) {
+				rows, err := st.ListProjects(ctx, store.ProjectFilter{
+					Where: where, WhereArgs: args, Order: ranking, Sort: order,
+				})
+				if err != nil {
+					return nil, err
+				}
+				flat := make([]store.TreeNode, 0, len(rows))
+				for _, p := range rows {
+					flat = append(flat, store.TreeNode{Project: p})
+				}
+				return flat, nil
+			})
+		if err != nil {
+			return nil, err
+		}
+		content.ViewLinks = viewLinksFor(ctx, st, "project", "/projects", at.view)
+		for _, node := range listed {
+			content.AllProjects = append(content.AllProjects,
+				projectRow(node.Project, node, openPerProject, issuesByProject, text, stamp))
 		}
 	case pageActions:
-		listed, err := listedActions(ctx, st, at.view, everyAction)
+		listed, err := listedRows(ctx, st, at.view, "action", actionColumns, everyAction,
+			func(where string, args []any, ranking string, order store.Sort) ([]*store.Action, error) {
+				return st.ListActions(ctx, store.ActionFilter{
+					Where: where, WhereArgs: args, Order: ranking, Sort: order,
+				})
+			})
 		if err != nil {
 			return nil, err
 		}
@@ -976,15 +1005,27 @@ func viewLinksFor(ctx context.Context, st *store.Store, entity, path, current st
 	return links
 }
 
-// listedActions is what the actions page shows: everything, or one saved
-// view's answer.
+// listedRows is what a listing page shows: everything, or one saved view's
+// answer.
 //
 // Unlike savedFilter this reports its errors instead of falling back. The
 // difference is who named the view: a page reading `open_actions` for its own
 // filter should survive that row being edited, but a view named in a URL is a
 // request, and quietly showing a different list would be a lie about which
 // question was answered.
-func listedActions(ctx context.Context, st *store.Store, name string, every []*store.Action) ([]*store.Action, error) {
+//
+// query is the listing's own reader, since ActionFilter and ProjectFilter are
+// different types that happen to take the same four things. One resolver for
+// both, so /actions and /projects cannot come to disagree about what naming a
+// view means.
+func listedRows[T any](
+	ctx context.Context,
+	st *store.Store,
+	name, entity string,
+	set columnSet[T],
+	every []T,
+	query func(where string, args []any, ranking string, order store.Sort) ([]T, error),
+) ([]T, error) {
 	if name == "" {
 		return every, nil
 	}
@@ -1000,31 +1041,32 @@ func listedActions(ctx context.Context, st *store.Store, name string, every []*s
 	}
 	tx.Rollback()
 
-	if v.Entity != "action" {
+	if v.Entity != entity {
 		return nil, fmt.Errorf("%w: view %q is of %s", errNoSuchPage, v.Name, v.Entity)
 	}
 
-	f, err := filter.Compile(&store.Action{}, v.Filter)
+	f, err := filter.Compile(set.recordOf(set.blank), v.Filter)
 	if err != nil {
 		return nil, fmt.Errorf("view %q no longer compiles: %w", v.Name, err)
 	}
-	ranking, order, err := sortValue(v.Sort, actionColumns)
+	ranking, order, err := sortValue(v.Sort, set)
 	if err != nil {
 		return nil, fmt.Errorf("view %q has a sort this listing cannot take: %w", v.Name, err)
 	}
 
-	selection := store.ActionFilter{Order: ranking, Sort: order}
+	var where string
+	var args []any
 	if f != nil {
-		selection.Where, selection.WhereArgs = f.SQL()
+		where, args = f.SQL()
 	}
-	rows, err := st.ListActions(ctx, selection)
+	rows, err := query(where, args, ranking, order)
 	if err != nil {
 		return nil, err
 	}
 	// Whatever the query could not take. The page can afford it here because
-	// it is already holding every action for link resolution — the rows are
-	// read either way, so the Go pass costs a comparison and not a scan.
-	return keep(f, rows, actionColumns.recordOf)
+	// it is already holding every row for link resolution — they are read
+	// either way, so the Go pass costs a comparison and not a scan.
+	return keep(f, rows, set.recordOf)
 }
 
 // savedFilter resolves a named view into a WHERE fragment for the page.

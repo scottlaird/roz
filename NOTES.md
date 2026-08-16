@@ -997,8 +997,13 @@ be: the column was added by 0002 and set by nothing until `head_ref` arrived in
 0030 and gave `ResolveStacking` something to match on. Nothing is open and
 stacked at the moment, so that path is unexercised on real data.
 
-An action's subject pull request is not an edge yet, so a stack and the work
-that produced it are two disconnected pictures.
+An action's subject pull request **is** an edge, drawn dotted: an action is
+*about* a pull request and neither waits for the other, so drawing it as a
+dependency would say something false. It seeds nothing — a pull request reaches
+the diagram by being stacked, or by an action already in it being about one —
+because starting from every subject link would draw a box for each of a hundred
+and twenty tracked pull requests. Open ones only, for the reason a satisfied
+blocker is left out.
 
 ## The page links to itself
 

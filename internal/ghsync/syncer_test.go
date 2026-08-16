@@ -337,18 +337,33 @@ func TestSyncerLogsAPartialCycleEveryTime(t *testing.T) {
 		MaxFailures: 2,
 		Log:         &log,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
+	// Waited for rather than timed. This used to run for 200ms of wall clock
+	// and assert that at least two cycles had finished, which is a bet on how
+	// much a machine gets through in a fifth of a second — and CI is where
+	// that bet is worst: the -race job runs this package under load, and one
+	// cycle in 200ms is entirely possible there. It failed on two unrelated
+	// pull requests within ten minutes. See #251.
+	//
+	// What is being asserted is "every cycle, not once", and that is a
+	// question about the second occurrence rather than about elapsed time.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- syncer.Run(ctx) }()
 
-	// It runs until cancelled rather than giving up: the pull request read is
-	// working, and stopping would take that down with the ref read.
-	if err := syncer.Run(ctx); err != nil {
-		t.Fatalf("Run() gave up on a cycle that was doing most of its job: %v", err)
+	twice := func() bool {
+		return strings.Count(log.String(), "carrying on with the rest") >= 2
 	}
-	if got := strings.Count(log.String(), "carrying on with the rest"); got < 2 {
-		t.Errorf("a partial cycle was logged %d times, want one per cycle:\n%s", got, log.String())
+	if err := waitFor(twice); err != nil {
+		t.Errorf("a partial cycle was logged once and then suppressed: %v\n%s", err, log.String())
 	}
 	if !strings.Contains(log.String(), "refs") {
 		t.Errorf("the log does not say which read failed:\n%s", log.String())
+	}
+
+	// It runs until cancelled rather than giving up: the pull request read is
+	// working, and stopping would take that down with the ref read.
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() gave up on a cycle that was doing most of its job: %v", err)
 	}
 }

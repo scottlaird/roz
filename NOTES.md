@@ -868,6 +868,49 @@ fast is retired
 Editing a pipeline never touches a chain already running. Steps are copied into
 actions when a chain starts, so nothing reads the pipeline again afterwards.
 
+### A chain that never started
+
+A chain is only ever extended by closing a step that is *already part of one*.
+So an action made with `action add` starts nothing when it closes — even one
+carrying a pipeline verb, closing on the same predicate, indistinguishable from
+a chain step in every way except that nothing follows it. The pull request drops
+out of the queue at the moment it stops being your problem and becomes a thing
+to watch, and nobody notices until somebody asks after it days later.
+
+What made that easy to walk into is that `pipeline` on a pull request is the
+*override*, so it reads `-` for one carried by its repository's chain and `-`
+for one carried by nothing. `pr show` answers the question directly instead:
+
+```console
+$ roz pr show example/server#812
+...
+chain     review from example/server; missing wait_review and merge
+pipeline  -
+```
+
+`none` there means no pipeline reaches it at all, which is a legitimate state
+and not the same failure.
+
+```console
+$ roz pr chain example/server#812
+example/server#812 review from example/server; missing wait_review and merge
+  created NA7 wait for review example/server#812
+  created NA8 merge example/server#812 (blocked by NA7)
+```
+
+**Explicit, never automatic.** A single action added against a pull request you
+are lightly tracking should not quietly acquire three more.
+
+**Only what is missing, and only appended.** Steps already done are not written
+back: the log would gain closes nobody performed, and the identifiers would run
+out of chronological order in a scheme whose numbers are quoted in commit
+messages. Matching is by verb rather than by position, so a half-built chain is
+completed rather than duplicated, and running it twice creates nothing.
+
+Actions that already exist are left exactly as they are, blockers included.
+Each new step waits on whatever fulfils the step before it — which may be one
+created alongside it, or one that was already open.
+
 ## What is blocked on what
 
 Blocking is recorded in three places and was visible in none of them: project

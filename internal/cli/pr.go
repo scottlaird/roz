@@ -20,6 +20,7 @@ func newPRCmd() *cobra.Command {
 		newPRTrackCmd(),
 		newPRSetCmd(),
 		newPRAnnounceCmd(),
+		newPRChainCmd(),
 		newPRShowCmd(),
 		newPRListCmd(),
 		newPRLinkIssueCmd(),
@@ -288,7 +289,18 @@ func runPRShow(cmd *cobra.Command, args []string) error {
 		return notFoundOr(err, args[0])
 	}
 
-	return showRecord(cmd, ctx, tx, p, format)
+	// The pipeline column is the override, so it reads "-" both for a pull
+	// request following its repository's chain and for one following nothing
+	// at all. Those are opposite situations, and reading the first as the
+	// second is how a pull request gets left with no open actions and nobody
+	// notices for three days — scottlaird/roz#96. chain answers it directly:
+	// which pipeline applies, where it came from, and what nothing covers.
+	chain, err := tx.ChainOf(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+
+	return showRecordWith(cmd, ctx, tx, p, format, map[string]string{"chain": chain.Summary()})
 }
 
 func newPRListCmd() *cobra.Command {
@@ -467,4 +479,70 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// newPRChainCmd repairs the case a pipeline cannot reach on its own.
+func newPRChainCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "chain <repo#number>",
+		Short: "Create the pipeline steps this pull request is missing",
+		Long: "A chain is only ever extended by closing a step that is already part\n" +
+			"of one. So an action made with `action add` — even one carrying a\n" +
+			"pipeline verb, closing on the same predicate — starts nothing when it\n" +
+			"closes, and the pull request drops out of the queue at the moment it\n" +
+			"stops being your problem and becomes a thing to watch.\n\n" +
+			"This is the repair, and it is explicit rather than automatic: a single\n" +
+			"action added against a pull request you are only lightly tracking\n" +
+			"should not quietly acquire three more.\n\n" +
+			"It creates only what is missing. Steps already done are not written\n" +
+			"back — the log would gain closes nobody performed, and the numbering\n" +
+			"would run out of order — so a chain reconstructed after the fact is\n" +
+			"appended rather than interleaved. Running it twice creates nothing the\n" +
+			"second time.\n\n" +
+			"Actions that already exist are left exactly as they are, including\n" +
+			"their blockers. New steps hang off the last open one ahead of them.\n\n" +
+			"`roz pr show` names the pipeline that applies and the steps nothing\n" +
+			"covers, which is how to see what this would do before doing it.",
+		Args: cobra.ExactArgs(1),
+		RunE: runPRChain,
+	}
+	addActorFlag(cmd)
+	return cmd
+}
+
+func runPRChain(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+
+	actor, err := actorFrom(cmd)
+	if err != nil {
+		return err
+	}
+	if _, _, err := store.ParsePRKey(args[0]); err != nil {
+		return err
+	}
+	st, err := openStore(cmd)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	result, err := st.InstantiateChain(ctx, actor, args[0])
+	if err != nil {
+		return notFoundOr(err, args[0])
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%s %s\n", args[0], result.State.Summary())
+	if len(result.Created) == 0 {
+		fmt.Fprintln(out, "  nothing missing")
+		return nil
+	}
+	for i, a := range result.Created {
+		blocked := ""
+		if by := result.BlockedBy[i]; by != "" {
+			blocked = fmt.Sprintf(" (blocked by %s)", by)
+		}
+		fmt.Fprintf(out, "  created %s %s%s\n", a.ID, a.Title, blocked)
+	}
+	return nil
 }

@@ -39,7 +39,11 @@ func syncIssues(ctx context.Context, st *store.Store, reader IssueReader, result
 	if reader == nil {
 		return nil
 	}
-	keys, err := st.IssueKeys(ctx, store.TrackerGitHub)
+	// Not every recorded issue: what is open, what has never been read, and
+	// what is closed and due. A pull request's closing references add an issue
+	// per reference and nothing untracks a row, so a flat poll grew without
+	// bound — see IssuesToPoll.
+	keys, err := st.IssuesToPoll(ctx, store.TrackerGitHub, store.DefaultIssueSchedule)
 	if err != nil {
 		return err
 	}

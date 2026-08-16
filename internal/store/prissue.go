@@ -39,7 +39,7 @@ func ValidateLinkSource(source string) error {
 // have to know what it already did.
 //
 // The issue row is created if it is not there, which is not a convenience.
-// IssueKeys drives the poll from tracker_issue, so an issue nothing has
+// IssuesToPoll drives the poll from tracker_issue, so an issue nothing has
 // recorded is never read — a link to one would point at a row that never
 // updates. The same reasoning WaitOnIssue is built on.
 func (t *Tx) LinkPRIssue(ctx context.Context, prID, tracker, key, source string) error {
@@ -175,7 +175,7 @@ func (t *Tx) ReconcileClosingIssues(ctx context.Context, prID string, keys []str
 
 // ensureIssue records an issue key that nothing has recorded yet.
 //
-// Linking is what puts an issue into the poll — IssueKeys reads tracker_issue
+// Linking is what puts an issue into the poll — IssuesToPoll reads tracker_issue
 // — so this is what makes the link point at something that will ever update.
 func (t *Tx) ensureIssue(ctx context.Context, id, tracker, key string) error {
 	if _, err := t.LoadTrackerIssue(ctx, id); err != nil {

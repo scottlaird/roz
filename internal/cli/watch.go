@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -21,6 +22,8 @@ const (
 	flagSeverity = "severity"
 	flagKind     = "kind"
 	flagOnce     = "once"
+
+	flagExcludeActor = "exclude-actor"
 )
 
 const (
@@ -37,7 +40,12 @@ func newWatchCmd() *cobra.Command {
 			"controls how often; the cost of a poll is one indexed query against\n" +
 			"seq, so a short interval is cheap.\n\n" +
 			"With -o json each event is a separate line rather than one array, so\n" +
-			"the output can be consumed as it arrives.",
+			"the output can be consumed as it arrives.\n\n" +
+			"--exclude-actor drops one writer's events, which is what an agent\n" +
+			"watching its own queue wants: its writes are the noise and everything\n" +
+			"else is the signal. It is an exclusion rather than a selection\n" +
+			"because the actor vocabulary is open, so \"everything but mine\"\n" +
+			"cannot be said as a list of the others.",
 		Args: cobra.NoArgs,
 		RunE: runWatch,
 	}
@@ -49,6 +57,8 @@ func newWatchCmd() *cobra.Command {
 	f.String(flagSeverity, "", "keep only info, notice or exception")
 	f.String(flagKind, "", "keep only one event kind, e.g. created or changed")
 	f.Bool(flagOnce, false, "print the selected events and exit instead of following")
+	f.StringSlice(flagExcludeActor, nil,
+		"drop events by this actor, e.g. agent:claude; repeatable or comma-separated")
 	addOutputFlag(cmd)
 	cmd.MarkFlagsMutuallyExclusive(flagLines, flagSince)
 
@@ -134,8 +144,15 @@ func watchOptionsFrom(cmd *cobra.Command) (watchOptions, error) {
 	if err != nil {
 		return watchOptions{}, err
 	}
+	excluded, err := f.GetStringSlice(flagExcludeActor)
+	if err != nil {
+		return watchOptions{}, err
+	}
+	if err := validateActors(excluded, f.Changed(flagExcludeActor)); err != nil {
+		return watchOptions{}, err
+	}
 
-	query := store.EventQuery{Severity: severity, Kind: kind}
+	query := store.EventQuery{Severity: severity, Kind: kind, ExcludeActors: excluded}
 	backlog := true
 	if since, err := f.GetString(flagSince); err != nil {
 		return watchOptions{}, err
@@ -166,6 +183,24 @@ func watchOptionsFrom(cmd *cobra.Command) (watchOptions, error) {
 		format:   format,
 		once:     once,
 	}, nil
+}
+
+// validateActors rejects an empty exclusion rather than ignoring it. Nothing
+// is ever written with an empty actor, so `--exclude-actor ""` hides nothing
+// while leaving the caller believing they have hidden something.
+//
+// The empty string parses as a list of no names rather than one empty name,
+// which is why this needs to know the flag was given at all.
+func validateActors(actors []string, given bool) error {
+	if given && len(actors) == 0 {
+		return fmt.Errorf("--%s was given no name", flagExcludeActor)
+	}
+	for _, actor := range actors {
+		if strings.TrimSpace(actor) == "" {
+			return fmt.Errorf("--%s was given an empty name", flagExcludeActor)
+		}
+	}
+	return nil
 }
 
 func validateSeverity(severity string) error {

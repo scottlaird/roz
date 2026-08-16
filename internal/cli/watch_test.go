@@ -129,6 +129,157 @@ func TestWatchFilters(t *testing.T) {
 	}
 }
 
+// TestWatchExcludesAnActor is the point of the flag: an agent hides its own
+// writes and keeps everything else, which an allow-list cannot express — the
+// actor vocabulary is open, so "everyone but me" has no finite spelling.
+func TestWatchExcludesAnActor(t *testing.T) {
+	db := initDB(t)
+	if _, err := runCLI(t, "project", "add", "--db", db, "--title", "mine",
+		"--actor", "agent:claude"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+	if _, err := runCLI(t, "project", "add", "--db", db, "--title", "theirs",
+		"--actor", "agent:other"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+	seedLog(t, db) // two more, as human
+
+	tests := []struct {
+		name  string
+		args  []string
+		want  []string
+		lines int
+	}{
+		{
+			name:  "one actor",
+			args:  []string{"--exclude-actor", "agent:claude"},
+			want:  []string{"agent:other", "human"},
+			lines: 3,
+		},
+		{
+			name:  "comma separated",
+			args:  []string{"--exclude-actor", "agent:claude,agent:other"},
+			want:  []string{"human"},
+			lines: 2,
+		},
+		{
+			name:  "repeated",
+			args:  []string{"--exclude-actor", "agent:claude", "--exclude-actor", "human"},
+			want:  []string{"agent:other"},
+			lines: 1,
+		},
+		{
+			name:  "an actor nobody wrote as",
+			args:  []string{"--exclude-actor", "sync:github"},
+			want:  []string{"agent:claude", "agent:other", "human"},
+			lines: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := append([]string{"watch", "--db", db, "--once", "-n", "10"}, tt.args...)
+			out, err := runCLI(t, args...)
+			if err != nil {
+				t.Fatalf("watch returned error: %v", err)
+			}
+			if got := len(nonEmptyLines(out)); got != tt.lines {
+				t.Errorf("got %d lines, want %d:\n%s", got, tt.lines, out)
+			}
+			for _, actor := range tt.want {
+				if !strings.Contains(out, actor) {
+					t.Errorf("%s was excluded too:\n%s", actor, out)
+				}
+			}
+			for _, excluded := range tt.args[1:] {
+				for _, actor := range strings.Split(excluded, ",") {
+					if strings.Contains(out, actor+" ") {
+						t.Errorf("%s was not excluded:\n%s", actor, out)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestWatchExcludesAnActorInJSON: the filter is in the query, so it cannot
+// depend on which printer runs — but the JSON form is what an agent reads,
+// and it is the form the jq workaround this replaces operated on.
+func TestWatchExcludesAnActorInJSON(t *testing.T) {
+	db := initDB(t)
+	if _, err := runCLI(t, "project", "add", "--db", db, "--title", "mine",
+		"--actor", "agent:claude"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+	seedLog(t, db)
+
+	out, err := runCLI(t, "watch", "--db", db, "--once", "-n", "10",
+		"-o", "json", "--exclude-actor", "agent:claude")
+	if err != nil {
+		t.Fatalf("watch returned error: %v", err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("got %d events, want 2:\n%s", len(lines), out)
+	}
+	for _, line := range lines {
+		var event struct {
+			Actor string `json:"actor"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("watch -o json printed %q: %v", line, err)
+		}
+		if event.Actor == "agent:claude" {
+			t.Errorf("an excluded actor survived into the JSON: %s", line)
+		}
+	}
+}
+
+// TestWatchExcludesWhileFollowing. The backlog bounds are reset for the tail
+// and the filters are not; an exclusion that only held for the backlog would
+// be worse than none, since the noise would come back the moment it mattered.
+func TestWatchExcludesWhileFollowing(t *testing.T) {
+	db := initDB(t)
+
+	root := NewRootCmd()
+	out := &syncBuffer{}
+	root.SetOut(out)
+	root.SetErr(out)
+	root.SetArgs([]string{"watch", "--db", db, "--since", "2099-01-01",
+		"--interval", "20ms", "--exclude-actor", "agent:claude"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- root.ExecuteContext(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	if _, err := runCLI(t, "project", "add", "--db", db, "--title", "mine",
+		"--actor", "agent:claude"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+	if _, err := runCLI(t, "project", "add", "--db", db, "--title", "theirs"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+
+	if err := waitFor(func() bool { return strings.Contains(out.String(), "ROZ2") }); err != nil {
+		t.Fatalf("watch did not report the event it was meant to keep: %v\n%s", err, out.String())
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("watch returned error: %v", err)
+	}
+
+	if strings.Contains(out.String(), "agent:claude") {
+		t.Errorf("the excluded actor came back once the tail started:\n%s", out.String())
+	}
+	if lines := nonEmptyLines(out.String()); len(lines) != 1 {
+		t.Errorf("watch printed %d lines, want only the kept event:\n%s", len(lines), out.String())
+	}
+}
+
 func TestWatchSince(t *testing.T) {
 	db := initDB(t)
 	seedLog(t, db)
@@ -175,6 +326,16 @@ func TestWatchRejections(t *testing.T) {
 			name:    "negative lines",
 			args:    []string{"-n", "-1"},
 			wantErr: "must not be negative",
+		},
+		{
+			name:    "empty exclusion",
+			args:    []string{"--exclude-actor", ""},
+			wantErr: "no name",
+		},
+		{
+			name:    "empty name among others",
+			args:    []string{"--exclude-actor", "agent:claude,,human"},
+			wantErr: "empty name",
 		},
 		{
 			name:    "since with lines",

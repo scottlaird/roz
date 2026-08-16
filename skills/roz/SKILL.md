@@ -160,7 +160,10 @@ Each line of `roz watch -o json` is one event:
 ```
 
 - **Ignore your own writes.** Your `--actor agent:<name>` lines come back down
-  the stream. An agent that reacts to them will react to its own reaction.
+  the stream, and an agent that reacts to them will react to its own reaction.
+  `roz watch --exclude-actor agent:<name>` drops them at the source, which is
+  better than remembering to skip them: the rule holds for the backlog and the
+  tail alike, and it cannot be forgotten halfway through a session.
 - **`correlation` groups one act.** Closing an action instantiates a pipeline,
   frees what it blocked, and unhides what sat behind it — all under one
   correlation id. Treat those as one thing that happened, not five.
@@ -170,8 +173,10 @@ Each line of `roz watch -o json` is one event:
   true. That is usually the interesting one: it is the queue moving without
   anybody touching it.
 
-`--kind`, `--severity` and `--since` narrow the stream at the source, which is
-cheaper than filtering in your own head.
+`--kind`, `--severity`, `--since` and `--exclude-actor` all narrow the stream at
+the source, which is cheaper than filtering in your own head. `--exclude-actor`
+is repeatable and takes a comma-separated list, so a session running two agents
+can hide both.
 
 roz polls SQLite internally, because SQLite cannot push a notification. That is
 one indexed query on `seq`, once, regardless of how many readers there are — so

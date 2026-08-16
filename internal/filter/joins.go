@@ -453,10 +453,21 @@ func (e *joinEnv) subquery(x exists, inner string, args []any) (string, []any) {
 // excludes rather than comparing against NULL, which is what CEL does when it
 // meets a null in the middle of a field access.
 func (e *joinEnv) toOne(relation, inner string, args []any) (string, []any) {
+	return e.toOneAs(relation, relation, inner, args)
+}
+
+// toOneAs is toOne with the far table aliased by something other than the
+// relation's name.
+//
+// Which is what a chain of the same relation needs: `parent.parent.title` is
+// two levels of `parent`, and aliasing both of them `parent` renders
+// `parent.id = parent.parent_id` — SQL that runs and compares a row to
+// itself. See level.alias.
+func (e *joinEnv) toOneAs(relation, alias, inner string, args []any) (string, []any) {
 	join := e.joins[relation]
 	if join.Via == nil {
 		return fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s.%s = %s.%s AND %s)",
-			join.Table, relation, relation, join.Far, e.base, join.Near, inner), args
+			join.Table, alias, alias, join.Far, e.base, join.Near, inner), args
 	}
 
 	where := []string{fmt.Sprintf("j.%s = %s.%s", join.Via.Near, e.base, join.Near)}
@@ -464,6 +475,6 @@ func (e *joinEnv) toOne(relation, inner string, args []any) (string, []any) {
 	where = append(where, clauses...)
 	where = append(where, inner)
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s JOIN %s j ON j.%s = %s.%s WHERE %s)",
-		join.Table, relation, join.Via.Table, join.Via.Far, relation, join.Far,
+		join.Table, alias, join.Via.Table, join.Via.Far, alias, join.Far,
 		strings.Join(where, " AND ")), append(only, args...)
 }

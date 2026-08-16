@@ -187,7 +187,11 @@ func TestATraversalWithNowhereToReadFromSaysSo(t *testing.T) {
 // before the fix: a filter for pull requests whose action belongs to a
 // priority-1 project returned nothing, while both halves of it returned rows
 // on their own.
-func TestASecondHopIsRefusedRatherThanAnswered(t *testing.T) {
+// TestWhatAChainStillWillNotDo. Three hops is the limit, and the reason is
+// arithmetic rather than taste: each level is a nested subquery, so the cost
+// multiplies, and the person waiting for the answer is the person who wrote
+// the expression.
+func TestWhatAChainStillWillNotDo(t *testing.T) {
 	tests := []struct {
 		name  string
 		blank any
@@ -195,23 +199,37 @@ func TestASecondHopIsRefusedRatherThanAnswered(t *testing.T) {
 		want  string
 	}{
 		{
-			// Two relations of the same name: each level would alias the same
-			// table, and `parent.id = parent.parent_id` is SQL that runs and
-			// compares a row to itself.
-			name:  "a chained to-one",
-			blank: &store.Project{}, expr: `parent.parent.title == "x"`,
-			want: "parent.parent.title",
+			name:  "past the depth limit",
+			blank: &store.Project{},
+			expr:  `children.exists(a, a.children.exists(b, b.children.exists(c, c.children.exists(d, d.title == "x"))))`,
+			want:  "relations deep",
+		},
+		{
+			// Two relations inside one term, which needs two subqueries and a
+			// decision about how they compose. Answerable — it runs in Go —
+			// but not pushed down, which is a demotion rather than a refusal.
+			name:  "two relations in one term",
+			blank: &store.Project{},
+			expr:  `parent.title == "x" || parent.priority == 1`,
+			want:  "",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Compile(tc.blank, tc.expr)
+			if tc.want == "" {
+				// Answerable, whether or not every term reached the query.
+				if err != nil {
+					t.Fatalf("Compile(%q) returned error: %v", tc.expr, err)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatalf("Compile(%q) answered rather than refusing", tc.expr)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error does not name the hop: %v", err)
+				t.Errorf("error does not say %q: %v", tc.want, err)
 			}
 		})
 	}
@@ -230,8 +248,9 @@ func TestARefusalIsNotADemotion(t *testing.T) {
 		t.Error("the demoted term was pushed down after all")
 	}
 
-	// Not answerable: refused.
-	if _, err := Compile(&store.Project{}, `parent.parent.title == "x"`); err == nil {
+	// Not answerable: refused. Four hops, which is past the limit.
+	deep := `children.exists(a, a.children.exists(b, b.children.exists(c, c.children.exists(d, d.title == "x"))))`
+	if _, err := Compile(&store.Project{}, deep); err == nil {
 		t.Error("an unanswerable filter compiled")
 	}
 }
@@ -433,5 +452,76 @@ func TestAnAliasedFilterQualifiesItsColumns(t *testing.T) {
 	}
 	if !strings.Contains(where, "a.state") {
 		t.Errorf("the column was not qualified with the listing's alias:\n%s", where)
+	}
+}
+
+// TestEachLevelGetsItsOwnAlias is the first of the two remaining pieces of
+// #200, and the reason it was refused rather than answered: two levels of the
+// same relation aliased alike would render `parent.id = parent.parent_id`,
+// which SQLite runs and which compares a row to itself.
+func TestEachLevelGetsItsOwnAlias(t *testing.T) {
+	f, err := Compile(&store.Project{}, `parent.parent.title == "x"`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	where, args := f.SQL()
+
+	for _, want := range []string{
+		"FROM project parent WHERE parent.id = project.parent_id",
+		"FROM project parent_2 WHERE parent_2.id = parent.parent_id",
+		"parent_2.title = ?",
+	} {
+		if !strings.Contains(where, want) {
+			t.Errorf("SQL is missing %q:\n%s", want, where)
+		}
+	}
+	if strings.Contains(where, "parent.id = parent.parent_id") {
+		t.Errorf("a level was correlated to itself:\n%s", where)
+	}
+	if len(args) != 1 || args[0] != "x" {
+		t.Errorf("args = %v, want the one literal", args)
+	}
+
+	// One hop keeps the readable alias, which is most of why the suffix is
+	// only used where the name is taken.
+	one, err := Compile(&store.Project{}, `parent.title == "x"`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	if where, _ := one.SQL(); !strings.Contains(where, "FROM project parent ") {
+		t.Errorf("a single hop stopped using the relation's own name:\n%s", where)
+	}
+}
+
+// TestATraversalCanStartBehindAToOne is the second: `subject_pr.issues` is a
+// hop before the quantifier rather than inside it, so the range of the
+// traversal is what names the first relation.
+//
+// It is also the case where both levels join through a junction — action_pr
+// then pr_tracker_issue — so the inner one shadows the outer's alias. Safe
+// because nothing inside refers to the outer junction, and worth a test
+// because it would not be safe if anything did.
+func TestATraversalCanStartBehindAToOne(t *testing.T) {
+	f, err := Compile(&store.Action{}, `subject_pr.issues.exists(i, i.status == "CLOSED")`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	where, args := f.SQL()
+
+	for _, want := range []string{
+		"FROM pr subject_pr JOIN action_pr j",
+		"j.action_id = action.id",
+		"FROM tracker_issue i JOIN pr_tracker_issue j",
+		"j.pr_id = subject_pr.id",
+		"i.status = ?",
+	} {
+		if !strings.Contains(where, want) {
+			t.Errorf("SQL is missing %q:\n%s", want, where)
+		}
+	}
+	// The junction's own condition binds before the predicate's, which is the
+	// order the statement writes them in.
+	if len(args) != 2 || args[0] != store.RoleSubject || args[1] != "CLOSED" {
+		t.Errorf("args = %v, want the role then the status", args)
 	}
 }

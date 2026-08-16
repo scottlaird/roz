@@ -1093,6 +1093,32 @@ day of.
 it; the report is run when somebody runs it. Making it a schedule is a larger
 feature.
 
+## The queue is scanned, not read
+
+Each rank class is a band: a tinted background, a wide left edge in its own
+colour, and the counter and identifier in it. Three signals rather than one,
+because the class is what a scan is looking for and a border alone does not
+survive peripheral vision. Beneath the list is a key naming the bands the queue
+actually used — six of them beside a queue using two is a second thing to read
+before the first one makes sense.
+
+**None of it applied before.** The colours were written as `li.decide` — one
+class, one element — and the rule they had to beat is `ol.queue li`, one class
+and two. The base rule won every time, so every row drew as `--raise` with a
+`--rule` edge whatever its verb. That reads exactly like colours that are too
+similar, which is how it survived being looked at and reported as "three of
+them are close enough in weight". A text rule in the stylesheet's own test
+keeps the selectors qualified, since nothing else would notice them silently
+losing again.
+
+`session` also had no tint at all, though `--session-bg` had been sitting in the
+palette unused from the beginning.
+
+Late and expired take the edge and leave the band's tint alone. They are
+conditions on top of a rank class rather than classes of their own, and an
+overdue `decide` that stopped looking like a judgement would be hiding what it
+is at exactly the moment somebody needs to notice it.
+
 ## The page links to itself
 
 Every action and project has an anchor, which is its identifier verbatim:

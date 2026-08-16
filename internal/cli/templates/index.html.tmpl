@@ -31,6 +31,7 @@
       {{end}}
     </ol>
     {{else}}<p class="empty">nothing to do</p>{{end}}
+    {{template "key" .QueueKey}}
   </section>
 
   {{if .Waiting}}

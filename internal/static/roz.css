@@ -55,18 +55,41 @@ ol.queue li{counter-increment:q;background:var(--raise);border:1px solid var(--r
 ol.queue li::before{content:counter(q);position:absolute;left:14px;top:10px;
             font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:640;
             color:var(--faint);font-variant-numeric:tabular-nums}
-li.click{border-left-color:var(--click);background:var(--click-bg)}
-li.click::before,li.click .id{color:var(--click)}
-li.decide{border-left-color:var(--decide);background:var(--decide-bg)}
-li.decide::before,li.decide .id{color:var(--decide)}
-li.session{border-left-color:var(--session)}
-li.session::before,li.session .id{color:var(--session)}
-li.wait{border-left-color:var(--wait);background:var(--wait-bg)}
-li.wait::before,li.wait .id{color:var(--wait)}
-li.late{border-left-color:var(--bad)}
+/* A queue is scanned rather than read, so the rank class has to be legible in
+   peripheral vision. Three signals per band rather than one: a tinted
+   background, a wide left edge in the band's own colour, and the counter and
+   identifier in it. A border alone reads flat at arm's length, which is what
+   #92 was about -- session had no tint at all, although --session-bg had been
+   sitting in the palette unused since the beginning. */
+/* Every band selector is qualified with ol.queue, and that is the fix rather
+   than a tidy-up. `li.click` is one class and one element; `ol.queue li` above
+   is one class and two, so the base rule won every one of these and NONE of
+   the rank colours ever reached the page. #92 read as "three of them are close
+   enough in weight that the list reads flat", which understates it: the list
+   was flat because every row was --raise with a --rule edge whatever its verb.
+
+   A queue is scanned rather than read, so each band now carries three signals:
+   a tinted background, a wide left edge in its own colour, and the counter and
+   identifier in it. session also gained the tint it never had -- --session-bg
+   has been in the palette, unused, since the beginning. */
+ol.queue li{border-left-width:5px}
+ol.queue li.click{border-left-color:var(--click);background:var(--click-bg)}
+ol.queue li.click::before,ol.queue li.click .id{color:var(--click)}
+ol.queue li.decide{border-left-color:var(--decide);background:var(--decide-bg)}
+ol.queue li.decide::before,ol.queue li.decide .id{color:var(--decide)}
+ol.queue li.session{border-left-color:var(--session);background:var(--session-bg)}
+ol.queue li.session::before,ol.queue li.session .id{color:var(--session)}
+ol.queue li.wait{border-left-color:var(--wait);background:var(--wait-bg)}
+ol.queue li.wait::before,ol.queue li.wait .id{color:var(--wait)}
 span.overdue{color:var(--bad);font-size:.85em;margin-left:.5em;white-space:nowrap}
-li.expired{border-left-color:var(--bad);background:var(--bad-bg)}
-li.expired::before,li.expired .id{color:var(--bad)}
+/* Late and expired are conditions on top of a rank class rather than bands of
+   their own, so they take the edge and leave the tint alone -- otherwise an
+   overdue `decide` would stop looking like a judgement at exactly the moment
+   somebody needs to notice that it is one. expired keeps its own tint, since a
+   snooze that has run out is a state rather than a degree. */
+ol.queue li.late,ol.queue li.expired{border-left-color:var(--bad)}
+ol.queue li.expired{background:var(--bad-bg)}
+ol.queue li.expired::before,ol.queue li.expired .id{color:var(--bad)}
 
 .do{font-weight:600;letter-spacing:-.006em}
 .id{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:660;margin-right:7px}
@@ -237,3 +260,18 @@ h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
 .legend .ln.advances{border-top-width:1px}
 .legend .ln.contains{border-top:1px dotted var(--faint)}
 .legend .ln.hides{border-top:1px dashed var(--faint)}
+
+/* The queue's key, beneath the list the way the page this replaces had it.
+   Same swatches as the diagram's legend -- see .legend -- so one stylesheet
+   answers "what does this colour mean" wherever the question is asked. */
+.key{margin:8px 0 0;font-size:12.5px;color:var(--faint)}
+.key .lg{display:flex;flex-wrap:wrap;gap:4px 14px}
+.key .lg span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.key i{display:inline-block;flex:none;width:11px;height:11px;border-radius:2px;
+       border-left:4px solid var(--rule);background:var(--raise)}
+.key i.click{border-left-color:var(--click);background:var(--click-bg)}
+.key i.decide{border-left-color:var(--decide);background:var(--decide-bg)}
+.key i.session{border-left-color:var(--session);background:var(--session-bg)}
+.key i.wait{border-left-color:var(--wait);background:var(--wait-bg)}
+.key i.late{border-left-color:var(--bad)}
+.key i.expired{border-left-color:var(--bad);background:var(--bad-bg)}

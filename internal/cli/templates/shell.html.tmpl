@@ -39,6 +39,50 @@
      which is why this one is out here. */}}
 <script>new EventSource("/events").onmessage = () => location.reload();</script>
 {{end}}
+{{with .Graph}}{{if not .Empty}}
+{{/* The one thing on this page fetched from anywhere else, and the only reason
+     it is worth it: a layered graph layout with edge routing is a large piece
+     of work that is already done well. Pinned to an exact version and checked
+     against its hash, so a compromised CDN cannot run script against a page
+     that has no authentication and can read the whole queue.
+
+     Fetched only when there is a diagram to draw. A queue with no recorded
+     dependencies renders a sentence saying so, and pulling two and a half
+     megabytes across the network to draw a sentence is the kind of thing
+     nobody notices until they are on a train.
+
+     If it does not load — offline, blocked, hash mismatch — nothing runs and
+     the <pre> stays as it was: the diagram written out as text, which is
+     legible, and considerably better than an empty box.
+
+     securityLevel is loose with htmlLabels off, and the pair is the point.
+     Loose is what lets `click` navigate; htmlLabels off is what makes that
+     safe, because a label is then SVG text rather than markup — and labels
+     carry pull-request titles, which come from GitHub and are not ours. Either
+     one alone is wrong: strict silently drops every link, and loose with html
+     labels lets a title write markup into the page.
+
+     htmlLabels is set twice, and both are load-bearing. Setting it only under
+     flowchart leaves the renderer reading the top-level default, which is on:
+     a label of `<img src=x onerror=…>` then reaches the DOM as an actual img
+     element inside a foreignObject. Checked in a browser, not reasoned about —
+     with one of them the diagram has no foreignObject at all, and with the
+     other it has two. */}}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"
+        integrity="sha384-rbtjAdnIQE/aQJGEgXrVUlMibdfTSa4PQju4HDhN3sR2PmaKFzhEafuePsl9H/9I"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  if (window.mermaid) {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "loose",
+      htmlLabels: false,
+      flowchart: {htmlLabels: false, curve: "basis"},
+    });
+    mermaid.run({querySelector: "pre.mermaid"});
+  }
+</script>
+{{end}}{{end}}
 
 
 {{define "refs"}}
@@ -74,3 +118,35 @@
 {{define "issue" -}}
 <span class="issue">{{if .URL}}<a href="{{.URL}}" class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</a>{{else}}<span class="mono"{{with .Title}} title="{{.}}"{{end}}>{{.Label}}</span>{{end}}{{if .Status}} <span class="state">({{.Status}})</span>{{end}}</span>
 {{- end}}
+
+{{/* The dependency diagram, as mermaid source for the client to draw. Nothing
+     here knows how it will be laid out: a layered graph with edge routing is a
+     solved problem and not one this repository is going to solve again.
+
+     The <pre> holds text. html/template escapes it as HTML text, the browser
+     un-escapes it into the DOM, and mermaid reads it back out of textContent —
+     so a title full of angle brackets survives all three and is still a title
+     rather than markup. */}}
+{{define "graph"}}
+{{if .}}
+{{if .Empty}}
+<p class="empty">nothing open is blocked on anything open</p>
+{{else}}
+<div class="graph"><pre class="mermaid">{{.Mermaid}}</pre></div>
+{{end}}
+<div class="coverage">
+  <p><b>what this draws</b></p>
+  <ul>{{range .Coverage}}<li>{{.}}</li>{{end}}</ul>
+  {{if or .OmittedProjects .OmittedActions}}
+  {{/* Said out loud, because a diagram implies completeness. Something left
+       out for a good reason and something missing through a bug look exactly
+       the same on a page that does not count them. */}}
+  <p class="left-out">left out, having no dependency either way:
+    {{if .OmittedProjects}}{{.OmittedProjects}} open project{{if ne .OmittedProjects 1}}s{{end}}{{end}}
+    {{if and .OmittedProjects .OmittedActions}}·{{end}}
+    {{if .OmittedActions}}{{.OmittedActions}} open action{{if ne .OmittedActions 1}}s{{end}}{{end}}
+  </p>
+  {{end}}
+</div>
+{{end}}
+{{end}}

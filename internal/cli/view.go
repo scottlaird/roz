@@ -226,6 +226,10 @@ type pageContent struct {
 	// Favicon is the icon inline, as a data URI. See favicon in render.go for
 	// why it is not a file the page asks for, and why it is a template.URL.
 	Favicon template.URL
+	// Graph is what is blocked on what, drawn from the edges that exist. Set
+	// on the index and on its own page, and nil everywhere else: it costs four
+	// queries, and a page about one action has no use for it.
+	Graph *dependencyGraph
 }
 
 type windowView struct {
@@ -341,6 +345,8 @@ func crumbsFor(kind, id string) []crumbView {
 		return []crumbView{{Label: "roz", Href: "/"}, {Label: "projects"}}
 	case pageActions:
 		return []crumbView{{Label: "roz", Href: "/"}, {Label: "actions"}}
+	case pageGraph:
+		return []crumbView{{Label: "roz", Href: "/"}, {Label: "dependencies"}}
 	case pageProject:
 		return []crumbView{{Label: "roz", Href: "/"}, {Label: "projects", Href: "/projects"}, {Label: id}}
 	case pageAction:
@@ -600,8 +606,20 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 		}
 	}
 
+	// The index and the graph page draw it; nothing else needs the queries.
+	// Built from everyProject and everyAction rather than from the filtered
+	// listings above: a dependency is a fact about the queue, not about
+	// whichever view is in force.
+	if at.kind == pageIndex || at.kind == pageGraph {
+		if content.Graph, err = buildGraph(ctx, st, everyProject, everyAction, rank, late); err != nil {
+			return nil, err
+		}
+	}
+
 	content.Crumbs = crumbsFor(at.kind, at.id)
 	switch at.kind {
+	case pageGraph:
+		content.Title = titleFor(cfg.owner, "dependencies")
 	case pageProjects:
 		// The hierarchy is what the page shows by default and a view is not:
 		// a view is an answer to a question, and indenting a project that

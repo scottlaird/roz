@@ -579,3 +579,25 @@ Jira and Slack sync remain out for scheduling reasons rather than design ones.
 to work with and enough to know what the real sync has to produce.
 Without it, `send_for_review` cannot close on its own — that verb is the only
 predicate GitHub cannot satisfy.
+
+## The dependency diagram is a first cut
+
+`/dependencygraph` and the block under the index's projects table draw what is
+recorded. Open, in rough order of how much they matter:
+
+- **An action's subject pull request is not an edge.** So a stack of pull
+  requests and the work that produced them are two disconnected pictures. This
+  is the obvious next edge and was left out only to keep the first cut small.
+- **Pull-request stacking is unexercised.** `stacked_on` is populated and the
+  code draws it, but nothing open is stacked, so that path has never been seen
+  on real data.
+- **No cap on a project's open actions.** A project with twenty of them puts
+  twenty boxes in one column. With thirteen open actions in the whole database
+  there is no evidence for what the cap should be, so there is not one.
+- **No scoping.** #88 suggests one project's neighbourhood as a view. Nothing
+  takes a starting node yet; the whole connected graph is what draws.
+- **Closed nodes are always hidden.** That is the right default and it is not a
+  choice anyone can make per page. A `?closed=1` would answer "how did we get
+  here", which is a different and real question.
+- **Layout direction is fixed.** Left to right reads as time and is what suits
+  a chain; a wide fan-out would rather be top-down, and nothing chooses.

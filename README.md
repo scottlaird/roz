@@ -176,6 +176,12 @@ monitor and read rather than refreshed.
 Every project and action has its own page too (`/project/ROZ1`,
 `/action/NA5`), and identifiers in prose link to them.
 
+Under the projects table — and on `/dependencygraph` by itself — is a diagram
+of what is blocked on what, drawn from the blocking Alice has already recorded.
+It shows only what takes part in a dependency: a queue is mostly independent
+work, and sixty unconnected boxes would be worse than the list above them. What
+it left out, and what it does not know, are written under it.
+
 ## Alice wants an agent to do the mechanical part
 
 She runs an agent for code work and would rather not spend its attention — or

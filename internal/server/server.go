@@ -36,7 +36,8 @@ type Page func(ctx context.Context, at PageQuery) ([]byte, error)
 // of parameters: what a listing can be asked to show is going to grow, and
 // each addition should not be a signature change through every caller.
 type PageQuery struct {
-	// Kind is the page: "", "projects", "actions", "project", "action".
+	// Kind is the page: "", "projects", "actions", "project", "action",
+	// "dependencygraph".
 	Kind string
 	// ID is the entity a single-entity page is about.
 	ID string
@@ -135,6 +136,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /{$}", s.pageHandler("", ""))
 	mux.HandleFunc("GET /projects", s.pageHandler("projects", ""))
 	mux.HandleFunc("GET /actions", s.pageHandler("actions", ""))
+	mux.HandleFunc("GET /dependencygraph", s.pageHandler("dependencygraph", ""))
 	mux.HandleFunc("GET /project/{id}", s.pageHandler("project", "id"))
 	mux.HandleFunc("GET /action/{id}", s.pageHandler("action", "id"))
 	mux.HandleFunc("/events", s.handleEvents)

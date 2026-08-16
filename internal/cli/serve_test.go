@@ -37,10 +37,17 @@ func TestServeServesTheRenderedPage(t *testing.T) {
 			t.Errorf("`render` does not contain %q, so the comparison is empty", want)
 		}
 	}
-	// A blocked action is off the index entirely: it has its own page, so
-	// nothing on the index has to hold a row for it.
-	if strings.Contains(body, "Roll the change out") {
-		t.Errorf("the served page shows a blocked action:\n%s", body)
+	// A blocked action is off the index's listings entirely: it has its own
+	// page, so no listing has to hold a row for it. The dependency diagram
+	// below them is the exception, and not an accidental one -- it is a
+	// picture of what is blocked, so leaving out the blocked thing would leave
+	// it with nothing to draw. See TestRender, which holds both halves.
+	listings, _, split := strings.Cut(body, "<h2>dependencies")
+	if !split {
+		t.Fatalf("the served page has no dependencies section:\n%s", body)
+	}
+	if strings.Contains(listings, "Roll the change out") {
+		t.Errorf("the served listings show a blocked action:\n%s", listings)
 	}
 }
 
@@ -305,5 +312,58 @@ func TestServeStopsWhenTheSchemaMoves(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("serve did not stop after the database migrated under it")
+	}
+}
+
+// TestServeHasADependencyPage: the diagram gets a route of its own, because
+// the index has a queue above it and a graph is the thing you want the whole
+// window for.
+func TestServeHasADependencyPage(t *testing.T) {
+	db := renderedFixture(t)
+	withFetcher(t, stubFetcher{result: github.Result{}})
+	base := serving(t, db, "--no-sync", "--no-watch")
+
+	body := fetch(t, base+"/dependencygraph")
+	for _, want := range []string{
+		"graph LR",            // the diagram source, for the client to draw
+		"Roll the change out", // the blocked action, which is the subject
+		"what this draws",     // the coverage statement
+		"roz: dependencies",   // its own title, so a tab is pickable
+		"mermaid.min.js",      // the renderer, fetched only where there is one
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the dependency page does not contain %q:\n%s", want, body)
+		}
+	}
+
+	// And the index links to it, or nobody finds it.
+	if index := fetch(t, base+"/"); !strings.Contains(index, `href="/dependencygraph"`) {
+		t.Errorf("the index does not link to the dependency page:\n%s", index)
+	}
+}
+
+// TestTheDiagramSourceIsEscaped. It reaches the browser as HTML text and is
+// read back out of the DOM by the renderer, so a title full of markup has to
+// survive both without becoming markup at either step.
+func TestTheDiagramSourceIsEscaped(t *testing.T) {
+	db := initDB(t)
+	first := addAction(t, db, "--title", "fix <img src=x onerror=alert(1)> now", "--verb", "write")
+	second := addAction(t, db, "--title", "then this", "--verb", "write")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", second, "--to", first); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+	withFetcher(t, stubFetcher{result: github.Result{}})
+	base := serving(t, db, "--no-sync", "--no-watch")
+
+	body := fetch(t, base+"/dependencygraph")
+	if !strings.Contains(body, "graph LR") {
+		t.Fatalf("no diagram was drawn, so nothing here is tested:\n%s", body)
+	}
+	if strings.Contains(body, "<img src=x") {
+		t.Errorf("a title reached the page as markup:\n%s", body)
+	}
+	if !strings.Contains(body, "&lt;img src=x") {
+		t.Errorf("the title is missing from the diagram source:\n%s", body)
 	}
 }

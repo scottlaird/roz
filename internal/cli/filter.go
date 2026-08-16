@@ -45,7 +45,7 @@ func addFilterFlag(cmd *cobra.Command, names []string) {
 
 // filterFrom compiles --filter against the record a listing holds, once per
 // command invocation.
-func filterFrom(cmd *cobra.Command, blank any) (*filter.Filter, error) {
+func filterFrom(cmd *cobra.Command, blank any, opts ...filter.Option) (*filter.Filter, error) {
 	if held, ok := cmd.Context().Value(filterKey{}).(compiled); ok {
 		return held.f, nil
 	}
@@ -53,7 +53,7 @@ func filterFrom(cmd *cobra.Command, blank any) (*filter.Filter, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := filter.Compile(blank, expr)
+	f, err := filter.Compile(blank, expr, opts...)
 	if err != nil {
 		return nil, err
 	}

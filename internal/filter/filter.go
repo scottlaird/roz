@@ -98,7 +98,7 @@ type Filter struct {
 
 // Compile builds a filter over the columns of blank, which is an empty record
 // of the entity being listed.
-func Compile(blank any, expr string) (*Filter, error) {
+func Compile(blank any, expr string, opts ...Option) (*Filter, error) {
 	if strings.TrimSpace(expr) == "" {
 		return nil, nil
 	}
@@ -109,6 +109,14 @@ func Compile(blank any, expr string) (*Filter, error) {
 	joins, err := newJoinEnv(blank)
 	if err != nil {
 		return nil, err
+	}
+	settings := settingsFrom(opts)
+	if joins != nil && settings.alias != "" {
+		// The name a correlated subquery uses for the row being filtered. It
+		// has to be what the listing's own query calls that table: `action
+		// list` aliases it `a`, and a subquery correlating to `action.id`
+		// would not resolve against a query that never mentions `action`.
+		joins.base = settings.alias
 	}
 	env, err := envFor(columns, joins)
 	if err != nil {
@@ -154,7 +162,19 @@ func Compile(blank any, expr string) (*Filter, error) {
 			return nil, err
 		}
 		if err == errNotAJoin {
-			sql, args, err = toSQL(ast, schemasFor(columns, joins, "", ""))
+			scalar := ast
+			if settings.alias != "" {
+				// Qualified with the listing's alias, so a bare column name
+				// cannot be ambiguous in a query that joins another table.
+				qualified, qErr := celFor(env,
+					qualify(ast.NativeRep().Expr(), settings.alias, columnsByName(columns)),
+					ast.NativeRep().SourceInfo())
+				if qErr != nil {
+					return nil, qErr
+				}
+				scalar = qualified
+			}
+			sql, args, err = toSQL(scalar, schemasFor(columns, joins, "", ""))
 			if err == nil {
 				ok, checkErr := pushable(probe, env, ast, term, columns, sql, args)
 				if checkErr != nil {
@@ -713,4 +733,34 @@ const maxCost = 1_000_000
 // is a filter nobody can trust, and both arrive as an error from Eval.
 func programOf(env *cel.Env, ast *cel.Ast) (cel.Program, error) {
 	return env.Program(ast, cel.CostLimit(maxCost), cel.EvalOptions(cel.OptTrackCost))
+}
+
+// An Option adjusts how a filter is compiled.
+type Option func(*settings)
+
+type settings struct {
+	// alias is what the listing's own query calls the table being filtered.
+	alias string
+}
+
+func settingsFrom(opts []Option) settings {
+	var s settings
+	for _, opt := range opts {
+		opt(&s)
+	}
+	return s
+}
+
+// WithBaseAlias names the row being filtered as the listing's query does.
+//
+// Every correlated subquery a traversal generates has to point back at the
+// outer row, and it points at it by name. Where a listing selects `FROM action
+// a`, that name is `a`, and a filter compiled without knowing so would emit
+// `action.id` against a query in which nothing is called `action` — SQL that
+// fails at run time rather than a filter that runs somewhere else.
+//
+// Only the qualifier moves. What the filter is written in stays the entity's
+// own vocabulary, because that is what somebody types.
+func WithBaseAlias(alias string) Option {
+	return func(s *settings) { s.alias = alias }
 }

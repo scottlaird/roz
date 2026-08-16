@@ -94,9 +94,25 @@ func TestExplainFilterSaysWhereItRan(t *testing.T) {
 			want: "which ran in Go",
 		},
 		{
+			// action list pushes down now (#201). The listing that still does
+			// not is `ref list`, which takes no filter struct to carry a
+			// WHERE fragment.
 			name: "no pushdown on this listing",
-			args: []string{"action", "list", "--filter", `verb == "decide"`},
+			args: []string{"ref", "list", "--filter", `kind == "tag"`},
 			want: "does not push one down",
+		},
+		{
+			name: "action list pushes down now",
+			args: []string{"action", "list", "--filter", `verb == "decide"`},
+			want: "filter ran in SQL",
+		},
+		{
+			// The ranking joins project, and both tables have snooze_until, so
+			// a bare column name would be ambiguous — the filter's terms are
+			// qualified with the listing's own alias to stop that.
+			name: "pushed down beside the ranking join",
+			args: []string{"action", "list", "--sort", "priority", "--filter", `verb == "decide"`},
+			want: "filter ran in SQL",
 		},
 	}
 	for _, tc := range tests {

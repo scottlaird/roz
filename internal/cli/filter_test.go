@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -225,5 +226,58 @@ func TestEveryListingPushesItsFilterDown(t *testing.T) {
 				t.Errorf("%v did not push its filter down:\n%s", tt.listing, out)
 			}
 		})
+	}
+}
+
+// TestAChainSurvivesBeingSplit: a chain answered by the query, beside a term
+// the query cannot take, still answers the same question.
+//
+// The Go half of a chain has its own tests in the filter package, where a
+// loader can be counted. This is the end-to-end half: same database, same
+// expression, and the split reported rather than assumed.
+func TestAChainSurvivesBeingSplit(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/repo")
+
+	// Two projects, one urgent, each with an action and a pull request, so a
+	// chain has something to select and something to leave out.
+	urgent := addProject(t, db, "urgent", "--priority", "1")
+	later := addProject(t, db, "later", "--priority", "5")
+	for i, project := range []string{urgent, later} {
+		pr := fmt.Sprintf("owner/repo#%d", i+1)
+		if _, err := runCLI(t, "pr", "track", "--db", db, pr); err != nil {
+			t.Fatalf("pr track returned error: %v", err)
+		}
+		if _, err := runCLI(t, "action", "add", "--db", db, "--title", "do it",
+			"--verb", "write", "--project", project, "--pr", pr); err != nil {
+			t.Fatalf("action add returned error: %v", err)
+		}
+	}
+
+	const expr = `actions.exists(a, a.project.priority == 1)`
+
+	inSQL, err := runCLI(t, "pr", "list", "--db", db, "--filter", expr, "--fields", "id")
+	if err != nil {
+		t.Fatalf("pr list returned error: %v", err)
+	}
+	if !strings.Contains(inSQL, "owner/repo#1") || strings.Contains(inSQL, "owner/repo#2") {
+		t.Fatalf("the query answered the chain wrongly:\n%s", inSQL)
+	}
+
+	// The same chain beside a term the query cannot take: the chain is still
+	// answered by the query and the JSON term in Go, and the answer is the
+	// one above. That split is what --explain-filter reports, and getting it
+	// wrong in either direction shows up here as a different set of rows.
+	both := expr + ` && approvals.exists(x, x == "nobody") == false`
+	split, err := runCLI(t, "pr", "list", "--db", db, "--filter", both,
+		"--fields", "id", "--explain-filter")
+	if err != nil {
+		t.Fatalf("pr list returned error: %v", err)
+	}
+	if !strings.Contains(split, "ran in Go") {
+		t.Fatalf("the JSON term was meant to run in Go:\n%s", split)
+	}
+	if !strings.Contains(split, "owner/repo#1") || strings.Contains(split, "owner/repo#2") {
+		t.Errorf("the split answered differently from the query alone:\n%s", split)
 	}
 }

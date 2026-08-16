@@ -91,6 +91,11 @@ type Filter struct {
 	// would refuse a filter that works.
 	traversesWhole    []string
 	traversesResidual []string
+	// mentions are every name the expression selects, which is what a far row
+	// consults to decide which of its own relations to read. Wider than it
+	// needs to be — a column name lands here too — and harmless, because it
+	// is only ever intersected with an entity's actual relations.
+	mentions map[string]bool
 	// chains are the terms that follow more than one relation. Kept because
 	// they can only be answered in the query: see Keep.
 	chains []string
@@ -228,6 +233,7 @@ func Compile(blank any, expr string, opts ...Option) (*Filter, error) {
 		return nil, fmt.Errorf("planning --filter %q: %w", expr, err)
 	}
 	f.traversesWhole = relationsIn(whole.NativeRep().Expr(), joins)
+	f.mentions = selectedNames(whole.NativeRep().Expr())
 	return f, nil
 }
 
@@ -567,17 +573,16 @@ func (f *Filter) Keep(record any) (bool, error) {
 		program, source, needs = f.residual, f.residualSrc, f.traversesResidual
 	}
 
-	// A chain can only be answered in the query. If the listing did not take
-	// the SQL, evaluating here would read the far row as a map of columns,
-	// where the second hop is a missing key — an error CEL reports and the
-	// switch below swallows as "does not match", for every row. An empty
-	// listing that looks exactly like a correct one is the one answer this
-	// must never give.
-	if !f.pushedDown && len(f.chains) > 0 {
+	// A chain used to be refused here: the far row was a map of columns, so
+	// the second hop was a missing key, which CEL reports as an error and the
+	// switch below reads as "does not match" — for every row. A far row now
+	// follows its own relations (see rowActivation.follow), so this answers
+	// rather than refusing. It is N×M where the query would have been one
+	// statement, which --explain-filter is how anybody notices.
+	if !f.pushedDown && len(f.chains) > 0 && f.loader == nil {
 		return false, fmt.Errorf(
-			"--filter %q follows two relations, which only the query can answer, "+
-				"and this listing does not push filters into its query yet",
-			strings.Join(f.chains, " && "))
+			"--filter %q follows two relations, and this listing gave it nowhere "+
+				"to read the far side from", strings.Join(f.chains, " && "))
 	}
 
 	if len(needs) > 0 && f.loader == nil {
@@ -607,6 +612,7 @@ func (f *Filter) Keep(record any) (bool, error) {
 	}
 	activation := &rowActivation{
 		ctx: f.ctx, values: filled, joins: f.joins, loader: f.loader, id: id,
+		mentions: f.mentions,
 	}
 	if activation.ctx == nil {
 		activation.ctx = context.Background()

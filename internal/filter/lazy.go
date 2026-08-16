@@ -48,6 +48,9 @@ type rowActivation struct {
 	joins  *joinEnv
 	loader Loader
 	id     string
+	// mentions are the names the expression selects, which is how a far row
+	// knows which of its own relations are worth reading.
+	mentions map[string]bool
 
 	// loaded caches what has already been read for this row.
 	loaded map[string]any
@@ -84,6 +87,10 @@ func (a *rowActivation) ResolveName(name string) (any, bool) {
 	if err != nil {
 		return nil, false
 	}
+	// A far row that the expression reaches through again needs its own
+	// relations, or the second hop is a missing key — which CEL calls an
+	// error and Keep reads as "does not match", for every row. See follow.
+	a.follow(join, rows, 1)
 	value := valueOfRelation(join, rows)
 	if a.loaded == nil {
 		a.loaded = map[string]any{}
@@ -114,4 +121,53 @@ func valueOfRelation(join store.Join, rows []map[string]any) any {
 		list = append(list, row)
 	}
 	return list
+}
+
+// follow loads the relations of a far row that the expression names, so a
+// chain can be evaluated here rather than only in the query.
+//
+// Only the names the expression mentions, which is what keeps this from
+// reading the database to answer a question about a column: `actions.exists(a,
+// a.verb == "merge")` follows nothing, and `actions.exists(a,
+// a.project.priority == 1)` follows `project` alone.
+//
+// It is a query per far row per named relation, so this is N×M where the
+// pushed-down form is one statement. That is the honest cost of answering in
+// Go at all, and the reason --explain-filter says which happened: a listing
+// that pushes the whole chain down pays none of it.
+//
+// Bounded by maxHops, for the same reason the generator is: each level
+// multiplies, and the person waiting is the person who wrote the expression.
+func (a *rowActivation) follow(join store.Join, rows []map[string]any, depth int) {
+	if depth > maxHops || a.loader == nil || join.Blank == nil || len(a.mentions) == 0 {
+		return
+	}
+	far, err := newJoinEnv(join.Blank())
+	if err != nil || far == nil {
+		return
+	}
+
+	for _, row := range rows {
+		id, _ := row["id"].(string)
+		if id == "" {
+			continue
+		}
+		for name, next := range far.joins {
+			if !a.mentions[name] {
+				continue
+			}
+			if _, already := row[name]; already {
+				// A column of the far row that happens to share a relation's
+				// name. The column is the answer: it is what the row actually
+				// holds.
+				continue
+			}
+			beyond, err := a.loader.Related(a.ctx, next, id)
+			if err != nil {
+				continue
+			}
+			a.follow(next, beyond, depth+1)
+			row[name] = valueOfRelation(next, beyond)
+		}
+	}
 }

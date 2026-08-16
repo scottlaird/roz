@@ -447,3 +447,180 @@ func nonEmptyLines(s string) []string {
 	}
 	return lines
 }
+
+// TestWatchFilterAsksWhatTheFlagsCannot. The three flags are each a special
+// case of one expression, and the questions worth asking are mostly not
+// single-column equalities.
+func TestWatchFilterAsksWhatTheFlagsCannot(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "the subject")
+	if _, err := runCLI(t, "project", "set", "--db", db, project, "--priority", "2"); err != nil {
+		t.Fatalf("project set returned error: %v", err)
+	}
+	if _, err := runCLI(t, "project", "set", "--db", db, project, "--title", "renamed"); err != nil {
+		t.Fatalf("project set returned error: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		filter string
+		lines  int
+	}{
+		{name: "one field", filter: `field == "priority"`, lines: 1},
+		{name: "a subject prefix", filter: `subject_id.startsWith("` + project[:2] + `")`, lines: 3},
+		{name: "two columns", filter: `kind == "changed" && field == "title"`, lines: 1},
+		{name: "matches nothing", filter: `actor == "sync:github"`, lines: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runCLI(t, "watch", "--db", db, "--once", "-n", "20", "--filter", tt.filter)
+			if err != nil {
+				t.Fatalf("watch --filter %q returned error: %v", tt.filter, err)
+			}
+			if got := len(nonEmptyLines(out)); got != tt.lines {
+				t.Errorf("got %d lines, want %d:\n%s", got, tt.lines, out)
+			}
+		})
+	}
+}
+
+// TestWatchFilterRunsInTheQuery. It matters more on the log than on a listing:
+// a tail re-runs its query every interval, so a predicate left to Go reads
+// every new row for ever rather than once.
+func TestWatchFilterRunsInTheQuery(t *testing.T) {
+	db := initDB(t)
+	seedLog(t, db)
+
+	out, err := runCLI(t, "watch", "--db", db, "--once", "-n", "20",
+		"--filter", `kind == "created"`, "--explain-filter")
+	if err != nil {
+		t.Fatalf("watch returned error: %v", err)
+	}
+	if !strings.Contains(out, "filter ran in SQL") {
+		t.Errorf("the filter did not reach the query:\n%s", out)
+	}
+
+	// payload is a JSON column, which cel2sql cannot convert (#202). Falling
+	// back to Go is the right answer; generating SQL that does not run is not.
+	out, err = runCLI(t, "watch", "--db", db, "--once", "-n", "20",
+		"--filter", `payload == ""`, "--explain-filter")
+	if err != nil {
+		t.Fatalf("watch on a JSON column returned error: %v", err)
+	}
+	if !strings.Contains(out, "ran in Go") {
+		t.Errorf("a JSON column did not fall back to Go:\n%s", out)
+	}
+}
+
+// TestWatchFilterComposesWithTheFlags: --kind narrows and --filter narrows
+// again, rather than one quietly replacing the other.
+func TestWatchFilterComposesWithTheFlags(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "the subject")
+	if _, err := runCLI(t, "project", "set", "--db", db, project,
+		"--priority", "2", "--actor", "agent:claude"); err != nil {
+		t.Fatalf("project set returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "watch", "--db", db, "--once", "-n", "20",
+		"--kind", "changed", "--filter", `actor == "agent:claude"`)
+	if err != nil {
+		t.Fatalf("watch returned error: %v", err)
+	}
+	if got := len(nonEmptyLines(out)); got != 1 {
+		t.Errorf("got %d lines, want the one event both narrow to:\n%s", got, out)
+	}
+
+	// Each on its own keeps more, which is what makes the above a conjunction
+	// rather than one flag winning.
+	for _, args := range [][]string{
+		{"--kind", "changed"},
+		{"--filter", `actor == "agent:claude"`},
+	} {
+		out, err := runCLI(t, append([]string{"watch", "--db", db, "--once", "-n", "20"}, args...)...)
+		if err != nil {
+			t.Fatalf("watch %v returned error: %v", args, err)
+		}
+		if len(nonEmptyLines(out)) < 1 {
+			t.Errorf("watch %v found nothing at all:\n%s", args, out)
+		}
+	}
+}
+
+// TestWatchTakesASavedView is the point of registering the log as an entity:
+// an agent's exclusion is a property of the agent, not of the invocation.
+func TestWatchTakesASavedView(t *testing.T) {
+	db := initDB(t)
+	if _, err := runCLI(t, "project", "add", "--db", db, "--title", "mine",
+		"--actor", "agent:claude"); err != nil {
+		t.Fatalf("project add returned error: %v", err)
+	}
+	seedLog(t, db)
+
+	if _, err := runCLI(t, "view", "add", "notmine", "--db", db,
+		"--entity", "event", "--filter", `actor != "agent:claude"`); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	out, err := runCLI(t, "watch", "--db", db, "--once", "-n", "20", "--view", "notmine")
+	if err != nil {
+		t.Fatalf("watch --view returned error: %v", err)
+	}
+	if strings.Contains(out, "agent:claude") {
+		t.Errorf("the view did not exclude the agent's own writes:\n%s", out)
+	}
+	// Three, not two: saving the view is itself a change to the database and
+	// is in the log like anything else, written by the human who saved it.
+	if got := len(nonEmptyLines(out)); got != 3 {
+		t.Errorf("got %d lines, want the two projects and the view's own creation:\n%s", got, out)
+	}
+
+	// A view of another listing names columns this one does not have, and the
+	// error should say that rather than "no such column".
+	_, err = runCLI(t, "watch", "--db", db, "--once", "--view", "open_actions")
+	if err == nil || !strings.Contains(err.Error(), "is of action") {
+		t.Errorf("watch --view open_actions returned %v, want a wrong-entity error", err)
+	}
+}
+
+// TestWatchFilterAdvancesTheCursorOverWhatItHides. The tail's cursor is the
+// last row read, not the last row printed: a filter that hides an event must
+// not make the next poll read it again for ever.
+func TestWatchFilterAdvancesTheCursorOverWhatItHides(t *testing.T) {
+	db := initDB(t)
+
+	root := NewRootCmd()
+	out := &syncBuffer{}
+	root.SetOut(out)
+	root.SetErr(out)
+	root.SetArgs([]string{"watch", "--db", db, "--since", "2099-01-01",
+		"--interval", "20ms", "--filter", `kind == "note"`})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- root.ExecuteContext(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	// Hidden by the filter, and read by the tail.
+	project := addProject(t, db, "not a note")
+	if _, err := runCLI(t, "note", "--db", db, project, "this one shows"); err != nil {
+		t.Fatalf("note returned error: %v", err)
+	}
+
+	if err := waitFor(func() bool { return strings.Contains(out.String(), "this one shows") }); err != nil {
+		t.Fatalf("watch did not report the matching event: %v\n%s", err, out.String())
+	}
+	// Long enough for several more polls, which would replay the hidden event
+	// if the cursor had stopped at the last printed line.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("watch returned error: %v", err)
+	}
+
+	if lines := nonEmptyLines(out.String()); len(lines) != 1 {
+		t.Errorf("watch printed %d lines, want only the matching one:\n%s", len(lines), out.String())
+	}
+}

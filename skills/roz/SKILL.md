@@ -179,6 +179,19 @@ the source, which is cheaper than filtering in your own head. `--exclude-actor`
 is repeatable and takes a comma-separated list, so a session running two agents
 can hide both.
 
+`--filter` takes a CEL expression over the log's columns for the questions
+those cannot ask — `field == "priority"`, or `subject_id.startsWith("SL") &&
+kind == "changed"` — and composes with them rather than replacing them. Save
+the one you use every session rather than retyping it:
+
+```console
+$ roz view add notmine --entity event --filter 'actor != "agent:claude"'
+$ roz watch --view notmine
+```
+
+Your own exclusion is a property of you, not of the invocation, so it belongs
+in the database with everything else that is.
+
 roz polls SQLite internally, because SQLite cannot push a notification. That is
 one indexed query on `seq`, once, regardless of how many readers there are — so
 do not add a second layer of polling on top of it.

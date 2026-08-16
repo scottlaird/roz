@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/scottlaird/roz/internal/filter"
 	"github.com/scottlaird/roz/internal/service"
 	"github.com/scottlaird/roz/internal/store"
 )
@@ -45,7 +46,17 @@ func newWatchCmd() *cobra.Command {
 			"watching its own queue wants: its writes are the noise and everything\n" +
 			"else is the signal. It is an exclusion rather than a selection\n" +
 			"because the actor vocabulary is open, so \"everything but mine\"\n" +
-			"cannot be said as a list of the others.",
+			"cannot be said as a list of the others.\n\n" +
+			"--filter is a CEL expression over the log's own columns, for the\n" +
+			"questions the flags above cannot ask: `field == \"priority\"`, or\n" +
+			"`subject_id.startsWith(\"SL\") && kind == \"changed\"`. It composes\n" +
+			"with them rather than replacing them. --explain-filter says how much\n" +
+			"of it the query took, which matters more here than on a listing: a\n" +
+			"tail re-runs its query every interval.\n\n" +
+			"A question worth asking twice is worth saving. `roz view add mine\n" +
+			"--entity event --filter ...` then `roz watch --view mine`: the log is\n" +
+			"a view entity like any listing, and an agent's exclusion is a\n" +
+			"property of the agent rather than of the invocation.",
 		Args: cobra.NoArgs,
 		RunE: runWatch,
 	}
@@ -60,9 +71,31 @@ func newWatchCmd() *cobra.Command {
 	f.StringSlice(flagExcludeActor, nil,
 		"drop events by this actor, e.g. agent:claude; repeatable or comma-separated")
 	addOutputFlag(cmd)
+	addFilterFlag(cmd, eventColumns.names())
+	addViewFlag(cmd)
 	cmd.MarkFlagsMutuallyExclusive(flagLines, flagSince)
 
+	// The entity is named rather than taken from the command path: `watch` is
+	// a top-level command, so there is no parent to read it off the way a
+	// listing has.
+	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
+		return applyView(cmd, entityEvent)
+	}
+
 	return cmd
+}
+
+// eventColumns is the log's vocabulary, which is what --filter and a saved
+// view are written against.
+//
+// The log is a filter source without being a listing: it has no --fields and
+// no --sort, because a tail is one line per event in the order they happened
+// and neither is a question anybody asks of it. What the registry is needed
+// for is the names — a filter language has to know what can be named, and a
+// view has to be checkable against the same list.
+var eventColumns = columnSet[*store.Event]{
+	blank: &store.Event{},
+	empty: "no events",
 }
 
 func runWatch(cmd *cobra.Command, _ []string) error {
@@ -113,6 +146,9 @@ type watchOptions struct {
 	interval time.Duration
 	format   string
 	once     bool
+	// filter is the compiled --filter. Its SQL half is already in query; this
+	// is what runs over the rows the query could not narrow.
+	filter *filter.Filter
 }
 
 func watchOptionsFrom(cmd *cobra.Command) (watchOptions, error) {
@@ -152,7 +188,23 @@ func watchOptionsFrom(cmd *cobra.Command) (watchOptions, error) {
 		return watchOptions{}, err
 	}
 
+	expr, err := filterFrom(cmd, &store.Event{})
+	if err != nil {
+		return watchOptions{}, err
+	}
+
 	query := store.EventQuery{Severity: severity, Kind: kind, ExcludeActors: excluded}
+	// The hand-cut flags and the expression compose, the way a listing's do:
+	// --kind narrows and --filter narrows again, rather than one replacing
+	// the other.
+	//
+	// Taken before the plan is explained, because asking for the SQL is what
+	// records that the query took it: explaining first would report every
+	// filter as having run in Go.
+	query.Where, query.WhereArgs = expr.SQL()
+	if err := explainFilter(cmd, expr, nil); err != nil {
+		return watchOptions{}, err
+	}
 	backlog := true
 	if since, err := f.GetString(flagSince); err != nil {
 		return watchOptions{}, err
@@ -182,6 +234,7 @@ func watchOptionsFrom(cmd *cobra.Command) (watchOptions, error) {
 		interval: interval,
 		format:   format,
 		once:     once,
+		filter:   expr,
 	}, nil
 }
 
@@ -227,7 +280,7 @@ func watchEvents(ctx context.Context, out io.Writer, st *store.Store, options wa
 	}
 
 	if options.backlog {
-		printedTo, err := printEvents(ctx, out, st, query, options.format)
+		printedTo, err := printEvents(ctx, out, st, query, options)
 		if err != nil {
 			return err
 		}
@@ -255,7 +308,7 @@ func watchEvents(ctx context.Context, out io.Writer, st *store.Store, options wa
 			return nil
 		case <-ticker.C:
 			query.AfterSeq = cursor
-			cursor, err = printEvents(ctx, out, st, query, options.format)
+			cursor, err = printEvents(ctx, out, st, query, options)
 			if err != nil {
 				return err
 			}
@@ -265,7 +318,11 @@ func watchEvents(ctx context.Context, out io.Writer, st *store.Store, options wa
 
 // printEvents writes one batch and returns the cursor to resume from, which
 // is the previous cursor when nothing matched.
-func printEvents(ctx context.Context, out io.Writer, st *store.Store, query store.EventQuery, format string) (int64, error) {
+//
+// The cursor advances over every row read, not only the ones printed. A filter
+// that hides an event must not make the tail read it again on the next poll,
+// which is what a cursor taken from the last printed line would do.
+func printEvents(ctx context.Context, out io.Writer, st *store.Store, query store.EventQuery, options watchOptions) (int64, error) {
 	events, err := st.Events(ctx, query)
 	if err != nil {
 		// A cancelled context during shutdown is not a failure.
@@ -277,10 +334,20 @@ func printEvents(ctx context.Context, out io.Writer, st *store.Store, query stor
 
 	cursor := query.AfterSeq
 	for _, e := range events {
-		if err := writeEvent(out, e, format); err != nil {
+		cursor = e.Seq
+		// Whatever the query could not take. Nothing is pushed down when the
+		// expression names a column SQLite cannot compare the way CEL does,
+		// and --explain-filter is what says which happened.
+		keep, err := options.filter.Keep(e)
+		if err != nil {
 			return 0, err
 		}
-		cursor = e.Seq
+		if !keep {
+			continue
+		}
+		if err := writeEvent(out, e, options.format); err != nil {
+			return 0, err
+		}
 	}
 	return cursor, nil
 }

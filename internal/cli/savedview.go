@@ -371,8 +371,18 @@ func listings() map[string]listing {
 		"verb":     viewOf(verbColumns),
 		"pipeline": viewOf(pipelineColumns),
 		"owner":    viewOf(ownerColumns),
+		// The log, which is a filter source without being a listing: `roz
+		// watch` takes --filter and --view, and has no --fields or --sort
+		// because a tail is one line per event in the order they happened.
+		// The registry is what makes a saved view of it checkable.
+		entityEvent: viewOf(eventColumns),
 	}
 }
+
+// entityEvent is the log's name as a view entity. A constant because `watch`
+// is a top-level command, so unlike a listing it cannot read its entity off
+// the command path.
+const entityEvent = "event"
 
 // addViewFlag registers --view on a listing.
 func addViewFlag(cmd *cobra.Command) {

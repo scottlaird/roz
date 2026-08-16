@@ -23,7 +23,7 @@ func TestServeServesTheRenderedPage(t *testing.T) {
 	base := serving(t, db, "--no-sync", "--no-watch")
 
 	body := fetch(t, base+"/")
-	rendered, err := runCLI(t, "render", "--db", db)
+	rendered, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -37,11 +37,10 @@ func TestServeServesTheRenderedPage(t *testing.T) {
 			t.Errorf("`render` does not contain %q, so the comparison is empty", want)
 		}
 	}
-	// Above the index of everything, which is where a blocked action lives so
-	// that references to it resolve.
-	blocks, _ := aboveTheIndex(t, body)
-	if strings.Contains(blocks, "Roll the change out") {
-		t.Errorf("the served page shows a blocked action in the queue:\n%s", blocks)
+	// A blocked action is off the index entirely: it has its own page, so
+	// nothing on the index has to hold a row for it.
+	if strings.Contains(body, "Roll the change out") {
+		t.Errorf("the served page shows a blocked action:\n%s", body)
 	}
 }
 
@@ -206,7 +205,7 @@ func TestServedPageIsLive(t *testing.T) {
 		t.Errorf("the served page does not listen for changes:\n%s", served)
 	}
 
-	written, err := runCLI(t, "render", "--db", db)
+	written, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}

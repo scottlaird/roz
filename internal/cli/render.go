@@ -11,12 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/scottlaird/roz/internal/store"
 )
 
-//go:embed templates/page.html.tmpl
+//go:embed templates/*.html.tmpl
 var templates embed.FS
 
 //go:embed icon/roz-32.png
@@ -42,74 +40,67 @@ var favicon = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeT
 // html/template escapes what goes into it, which is why the blocks below are
 // plain text: they are tabwriter output, and the only thing standing between
 // a title full of angle brackets and the page is this.
-var page = template.Must(template.ParseFS(templates, "templates/page.html.tmpl"))
+// pages are the documents roz serves, each one the shared shell plus its own
+// body.
+//
+// A set per page rather than one set with a switch: every body defines the
+// same "body" block, which is what lets the shell be written once and know
+// nothing about who fills it. Parsed at startup, so a broken template is a
+// build-adjacent failure rather than a surprise at request time.
+var pages = map[string]*template.Template{
+	pageIndex:    parsePage("index"),
+	pageProjects: parsePage("projects"),
+	pageActions:  parsePage("actions"),
+	pageProject:  parsePage("project"),
+	pageAction:   parsePage("action"),
+}
+
+// The pages, named by the route that reaches them.
+const (
+	pageIndex    = ""
+	pageProjects = "projects"
+	pageActions  = "actions"
+	pageProject  = "project"
+	pageAction   = "action"
+)
+
+func parsePage(body string) *template.Template {
+	return template.Must(template.ParseFS(templates,
+		"templates/shell.html.tmpl", "templates/"+body+".html.tmpl"))
+}
+
+// page is the index, kept under its old name for the callers that only ever
+// wanted that one.
+var page = pages[pageIndex]
+
+// stylesheet is the one static file the page needs.
+const stylesheet = "roz.css"
 
 // horizon is how far ahead the calendar block looks. Two weeks is what a
 // weekly review can act on; beyond that the answer is "ask again later".
 const horizon = 14 * 24 * time.Hour
 
-func newRenderCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "render",
-		Short: "Regenerate the status page from the database",
-		Long: "The page is a view; the database is the truth. Nothing here is\n" +
-			"authoritative and nothing reads it back, so regenerating it is always\n" +
-			"safe.\n\n" +
-			"This version is three preformatted blocks and no design worth the\n" +
-			"name: the calendar for the next fortnight, the unblocked actions, and\n" +
-			"the live projects. It exists to be looked at, not admired.",
-		Args: cobra.NoArgs,
-		RunE: runRender,
-	}
-	cmd.Flags().String(flagOut, "-", "output path, or - for stdout")
-	return cmd
-}
-
-func runRender(cmd *cobra.Command, _ []string) error {
-	path, err := cmd.Flags().GetString(flagOut)
-	if err != nil {
-		return err
-	}
-
-	st, err := openStore(cmd)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	page, err := renderPage(cmd.Context(), st, time.Now(), false)
-	if err != nil {
-		return err
-	}
-
-	if path == "-" {
-		_, err := cmd.OutOrStdout().Write(page)
-		return err
-	}
-	if err := os.WriteFile(path, page, 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), path)
-	return nil
-}
-
-// renderPage builds the whole page in memory.
+// renderRoute builds one page: the index, a listing, or one entity.
 //
-// In memory rather than streamed so that a failure half way through leaves
-// the previous page in place: a status page that is truncated looks like an
-// empty queue, which is the one wrong answer that matters.
-func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) ([]byte, error) {
+// One renderer for all of them, since two would eventually disagree — and one
+// document shell, so a page nobody thought about still has the heading, the
+// stylesheet and the trail back.
+func renderRoute(ctx context.Context, st *store.Store, now time.Time, live bool, at route) ([]byte, error) {
+	tmpl, ok := pages[at.kind]
+	if !ok {
+		return nil, errNoSuchPage
+	}
 	settings, err := pageSettings(ctx, st)
 	if err != nil {
 		return nil, err
 	}
-	content, err := buildPage(ctx, st, now, live, settings)
+	content, err := buildRoute(ctx, st, now, live, settings, at)
 	if err != nil {
 		return nil, err
 	}
 
 	var rendered bytes.Buffer
-	if err := page.Execute(&rendered, content); err != nil {
+	if err := tmpl.Execute(&rendered, content); err != nil {
 		return nil, fmt.Errorf("rendering the page: %w", err)
 	}
 	return rendered.Bytes(), nil

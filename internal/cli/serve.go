@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -107,8 +108,14 @@ func runServe(cmd *cobra.Command, _ []string) error {
 //
 // Live, because this one has a server behind it to tell it when to reload.
 func pageFor(st *store.Store) server.Page {
-	return func(ctx context.Context) ([]byte, error) {
-		return renderPage(ctx, st, time.Now(), true)
+	return func(ctx context.Context, kind, id string) ([]byte, error) {
+		body, err := renderRoute(ctx, st, time.Now(), true, route{kind: kind, id: id})
+		if errors.Is(err, errNoSuchPage) {
+			// The server's word for it, so it can answer 404 without knowing
+			// what the cli package calls the condition.
+			return nil, server.ErrNoPage
+		}
+		return body, err
 	}
 }
 

@@ -476,6 +476,14 @@ func addListingFlags[T any](cmd *cobra.Command, set columnSet[T]) {
 	addListOutputFlag(cmd)
 	addFieldsFlag(cmd, set)
 	addFilterFlag(cmd, set.names())
+	addViewFlag(cmd)
+
+	// Before the command runs, so a view's filter, sort and fields are in the
+	// flags by the time anything reads them — including the store filter,
+	// which is built before the listing tail is reached.
+	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
+		return applyView(cmd, entityOf(cmd))
+	}
 }
 
 // flagFiltersFor finds the translations belonging to whichever listing this

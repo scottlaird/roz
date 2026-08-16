@@ -285,6 +285,46 @@ func verbRows(t *testing.T, db *sql.DB) map[string]string {
 	return verbs
 }
 
+// TestSeededViews compares the view rows, which sqlite_schema does not carry
+// and TestSchemaMatchesMigrations therefore cannot see.
+//
+// The same bargain as the verbs and the pipelines: these are data, but they
+// are data schema.sql describes, and content in that file is only worth having
+// if something checks it.
+func TestSeededViews(t *testing.T) {
+	documented := viewRows(t, applyDocumentedSchema(t))
+	migrated := viewRows(t, applyMigrations(t))
+
+	if len(documented) == 0 {
+		t.Fatal("schema.sql seeds no views")
+	}
+	compareSeeded(t, "view", documented, migrated)
+}
+
+// viewRows reads the seeded views as comparable text, keyed by name.
+func viewRows(t *testing.T, db *sql.DB) map[string]string {
+	t.Helper()
+
+	rows, err := db.Query("SELECT name, entity, filter, sort, fields, description FROM view")
+	if err != nil {
+		t.Fatalf("reading the views: %v", err)
+	}
+	defer rows.Close()
+
+	views := map[string]string{}
+	for rows.Next() {
+		var name, entity, filter, sort, fields, description string
+		if err := rows.Scan(&name, &entity, &filter, &sort, &fields, &description); err != nil {
+			t.Fatalf("scanning a view: %v", err)
+		}
+		views[name] = fmt.Sprintf("%s|%s|%s|%s|%s", entity, filter, sort, fields, description)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the views: %v", err)
+	}
+	return views
+}
+
 func TestMigrationsAreWellFormed(t *testing.T) {
 	migrations, err := schema.Migrations()
 	if err != nil {

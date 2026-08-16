@@ -582,6 +582,15 @@ func (f *Filter) Keep(record any) (bool, error) {
 	return keep, nil
 }
 
+// RunsInGo reports that some of the filter did not reach the query.
+//
+// For a caller that cannot pay for the Go pass — the page renders on every
+// request and cannot read every row to answer one question — knowing that a
+// filter converted *whole* is different from knowing it converted at all.
+func (f *Filter) RunsInGo() bool {
+	return f != nil && f.residual != nil
+}
+
 // Explain says how the filter was divided, for a caller that wants to show it.
 //
 // Worth showing rather than keeping: whether a filter reached the query

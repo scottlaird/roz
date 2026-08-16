@@ -69,6 +69,7 @@ directory.
 | `roz serve` | Sync, tail the log and serve the page together, until interrupted. The page reloads itself when the log moves, and `/metrics` says what roz is doing. Loopback, no authentication. |
 | **vocabulary** | |
 | `roz codeowners` | Who has to approve a set of changed files, and who is still worth asking. |
+| `roz view add` / `list` / `show` / `drop` | Name a listing — its filter, order and columns — and come back to it with `--view`. |
 | `roz owner set` / `list` | Where a group is reached, which is what `roz pr announce` looks up. Groups only. |
 | `roz verb set` | Change a verb's `wait_days` or `rank_class`. Settings, not definitions. |
 | `roz verb list` | The verbs, how each closes, its rank class, and how long waiting on one is reasonable. |
@@ -81,7 +82,6 @@ directory.
 | **other** | |
 | `roz calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
 | `roz page set` / `show` / `list` / `clear` | Prose the page places, keyed by slot. |
-| `roz render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `roz config set`. |
 | `roz verify` | Record that a project or action was checked against reality. Feeds `--sort staleness`. |
 | `roz db backup` / `restore` | Copy the database out with `VACUUM INTO`, and put one back. |
 
@@ -938,7 +938,7 @@ NA7 why: "" → "unblocks the *split*, once `roz sync github` runs"
 ```
 
 The database keeps what you typed. `show -o json` returns the source, the
-event log records the source, and only `roz render` turns it into HTML — so
+event log records the source, and only the page turns it into HTML — so
 nothing is lost if you decide later that a field should have been plain.
 
 On the page, an action's `--why` sits under its title in the queue, and a
@@ -1152,6 +1152,115 @@ like that is only worth printing if something checks it.
 which reads the verb's rank class and whether the project is blocked, neither
 of which is a column of the action.
 
+### Saving one
+
+A view is a listing you named. Which listing, which columns, which order,
+which filter — all of it exists as flags already; the name is what a view
+adds, so a question worth asking twice is not retyped:
+
+```console
+$ roz view add stalled --entity project \
+    --filter 'status != "done" && status != "retired" && snooze_until == null &&
+              !actions.exists(a, a.closed_at == null)' \
+    --description 'Live work with nothing open against it'
+stalled: project, where status != "done" && …
+
+$ roz project list --view stalled
+ID    TITLE
+SL41  Improve Review Management
+SL42  The week in review
+SL44  Sync polls less and survives more
+```
+
+**Adding one needs no code.** A filter is an expression over the columns a
+listing already declares, so a new question is a row in a table rather than a
+flag, a query and a release. That is the whole argument for it being an entity.
+
+Named rather than numbered, unlike everything else here. A project is one of
+many similar things and `SL7` is how you point at it; a view is referred to by
+what it is *for*, and `--view stalled` reads as a sentence.
+
+A name is a lower-case identifier — `^[a-z][a-z0-9_]*$`, so `week_in_review`
+and `q4` are fine and `two words`, `1st`, `with-hyphen` and an emoji are not.
+The rule is not "no spaces" but "nothing that has to be escaped": a name you
+cannot type without quoting is a name that defeats the point of having one.
+
+### The page asks its questions the same way
+
+Two views are seeded, and the status page reads them by name:
+
+| view | what it decides |
+|---|---|
+| `open_projects` | which projects the page's table shows |
+| `open_actions` | what "still to do" counts as, per project |
+
+So what the page means by *live work* is a row you can edit. Narrow
+`open_projects` and the table narrows on the next render, with no rebuild —
+which is the whole argument for views being an entity rather than a flag.
+
+If a view is dropped, or a later migration breaks the column it names, the page
+falls back to the definition it was seeded with rather than going blank. A page
+that emptied because somebody deleted a row would be the worst way to find that
+out.
+
+**Most of the page is not a view, and some of it never will be.** The queue and
+its waiting half read the verb's rank class and whether a project is blocked,
+neither of which is a column of an action — a ranking is not a predicate, which
+is the same conclusion `--sort` reached. The calendar strip needs date
+arithmetic on `now` that a filter cannot do. And the page loads every action,
+project, pull request and issue to caption links with, which is the absence of
+a filter rather than a filter.
+
+**A view supplies defaults; what you type wins.** `--view stalled --fields
+id,title` is somebody wanting that view shown differently, and a saved answer
+that ignored the flags beside it would be a saved answer nobody trusts.
+
+**It is checked when it is saved**, against the listing it names — a view is
+written once and read for months, so the moment to reject one is while
+somebody is still looking at it:
+
+```console
+$ roz view add broken --entity project --filter 'stat == "done"'
+Error: view "broken": --filter "stat == \"done\"": ERROR: <input>:1:1:
+undeclared reference to 'stat'
+```
+
+A view belongs to one listing, and applying it elsewhere says so rather than
+failing on a column that does not exist there. `roz view show` re-runs the
+check against the listing as it is now, so a view broken by a later migration
+says `broken:` instead of quietly returning nothing.
+
+### A page per thing
+
+`roz serve` renders more than the index. Every project and action has its own
+page, and the two listings the index used to carry as an appendix have theirs:
+
+| | |
+|---|---|
+| `/` | the queue, what is waiting, and live projects |
+| `/projects` `/actions` | everything, including what is finished |
+| `/project/SL7` `/action/NA12` | one entity, with a project's child projects |
+
+All of them wear the same shell — head, heading, stylesheet, footer — written
+once, so a page nobody thought about still has them. A trail across the top
+says where you are: `roz › projects › SL7`, with the last step a label rather
+than a link, since a link to where you already are is furniture.
+
+**A link goes to the row or to the page.** A reference to something on the page
+you are reading is an anchor — the row is right there. A reference to anything
+else leaves for that entity's own page. That rule is what let the index drop
+its appendix of everything: the appendix existed only so that a reference to
+something closed had somewhere to land, and now it lands on `/project/SL7`.
+
+The tooltip survives either way, which took teaching the linker to read back
+the URLs it writes. What an identifier means does not depend on where the link
+goes.
+
+There is no longer a way to write the page to a file. `roz render` existed
+before there was a server and produced one document; entity pages live at URLs,
+and a URL is not a file, so it would have produced a shrinking fraction of the
+site. `roz serve` is the page.
+
 ## For an agent
 
 `roz mcp` serves the same commands over the Model Context Protocol, on stdin
@@ -1161,17 +1270,20 @@ and stdout, for an agent to call without shelling out.
 than written out again, so the two cannot drift: the name is the command path
 with an underscore (`action add` → `action_add`), the description is that
 command's own help, and the arguments are its flags and whatever its usage
-line names. Forty-six of them:
+line names. Sixty-seven of them:
 
 | | |
 |---|---|
 | settings | `config_show` `config_set` |
-| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_link-issue` `project_unlink-issue` |
-| actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
-| GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_set` `pr_show` `pr_list` `pr_announce` `sync` |
+| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_block` `project_unblock` `project_link-issue` `project_unlink-issue` |
+| actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_wait-ref` `action_wait-issue` `action_close` |
+| GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `repo_prefer` `pr_track` `pr_set` `pr_show` `pr_list` `pr_announce` `sync` `codeowners` `ref_list` |
+| reviewers | `owner_set` `owner_list` |
+| views | `view_add` `view_list` `view_show` `view_drop` |
+| the page | `page_show` `page_list` `page_set` `page_clear` |
 | the log | `note` `exception` `watch` (bounded to one read) |
 | tracker issues | `issue_show` `issue_list` `issue_observe` |
-| other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
+| other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `verb_set` `pipeline_add` `pipeline_show` `pipeline_list` `pipeline_set` `pipeline_retire` `verify` |
 
 **Left out**, because they are not an agent's to call: `init`, which decides
 where the database lives, and `serve`, `syncer` and `mcp`, which never return.
@@ -2491,10 +2603,9 @@ because at 16px the beads are noise and a hairline frame smears into a grey
 band. Everything else in `assets/` is generated from those two.
 
 The page carries the 32px icon inline as a data URI rather than linking a
-file. The page is one file by design — `roz render` writes it to disk as
-readily as `roz serve` serves it — and an icon fetched over a second request
-is one more thing that can fail, or simply not be there when the file is
-opened from disk.
+file. It predates the static handler and has not been worth moving: under a
+kilobyte of base64 is cheaper than the request would be, and unlike the
+stylesheet it does not change.
 
 There is no rasteriser with an alpha channel on a stock macOS box, so
 `assets/unmatte.py` renders each size twice through Quick Look, once over

@@ -62,7 +62,7 @@ func get(t *testing.T, url string) (*http.Response, string) {
 }
 
 func TestServesThePage(t *testing.T) {
-	base := running(t, func(context.Context) ([]byte, error) {
+	base := running(t, func(context.Context, string, string) ([]byte, error) {
 		return []byte("<h1>the page</h1>"), nil
 	}, nil)
 
@@ -87,7 +87,7 @@ func TestServesThePage(t *testing.T) {
 func TestBuiltPerRequest(t *testing.T) {
 	var mu sync.Mutex
 	var calls int
-	base := running(t, func(context.Context) ([]byte, error) {
+	base := running(t, func(context.Context, string, string) ([]byte, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		calls++
@@ -105,7 +105,7 @@ func TestBuiltPerRequest(t *testing.T) {
 // TestOnlyTheRootPath: a mistyped path should be visibly wrong rather than
 // quietly serving the page under a name that does not exist.
 func TestOnlyTheRootPath(t *testing.T) {
-	base := running(t, func(context.Context) ([]byte, error) {
+	base := running(t, func(context.Context, string, string) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil)
 
@@ -122,7 +122,7 @@ func TestOnlyTheRootPath(t *testing.T) {
 // server down, since the syncer running beside it would go too.
 func TestRenderFailureIsA500AndLogged(t *testing.T) {
 	var log lockedBuffer
-	base := running(t, func(context.Context) ([]byte, error) {
+	base := running(t, func(context.Context, string, string) ([]byte, error) {
 		return nil, errors.New("the database is on fire")
 	}, &log)
 
@@ -162,7 +162,7 @@ func (b *lockedBuffer) String() string {
 // TestCancellationIsNotAFailure: the service runner takes an error as a
 // reason to stop everything else, so stopping on request must return nil.
 func TestCancellationIsNotAFailure(t *testing.T) {
-	s := New("127.0.0.1:0", func(context.Context) ([]byte, error) {
+	s := New("127.0.0.1:0", func(context.Context, string, string) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil, nil)
 
@@ -197,7 +197,7 @@ func TestRunNeedsAPage(t *testing.T) {
 // TestAddressInUseIsReported: two `roz serve` processes should not leave the
 // second one silently serving nothing.
 func TestAddressInUseIsReported(t *testing.T) {
-	page := func(context.Context) ([]byte, error) { return []byte("the page"), nil }
+	page := func(context.Context, string, string) ([]byte, error) { return []byte("the page"), nil }
 	base := running(t, page, nil)
 	addr := strings.TrimPrefix(base, "http://")
 
@@ -211,7 +211,7 @@ func TestAddressInUseIsReported(t *testing.T) {
 func runningLive(t *testing.T, changes Changes, log io.Writer) string {
 	t.Helper()
 
-	page := func(context.Context) ([]byte, error) { return []byte("the page"), nil }
+	page := func(context.Context, string, string) ([]byte, error) { return []byte("the page"), nil }
 	s := New("127.0.0.1:0", page, changes, log)
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -421,7 +421,7 @@ func TestEventsSurviveAFailedFirstRead(t *testing.T) {
 // with nothing to watch should say so rather than hold a connection open
 // promising events that cannot come.
 func TestNoEventsWithoutAChangeSource(t *testing.T) {
-	base := running(t, func(context.Context) ([]byte, error) {
+	base := running(t, func(context.Context, string, string) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil)
 
@@ -444,7 +444,7 @@ func TestStoppingWithAStreamOpenIsPrompt(t *testing.T) {
 	defer cancel()
 
 	s := New("127.0.0.1:0",
-		func(context.Context) ([]byte, error) { return []byte("page"), nil },
+		func(context.Context, string, string) ([]byte, error) { return []byte("page"), nil },
 		func(context.Context) (int64, error) { return 1, nil },
 		nil)
 
@@ -496,7 +496,7 @@ func TestStoppingWithAStreamOpenIsPrompt(t *testing.T) {
 // test — what it carries is less sensitive than the page beside it, so making
 // it harder to reach than the thing it describes would gain nothing.
 func TestMetricsAreServed(t *testing.T) {
-	base := running(t, func(context.Context) ([]byte, error) {
+	base := running(t, func(context.Context, string, string) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil)
 

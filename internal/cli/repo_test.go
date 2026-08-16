@@ -241,7 +241,7 @@ func TestProseExpandsAShortName(t *testing.T) {
 	trackRepo(t, db, "acme/api-server", "--short-name", "api")
 	id := addAction(t, db, "--title", "wait for api#1234", "--verb", "decide")
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}

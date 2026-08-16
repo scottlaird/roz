@@ -64,7 +64,7 @@ func TestBlockedProjectIsOnThePage(t *testing.T) {
 		t.Fatalf("project block returned error: %v", err)
 	}
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}

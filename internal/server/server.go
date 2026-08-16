@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/scottlaird/roz/internal/metrics"
+	"github.com/scottlaird/roz/internal/static"
 )
 
 // DefaultAddr is where the server listens unless told otherwise. Loopback
@@ -29,7 +30,14 @@ const shutdownGrace = 5 * time.Second
 
 // Page produces the page to serve. It is called per request, so what is
 // served is never staler than the request that asked for it.
-type Page func(ctx context.Context) ([]byte, error)
+type Page func(ctx context.Context, kind, id string) ([]byte, error)
+
+// ErrNoPage is a request for an entity that is not there.
+//
+// Answered with 404 rather than 500: a mistyped identifier is a wrong address,
+// and telling somebody the server is broken when their URL is would send them
+// looking in the wrong place.
+var ErrNoPage = errors.New("no such page")
 
 // Changes reports a version of the world that moves whenever something a
 // page would show has changed. The server does not care what the number
@@ -106,7 +114,16 @@ func (s *Server) Run(ctx context.Context) error {
 	s.logf("serving http://%s/\n", s.listenOn)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handle)
+	// One handler per route, so the mux does the parsing and the handler does
+	// not have to guess what a path meant. The entity routes take their
+	// identifier as a wildcard, which is what makes /project/SL7 and
+	// /project/ different requests rather than one with a trailing empty
+	// segment.
+	mux.HandleFunc("GET /{$}", s.pageHandler("", ""))
+	mux.HandleFunc("GET /projects", s.pageHandler("projects", ""))
+	mux.HandleFunc("GET /actions", s.pageHandler("actions", ""))
+	mux.HandleFunc("GET /project/{id}", s.pageHandler("project", "id"))
+	mux.HandleFunc("GET /action/{id}", s.pageHandler("action", "id"))
 	mux.HandleFunc("/events", s.handleEvents)
 	// Served from the same listener as the page, which is loopback and
 	// unauthenticated. That is the right trade here and worth saying: what
@@ -114,6 +131,11 @@ func (s *Server) Run(ctx context.Context) error {
 	// is less sensitive than the page beside it, so nothing is gained by
 	// making it harder to reach than the thing it describes.
 	mux.Handle("/metrics", metrics.Handler())
+	// Compiled in, and answered with an ETag, so a browser fetches the
+	// stylesheet once and is told 304 for the rest of the process's life —
+	// and for the next one too, since the tag is the content's hash rather
+	// than a start time.
+	mux.Handle(static.Prefix, static.Handler())
 	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
 	// Told to stop before Shutdown starts waiting, so an event stream ends of
@@ -161,13 +183,24 @@ func (s *Server) Addr(ctx context.Context) (net.Addr, error) {
 
 // handle serves the page, and only the page. Anything else is a 404 rather
 // than the page under a wrong name, so a mistyped path is visible.
-func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+// pageHandler serves one route, taking its identifier from the named wildcard
+// where it has one.
+func (s *Server) pageHandler(kind, wildcard string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var id string
+		if wildcard != "" {
+			id = r.PathValue(wildcard)
+		}
+		s.handle(w, r, kind, id)
+	}
+}
+
+func (s *Server) handle(w http.ResponseWriter, r *http.Request, kind, id string) {
+	page, err := s.page(r.Context(), kind, id)
+	if errors.Is(err, ErrNoPage) {
 		http.NotFound(w, r)
 		return
 	}
-
-	page, err := s.page(r.Context())
 	if err != nil {
 		s.logf("rendering: %v\n", err)
 		http.Error(w, "the page could not be built", http.StatusInternalServerError)

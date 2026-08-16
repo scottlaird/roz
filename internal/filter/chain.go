@@ -624,3 +624,60 @@ func reachesRelation(e celast.Expr, l level, info *celast.SourceInfo) bool {
 	walk(e)
 	return found
 }
+
+// qualify names every bare column with the alias the listing's query uses.
+//
+// A listing that joins another table makes a bare column name ambiguous —
+// `action list --sort priority` joins project, and both tables have
+// snooze_until, so SQLite refuses the query rather than guessing. The filter's
+// own terms are the ones that arrive unqualified, because a filter is written
+// in the entity's vocabulary and knows nothing about the query it will land
+// in.
+//
+// Columns only. `now` is a parameter, a relation is a subquery, and an
+// iteration variable belongs to the level below.
+func qualify(e celast.Expr, alias string, columns map[string]store.ColumnType) celast.Expr {
+	if e == nil || alias == "" {
+		return e
+	}
+	f := celast.NewExprFactory()
+
+	var walk func(celast.Expr) celast.Expr
+	walk = func(n celast.Expr) celast.Expr {
+		if n == nil {
+			return nil
+		}
+		switch n.Kind() {
+		case celast.IdentKind:
+			if _, isColumn := columns[n.AsIdent()]; !isColumn {
+				return f.CopyExpr(n)
+			}
+			return f.NewSelect(n.ID(), f.NewIdent(n.ID(), alias), n.AsIdent())
+		case celast.SelectKind:
+			sel := n.AsSelect()
+			// A qualified name is already qualified: `a.verb`, or a relation's
+			// column, neither of which this touches.
+			return f.NewSelect(n.ID(), f.CopyExpr(sel.Operand()), sel.FieldName())
+		case celast.CallKind:
+			call := n.AsCall()
+			args := make([]celast.Expr, 0, len(call.Args()))
+			for _, arg := range call.Args() {
+				args = append(args, walk(arg))
+			}
+			if call.IsMemberFunction() {
+				return f.NewMemberCall(n.ID(), call.FunctionName(), walk(call.Target()), args...)
+			}
+			return f.NewCall(n.ID(), call.FunctionName(), args...)
+		case celast.ListKind:
+			list := n.AsList()
+			elements := make([]celast.Expr, 0, list.Size())
+			for _, element := range list.Elements() {
+				elements = append(elements, walk(element))
+			}
+			return f.NewList(n.ID(), elements, list.OptionalIndices())
+		default:
+			return f.CopyExpr(n)
+		}
+	}
+	return walk(e)
+}

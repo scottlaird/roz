@@ -227,10 +227,10 @@ type ActionFilter struct {
 	// Where is a WHERE fragment somebody else compiled — the SQL half of a
 	// CEL filter. Opaque here: what it means is the filter package's business.
 	//
-	// Scalar fragments only, for now. This query aliases the table as `a`,
-	// while a correlated subquery from a traversal qualifies the outer row as
-	// `action.…`, so a filter reaching a relation would not resolve. Either
-	// the alias or the qualifier has to give; see scottlaird/roz#201.
+	// The qualifier gave: a filter compiled with filter.WithBaseAlias(
+	// ActionAlias) names the outer row the way this query does, so a
+	// traversal correlates correctly rather than referring to a table the
+	// query never mentions. See scottlaird/roz#201.
 	Where string
 	// WhereArgs are its parameters, in the order the fragment names them.
 	WhereArgs []any
@@ -355,6 +355,13 @@ const staleSubjects = `a.id IN (
 // Creation order by default, and ordering is on n rather than id, which is
 // the reason n exists: NA100 sorts before NA41 lexically. OrderPriority sorts
 // by what the action advances instead — see actionOrder.
+// ActionAlias is what the listing query calls the action table.
+//
+// Exported because a filter compiled elsewhere has to agree: every correlated
+// subquery a traversal generates points back at the outer row by name, and the
+// name is this. See filter.WithBaseAlias.
+const ActionAlias = "a"
+
 func (s *Store) ListActions(ctx context.Context, filter ActionFilter) ([]*Action, error) {
 	fields, err := fieldsOfStruct(&Action{})
 	if err != nil {

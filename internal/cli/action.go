@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	celfilter "github.com/scottlaird/roz/internal/filter"
 	"github.com/scottlaird/roz/internal/store"
 )
 
@@ -761,6 +762,19 @@ func runActionList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer st.Close()
+
+	// Into the query rather than over the rows. The alias is what made this
+	// the awkward one: the listing selects `FROM action a`, so a correlated
+	// subquery pointing at `action.id` would not resolve — see
+	// filter.WithBaseAlias.
+	cel, err := filterFrom(cmd, &store.Action{}, celfilter.WithBaseAlias(store.ActionAlias))
+	if err != nil {
+		return err
+	}
+	filter.Where, filter.WhereArgs = cel.SQL()
+	// Whatever the query could not take runs in Go, and a traversal there
+	// needs somewhere to read the far side from.
+	cel.WithLoader(ctx, storeLoader{st: st})
 
 	actions, err := st.ListActions(ctx, filter)
 	if err != nil {

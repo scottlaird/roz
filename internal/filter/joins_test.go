@@ -385,3 +385,53 @@ func TestAChainHasADepthLimit(t *testing.T) {
 		t.Errorf("error = %v, want it to say how deep it went", err)
 	}
 }
+
+// TestABaseAliasNamesTheOuterRowAsTheQueryDoes is what let `action list` push
+// a traversal down at all: it selects `FROM action a`, so a subquery
+// correlating to `action.id` names a table the query never mentions.
+func TestABaseAliasNamesTheOuterRowAsTheQueryDoes(t *testing.T) {
+	const expr = `subject_pr.state == "MERGED"`
+
+	plain, err := Compile(&store.Action{}, expr)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	where, _ := plain.SQL()
+	if !strings.Contains(where, "= action.id") {
+		t.Errorf("the default correlation is not by table name:\n%s", where)
+	}
+
+	aliased, err := Compile(&store.Action{}, expr, WithBaseAlias("a"))
+	if err != nil {
+		t.Fatalf("Compile with an alias returned error: %v", err)
+	}
+	where, _ = aliased.SQL()
+	if !strings.Contains(where, "= a.id") {
+		t.Errorf("the alias did not reach the correlation:\n%s", where)
+	}
+	if strings.Contains(where, "action.id") {
+		t.Errorf("the table name survived beside the alias:\n%s", where)
+	}
+}
+
+// TestAnAliasedFilterQualifiesItsColumns. `action list --sort priority` joins
+// project, and both tables have snooze_until: a bare column name is ambiguous
+// and SQLite refuses the query rather than guessing. Found by the seeded
+// expired_actions view, which is exactly that shape.
+func TestAnAliasedFilterQualifiesItsColumns(t *testing.T) {
+	f, err := Compile(&store.Action{},
+		`state == "snoozed" && snooze_until != null`, WithBaseAlias("a"))
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	where, _ := f.SQL()
+	if where == "" {
+		t.Skip("nothing was pushed down, so there is no qualification to check")
+	}
+	if strings.Contains(where, "(state") || strings.Contains(where, " state ") {
+		t.Errorf("a bare column survived into a query that joins another table:\n%s", where)
+	}
+	if !strings.Contains(where, "a.state") {
+		t.Errorf("the column was not qualified with the listing's alias:\n%s", where)
+	}
+}

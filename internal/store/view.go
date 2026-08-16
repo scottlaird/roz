@@ -56,16 +56,33 @@ func (v *View) Clone() *View {
 // ValidateViewName refuses what the table cannot hold, before a write reaches
 // a CHECK that can only say the row is bad.
 //
-// A name is an argument: `roz project list --view stalled`. One that needs
-// quoting is one nobody types twice, which defeats the point.
+// A lower-case identifier: `^[a-z][a-z0-9_]*$`. The rule is not "no spaces" but
+// "nothing that has to be escaped" — a name is an argument, and a quote, a
+// glob character or an emoji all make one that cannot be typed without
+// wrapping it in something. Starting with a letter keeps it from reading as a
+// number or a flag.
+//
+// Scanned rather than matched against a pattern, so the error can name the
+// character that stopped it. "q4 is fine and q-4 is not" is a more useful
+// thing to be told than a regex.
 func ValidateViewName(name string) error {
-	switch {
-	case strings.TrimSpace(name) == "":
+	if name == "" {
 		return fmt.Errorf("a view needs a name: it is what you type to use it")
-	case name != strings.ToLower(name):
-		return fmt.Errorf("%q has capitals; a view name is an argument, so it is lower case", name)
-	case strings.ContainsAny(name, " \t"):
-		return fmt.Errorf("%q has a space in it; a name needing quotes is a name nobody types twice", name)
+	}
+	if first := name[0]; first < 'a' || first > 'z' {
+		return fmt.Errorf(
+			"view name %q starts with %q; a name starts with a lower-case letter, "+
+				"so it does not read as a number or a flag", name, string(name[0]))
+	}
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '_':
+		default:
+			return fmt.Errorf(
+				"view name %q holds %q; a name is an argument, so it holds "+
+					"lower-case letters, digits and underscores — anything else "+
+					"has to be quoted to be typed", name, string(c))
+		}
 	}
 	return nil
 }

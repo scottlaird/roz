@@ -825,8 +825,10 @@ CREATE TABLE team_member (
 -- listings exist is a fact about the command tree, and a CHECK naming them
 -- would be a second place to edit. See 0035.
 CREATE TABLE view (
+  -- a lower-case identifier, `^[a-z][a-z0-9_]*$`: the characters that survive
+  -- a shell without quoting. GLOB rather than a regex, which SQLite lacks.
   name       TEXT PRIMARY KEY CHECK (
-               name <> '' AND name = lower(name) AND instr(name, ' ') = 0),
+               name GLOB '[a-z]*' AND NOT name GLOB '*[^a-z0-9_]*'),
   entity     TEXT NOT NULL CHECK (entity <> ''),
   filter     TEXT NOT NULL DEFAULT '',
   sort       TEXT NOT NULL DEFAULT '',

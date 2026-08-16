@@ -59,13 +59,34 @@ func TestAViewIsCheckedWhenItIsSaved(t *testing.T) {
 	}
 }
 
-// TestAViewNameIsAnArgument: one needing quotes is one nobody types twice.
-func TestAViewNameIsAnArgument(t *testing.T) {
+// TestAViewNameIsAnIdentifier: a name is an argument, so what it may hold is
+// what survives a shell without quoting.
+//
+// "No spaces" was not enough. A quote, a glob character or an emoji all make a
+// name that has to be escaped to be typed, which defeats the point of having
+// named it.
+func TestAViewNameIsAnIdentifier(t *testing.T) {
 	db := initDB(t)
 
-	for _, name := range []string{"Stalled", "two words"} {
-		_, err := runCLI(t, "view", "add", "--db", db, name, "--entity", "project")
-		if err == nil {
+	for _, name := range []string{"stalled", "week_in_review", "q4", "a", "a1_b2"} {
+		if _, err := runCLI(t, "view", "add", "--db", db, name,
+			"--entity", "project"); err != nil {
+			t.Errorf("view add refused %q: %v", name, err)
+		}
+	}
+
+	for _, name := range []string{
+		"Stalled",     // capitals
+		"two words",   // a space
+		"1st",         // starts with a digit
+		"_leading",    // starts with an underscore
+		"with-hyphen", // reads as a flag
+		"quote'd",     // needs escaping
+		"glob*",       // the shell would expand it
+		"🎯",           // an emoji
+	} {
+		if _, err := runCLI(t, "view", "add", "--db", db, name,
+			"--entity", "project"); err == nil {
 			t.Errorf("view add accepted %q", name)
 		}
 	}

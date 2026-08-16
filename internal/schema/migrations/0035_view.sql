@@ -17,10 +17,19 @@
 -- you refer to it; a view is referred to by what it is for. `roz project list
 -- --view stalled` reads as a sentence, and SL7 would not.
 CREATE TABLE view (
-  -- what you type. Lower case, no spaces: it is an argument, and a name
-  -- needing quotes is a name nobody uses.
+  -- what you type: a lower-case identifier, `^[a-z][a-z0-9_]*$`.
+  --
+  -- A name is an argument, so the set of characters it may hold is the set
+  -- that survives a shell without quoting. Rejecting a space is not enough --
+  -- a quote, a glob character or an emoji all make a name that has to be
+  -- escaped to be used, which defeats the point of naming it. Starting with a
+  -- letter keeps it from looking like a number or a flag.
+  --
+  -- GLOB rather than a regex, which SQLite does not have: it has character
+  -- classes and is always case-sensitive, so the two halves are "starts with a
+  -- letter" and "holds nothing outside the set".
   name       TEXT PRIMARY KEY CHECK (
-               name <> '' AND name = lower(name) AND instr(name, ' ') = 0),
+               name GLOB '[a-z]*' AND NOT name GLOB '*[^a-z0-9_]*'),
 
   -- which listing it belongs to: 'project', 'action', 'pr', 'issue' and so on.
   -- Not constrained to a list here, because the listings are a fact about the

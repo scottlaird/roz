@@ -1181,6 +1181,11 @@ Named rather than numbered, unlike everything else here. A project is one of
 many similar things and `SL7` is how you point at it; a view is referred to by
 what it is *for*, and `--view stalled` reads as a sentence.
 
+A name is a lower-case identifier — `^[a-z][a-z0-9_]*$`, so `week_in_review`
+and `q4` are fine and `two words`, `1st`, `with-hyphen` and an emoji are not.
+The rule is not "no spaces" but "nothing that has to be escaped": a name you
+cannot type without quoting is a name that defeats the point of having one.
+
 **A view supplies defaults; what you type wins.** `--view stalled --fields
 id,title` is somebody wanting that view shown differently, and a saved answer
 that ignored the flags beside it would be a saved answer nobody trusts.

@@ -196,7 +196,7 @@ func (t *Tx) MarshalRecord(ctx context.Context, r Record) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return marshalRecordWith(r, loaded)
+	return MarshalRecordWith(r, loaded)
 }
 
 // relations for an action: both directions of the blocking edge, and the

@@ -24,19 +24,20 @@ life of the database, so a queue you are handed may well call its projects
 `API1` and its actions `TODO1`. Do not hardcode the defaults, and do not guess
 from one identifier you saw in passing.
 
-Ask the database. Every sequence-numbered entity stores its prefix as the
-`kind` column, so any listing will tell you:
+Ask the database. `roz config show` prints both, and does so on a database with
+nothing in it yet:
 
 ```console
-$ roz project list --fields id,kind,n -o json
-[{"id":"API1","kind":"API","n":1}]
+$ roz config show
+action_prefix     TODO
+...
+project_prefix    API
 ```
 
-`roz action list --fields id,kind,n` is the same question for actions. Over MCP
-the output format is the server's, so the answer arrives as the `KIND` column of
-a table rather than as JSON; `--fields` works the same either way. (An empty
-database has no row to read the prefix from — but it also has nothing to name
-yet, so the first thing you create answers it.)
+Every sequence-numbered entity also carries its prefix as the `kind` column, so
+`roz project list --fields id,kind,n` answers the same question from a row that
+already exists. Over MCP the output format is the server's, so either arrives as
+a table rather than as JSON.
 
 Worth getting right because these identifiers are the shared vocabulary: they
 are what the person says to you and what you say back, and `API12` only removes

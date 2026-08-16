@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -181,5 +182,83 @@ func TestConfigSetIsLogged(t *testing.T) {
 	}
 	if !strings.Contains(out, "jira_base_url") || !strings.Contains(out, "config") {
 		t.Errorf("the log does not show the settings change:\n%s", out)
+	}
+}
+
+// TestConfigShowSaysWhatTheIdentifiersAreCalled. The prefixes are chosen at
+// init and never again, and until this they were readable only off an
+// identifier that already existed — which a database with nothing in it does
+// not have.
+func TestConfigShowSaysWhatTheIdentifiersAreCalled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roz.db")
+	if _, err := runCLI(t, "init", "--db", path,
+		"--project-prefix", "API", "--action-prefix", "TODO"); err != nil {
+		t.Fatalf("init returned error: %v", err)
+	}
+
+	// Nothing has been created, which is exactly when somebody asks.
+	out, err := runCLI(t, "config", "show", "--db", path)
+	if err != nil {
+		t.Fatalf("config show returned error: %v", err)
+	}
+	for _, want := range []string{"project_prefix", "API", "action_prefix", "TODO"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config show does not mention %q:\n%s", want, out)
+		}
+	}
+
+	shown, err := runCLI(t, "config", "show", "--db", path, "-o", "json")
+	if err != nil {
+		t.Fatalf("config show -o json returned error: %v", err)
+	}
+	var got struct {
+		ProjectPrefix string `json:"project_prefix"`
+		ActionPrefix  string `json:"action_prefix"`
+		Owner         string `json:"owner"`
+	}
+	if err := json.Unmarshal([]byte(shown), &got); err != nil {
+		t.Fatalf("config show -o json returned %q: %v", shown, err)
+	}
+	if got.ProjectPrefix != "API" {
+		t.Errorf("project_prefix = %q, want %q", got.ProjectPrefix, "API")
+	}
+	if got.ActionPrefix != "TODO" {
+		t.Errorf("action_prefix = %q, want %q", got.ActionPrefix, "TODO")
+	}
+}
+
+// TestConfigShowStillCarriesTheSettings: the prefixes are merged in beside the
+// columns, so this checks the columns did not get lost on the way.
+func TestConfigShowStillCarriesTheSettings(t *testing.T) {
+	db := initDB(t)
+
+	if _, err := runCLI(t, "config", "set", "--db", db, "--owner", "scott"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+	out, err := runCLI(t, "config", "show", "--db", db)
+	if err != nil {
+		t.Fatalf("config show returned error: %v", err)
+	}
+	for _, want := range []string{"owner", "scott", "poll_window_days", "project_prefix", "ROZ"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config show does not mention %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestConfigSetWillNotChangeAPrefix. sequence.kind is write-once and a trigger
+// enforces it, but an error from the database is a poor way to learn that:
+// the flag does not exist, so the answer arrives before anything is attempted.
+func TestConfigSetWillNotChangeAPrefix(t *testing.T) {
+	db := initDB(t)
+
+	for _, flag := range []string{"--project-prefix", "--action-prefix"} {
+		out, err := runCLI(t, "config", "set", "--db", db, flag, "NOPE")
+		if err == nil {
+			t.Fatalf("config set %s returned nil, want an unknown-flag error:\n%s", flag, out)
+		}
+		if !strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("config set %s failed with %v, want an unknown flag error", flag, err)
+		}
 	}
 }

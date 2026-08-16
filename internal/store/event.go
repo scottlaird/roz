@@ -55,6 +55,12 @@ type EventQuery struct {
 	// Kind keeps only one event kind. The vocabulary is open, so this is a
 	// plain match rather than a checked enum.
 	Kind string
+	// ExcludeActors drops events written by any of these actors, which is how
+	// a reader hides its own writes without having to name every other actor
+	// in advance. Exclusion rather than selection because the question is
+	// "everything but mine", and an allow-list cannot express that without
+	// knowing the whole vocabulary — which is open.
+	ExcludeActors []string
 	// AfterSeq excludes everything at or below a sequence number. This is the
 	// cursor a tail advances.
 	AfterSeq int64
@@ -152,6 +158,14 @@ func (q EventQuery) clauses() ([]string, []any) {
 	if q.SinceAt != "" {
 		where = append(where, "at >= ?")
 		args = append(args, q.SinceAt)
+	}
+	if len(q.ExcludeActors) > 0 {
+		placeholders := make([]string, len(q.ExcludeActors))
+		for i, actor := range q.ExcludeActors {
+			placeholders[i] = "?"
+			args = append(args, actor)
+		}
+		where = append(where, "actor NOT IN ("+strings.Join(placeholders, ", ")+")")
 	}
 	return where, args
 }

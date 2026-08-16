@@ -969,6 +969,27 @@ would not follow the page into dark mode. They need `!important`: mermaid keys
 its own stylesheet on the diagram's generated id, and an id beats any number of
 classes.
 
+The legend is HTML rather than part of the diagram, drawn from the classes the
+diagram actually used. A legend listing eight states beside a picture using two
+is a second thing to read before the first one makes sense. Its swatches carry
+the same class names the nodes do, so a legend that disagrees with the picture
+is one stylesheet bug rather than two lists drifting apart.
+
+### What a title has to survive
+
+With `htmlLabels` off, a label is SVG text and **mermaid does not decode into
+it**. That makes its documented escapes wrong, and two of them fail silently:
+
+| in a title | what happens | what we do |
+|---|---|---|
+| `#` | `#35;`, mermaid's own entity code for it, renders as the literal `&#35;` | leave it bare; it renders fine |
+| `` ` `` | a pair delimits a markdown string and **the text between is dropped** — ``refuse `x` now`` renders as `refuse now` | remove the backticks, keep the word |
+| `"` | ends the label; `#quot;` renders as `&quot;` and a backslash renders as a backslash | a typographic quote — lossy, and the only character changed |
+| `<` `>` `&` | render as `&lt;` `&gt;` `&amp;` | left alone: the entity form gives identical output, so there is nothing to choose |
+
+All of it was found by rendering in a browser. None of it is what the syntax
+suggests, and the backtick case loses a word without any error to say so.
+
 ### What it does not show
 
 `pr.stacked_on` is drawn, and the issue that asked for this said it could not

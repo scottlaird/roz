@@ -134,6 +134,13 @@
 {{else}}
 <div class="graph"><pre class="mermaid">{{.Mermaid}}</pre></div>
 {{end}}
+{{if not .Legend.Empty}}
+<div class="legend">
+  {{with .Legend.States}}<div class="lg">{{range .}}<span><i class="sw {{.Key}}"></i>{{.Label}}</span>{{end}}</div>{{end}}
+  {{with .Legend.Shapes}}<div class="lg">{{range .}}<span><i class="sh {{.Key}}"></i>{{.Label}}</span>{{end}}</div>{{end}}
+  {{with .Legend.Edges}}<div class="lg">{{range .}}<span><i class="ln {{.Key}}"></i>{{.Label}}</span>{{end}}</div>{{end}}
+</div>
+{{end}}
 <div class="coverage">
   <p><b>what this draws</b></p>
   <ul>{{range .Coverage}}<li>{{.}}</li>{{end}}</ul>

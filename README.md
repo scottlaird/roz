@@ -397,7 +397,7 @@ directory.
 | **setting up** | `roz init` · `roz config show`/`set` · `roz db backup`/`restore` |
 | **planning** | `roz project add`/`show`/`list`/`set`/`snooze`/`wake`/`close`/`supersede` · `roz project block`/`unblock` · `roz project link-issue`/`unlink-issue` |
 | **doing** | `roz action add`/`show`/`list`/`set`/`snooze`/`wake`/`close` · `roz action add-blocker`/`hide-behind`/`link-pr` · `roz action wait-ref`/`wait-issue` |
-| **GitHub** | `roz repo track`/`show`/`list`/`set`/`prefer` · `roz pr track`/`show`/`list`/`set`/`announce` · `roz sync github` · `roz codeowners` · `roz ref list` |
+| **GitHub** | `roz repo track`/`show`/`list`/`set`/`prefer` · `roz pr track`/`show`/`list`/`set`/`announce`/`chain` · `roz sync github` · `roz codeowners` · `roz ref list` |
 | **issues** | `roz issue show`/`list`/`observe` |
 | **views** | `roz view add`/`show`/`list`/`drop` |
 | **reading** | `roz serve` · `roz watch` · `roz note` · `roz exception` · `roz verify` |

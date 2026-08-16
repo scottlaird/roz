@@ -906,15 +906,53 @@ func runProjectClose(cmd *cobra.Command, args []string) error {
 // shape of bug the relation declarations exist to stop. Both formats now read
 // the same list.
 func showRecord(cmd *cobra.Command, ctx context.Context, tx *store.Tx, r store.Record, format string) error {
+	return showRecordWith(cmd, ctx, tx, r, format, nil)
+}
+
+// showRecordWith is showRecord with answers no column holds.
+//
+// Both formats get them, for the reason showRecord is one function: a detail
+// view that says something `-o json` does not is how a reader and an agent end
+// up with different pictures of the same row. Keys are added rather than
+// replaced, so a computed answer can never quietly stand in for a column.
+func showRecordWith(cmd *cobra.Command, ctx context.Context, tx *store.Tx,
+	r store.Record, format string, extra map[string]string) error {
+
 	encoded, err := tx.MarshalRecord(ctx, r)
 	if err != nil {
 		return err
+	}
+	if len(extra) > 0 {
+		if encoded, err = withKeys(encoded, extra); err != nil {
+			return err
+		}
 	}
 	if format == outputJSON {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
 		return err
 	}
 	return writeDetail(cmd.OutOrStdout(), encoded)
+}
+
+// withKeys merges computed values into an encoded record, refusing to shadow
+// a column: a key that is already there is a name collision, and silently
+// winning it would make the record lie about itself.
+func withKeys(encoded []byte, extra map[string]string) ([]byte, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		return nil, err
+	}
+	for key, value := range extra {
+		if _, taken := object[key]; taken {
+			return nil, fmt.Errorf("%q is already a column; a computed value may not shadow it", key)
+		}
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		object[key] = raw
+	}
+	return json.Marshal(object)
 }
 
 // newProjectBlockCmd mirrors `action add-blocker`, because one project

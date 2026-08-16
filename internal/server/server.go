@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/scottlaird/roz/internal/metrics"
+	"github.com/scottlaird/roz/internal/static"
 )
 
 // DefaultAddr is where the server listens unless told otherwise. Loopback
@@ -114,6 +115,11 @@ func (s *Server) Run(ctx context.Context) error {
 	// is less sensitive than the page beside it, so nothing is gained by
 	// making it harder to reach than the thing it describes.
 	mux.Handle("/metrics", metrics.Handler())
+	// Compiled in, and answered with an ETag, so a browser fetches the
+	// stylesheet once and is told 304 for the rest of the process's life —
+	// and for the next one too, since the tag is the content's hash rather
+	// than a start time.
+	mux.Handle(static.Prefix, static.Handler())
 	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
 	// Told to stop before Shutdown starts waiting, so an event stream ends of

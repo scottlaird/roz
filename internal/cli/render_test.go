@@ -43,7 +43,7 @@ func renderedFixture(t *testing.T) string {
 
 	// One window inside the fortnight and one well beyond it.
 	addWindow(t, db, "oncall", "primary oncall", "2026-08-11", "2026-08-17")
-	addWindow(t, db, "pto", "away", "2026-11-20", "2026-11-25")
+	addWindow(t, db, "pto", "november pto", "2026-11-20", "2026-11-25")
 
 	return db
 }
@@ -96,7 +96,12 @@ func TestRender(t *testing.T) {
 
 	// A calendar window beyond the horizon is not an entity anything links to,
 	// so it stays off the page entirely.
-	if strings.Contains(out, "away") {
+	//
+	// Its own label rather than a word that might occur anywhere: the page
+	// carries a stylesheet full of English, and "away" appears in a comment in
+	// it, which made this assertion fail for a reason that had nothing to do
+	// with calendars.
+	if strings.Contains(out, "november pto") {
 		t.Errorf("the page contains a window beyond the horizon:\n%s", out)
 	}
 }

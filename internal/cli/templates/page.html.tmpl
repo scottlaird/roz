@@ -3,162 +3,20 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>roz{{with .Owner}} · {{.}}{{end}}</title>
 <link rel="icon" type="image/png" sizes="32x32" href="{{.Favicon}}">
-{{/* One file, no assets: this is served from loopback and written to disk, and
-     either way a second request is a thing that can fail. Colours come from
-     the verb's rank class, so a class that was never styled is not
-     expressible -- which was a real defect in the page this replaces. */}}
+{{/* One stylesheet, and how it gets here depends on where "here" is.
+     `roz serve` links it, so a browser revalidates once and is told 304;
+     `roz render` inlines it, because that file is opened from disk as often
+     as it is served and a second request is a thing that can fail. One
+     source either way -- internal/static/roz.css -- so the two cannot
+     drift. Colours come from the verb's rank class, so a class that was
+     never styled is not expressible. */}}
+{{if .StylesheetURL -}}
+<link rel="stylesheet" href="{{.StylesheetURL}}">
+{{- else -}}
 <style>
-  :root{
-    --paper:#fbfbfd; --raise:#fff; --sink:#f2f3f7; --rule:#e2e4ec;
-    --ink:#16181d; --mid:#4e5563; --faint:#868d9c;
-    --click:#1f7a4d; --click-bg:#e8f4ee;
-    --decide:#a85b00; --decide-bg:#fdf3e6;
-    --session:#0b6e7f; --session-bg:#e2f1f4;
-    --wait:#55606e; --wait-bg:#eff1f4;
-    --bad:#963232; --bad-bg:#faecec;
-    --link:#33507f;
-    /* One level of project hierarchy. A size rather than a colour, and here
-       because it is the one number worth adjusting by eye. */
-    --indent:1.125rem;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{
-      --paper:#131519; --raise:#1a1d23; --sink:#1f232a; --rule:#2b313a;
-      --ink:#e9ebef; --mid:#a6aebc; --faint:#727a88;
-      --click:#5fcb92; --click-bg:#16281f;
-      --decide:#f0a44a; --decide-bg:#2e2216;
-      --session:#5cc6d8; --session-bg:#12262b;
-      --wait:#a6aeba; --wait-bg:#212529;
-      --bad:#e08b8b; --bad-bg:#2c1919;
-      --link:#a9c0e4;
-    }
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 ui-sans-serif,
-       -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 64px;display:flex;
-        flex-direction:column;gap:26px}
-  header{border-bottom:2px solid var(--ink);padding-bottom:11px}
-  h1{margin:0;font-size:21px;font-weight:640;letter-spacing:-.015em}
-  h1 .owner{color:var(--faint);font-weight:500}
-  .stamp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
-         color:var(--faint);letter-spacing:.02em}
-  h2{margin:0 0 4px;font-size:11px;font-weight:660;letter-spacing:.1em;
-     text-transform:uppercase;color:var(--faint)}
-  section{display:flex;flex-direction:column;gap:11px}
-  a{color:var(--link);text-decoration:none;border-bottom:1px dotted currentColor}
-  a:hover{border-bottom-style:solid}
-  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em}
-
-  .cal{display:flex;flex-wrap:wrap;gap:8px}
-  .cal div{background:var(--sink);border:1px solid var(--rule);border-radius:6px;
-           padding:7px 11px;font-size:13px;color:var(--mid)}
-  .cal div.now{background:var(--decide-bg);border-color:var(--decide);color:var(--decide);font-weight:600}
-  .cal b{color:var(--ink);font-weight:620}
-  .cal.now b{color:inherit}
-
-  ol.queue{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;
-           counter-reset:q}
-  ol.queue li{counter-increment:q;background:var(--raise);border:1px solid var(--rule);
-              border-left-width:3px;border-radius:0 7px 7px 0;padding:10px 14px 10px 44px;
-              position:relative}
-  ol.queue li::before{content:counter(q);position:absolute;left:14px;top:10px;
-              font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:640;
-              color:var(--faint);font-variant-numeric:tabular-nums}
-  li.click{border-left-color:var(--click);background:var(--click-bg)}
-  li.click::before,li.click .id{color:var(--click)}
-  li.decide{border-left-color:var(--decide);background:var(--decide-bg)}
-  li.decide::before,li.decide .id{color:var(--decide)}
-  li.session{border-left-color:var(--session)}
-  li.session::before,li.session .id{color:var(--session)}
-  li.wait{border-left-color:var(--wait);background:var(--wait-bg)}
-  li.wait::before,li.wait .id{color:var(--wait)}
-  li.late{border-left-color:var(--bad)}
-  span.overdue{color:var(--bad);font-size:.85em;margin-left:.5em;white-space:nowrap}
-  li.expired{border-left-color:var(--bad);background:var(--bad-bg)}
-  li.expired::before,li.expired .id{color:var(--bad)}
-
-  .do{font-weight:600;letter-spacing:-.006em}
-  .id{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:660;margin-right:7px}
-  .verb{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;text-transform:uppercase;
-        letter-spacing:.05em;color:var(--faint);margin-left:7px}
-  .age{float:right;font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;
-       color:var(--faint);margin-left:12px}
-  .why{color:var(--mid);font-size:13.5px;margin-top:2px}
-  {{/* Markdown arrives as blocks rather than as a run of text, and both the
-       places that render it -- an action's why and a project's summary --
-       want the same treatment, so these rules hang off .prose rather than off
-       either one. The first block must not push the line away from what it
-       belongs to, which is why the outer margins are stripped and put back
-       only between siblings. */}}
-  .prose>:first-child{margin-top:0}
-  .prose>:last-child{margin-bottom:0}
-  .prose p{margin:.45em 0}
-  .prose ul,.prose ol{margin:.45em 0;padding-left:1.5em}
-  .prose li{margin:.1em 0}
-  .prose code{background:var(--sink);border:1px solid var(--rule);border-radius:3px;padding:0 3px}
-  .prose pre{background:var(--sink);border:1px solid var(--rule);border-radius:5px;
-             padding:8px 10px;margin:.45em 0;overflow-x:auto}
-  .prose pre code{background:none;border:0;padding:0}
-  .prose blockquote{margin:.45em 0;padding-left:10px;border-left:2px solid var(--rule)}
-  {{/* baseline, not the flex default: a ref row mixes bare .mono spans (the
-       project) with wrapper spans that inherit .refs' own 12.5px and hold an
-       11px link (a pull request, an issue). Stretched items each start their
-       text at the top of their own line box, so the two sat 2px apart. */}}
-  .refs{margin-top:4px;font-size:12.5px;color:var(--mid);display:flex;flex-wrap:wrap;
-        gap:4px 14px;align-items:baseline}
-  .refs .bad{color:var(--bad);font-weight:600}
-  .refs .state{color:var(--faint)}
-
-  .tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:7px;background:var(--raise)}
-  table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
-  thead th{background:var(--sink);text-align:left;font-size:10px;letter-spacing:.08em;
-           text-transform:uppercase;color:var(--faint);font-weight:660;padding:7px 12px;
-           border-bottom:1px solid var(--rule);white-space:nowrap}
-  td{padding:7px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
-  tbody tr:last-child td{border-bottom:none}
-  /* A hierarchy is display only: the indent says what a project is part of,
-     and nothing about it blocks or closes anything. */
-  /* Added to the cell's own padding rather than replacing it, so every level
-     steps by the same amount. Written flat, the first level indented half as
-     far as the ones below it: the 12px a cell already has was being swallowed
-     by the override, and only the first level notices. */
-  tr.depth1 td:nth-child(2){padding-left:calc(12px + var(--indent))}
-  tr.depth2 td:nth-child(2){padding-left:calc(12px + 2*var(--indent))}
-  tr.depth3 td:nth-child(2){padding-left:calc(12px + 3*var(--indent))}
-  /* Closed, and shown only to hold open children up. */
-  tr.context td{opacity:.55}
-  tr.expired td{background:var(--bad-bg)}
-  {{/* A project and its summary are one entity, so the rule between them goes
-       and the pair is separated from the next project instead. */}}
-  tr:has(+ tr.detail) td{border-bottom:none}
-  tr.detail td{padding-top:0;color:var(--mid);font-size:13px}
-  td.n{font-family:ui-monospace,Menlo,monospace;font-size:12px;white-space:nowrap;width:1%}
-  td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mid);width:1%}
-  {{/* A tracker key and its state are one thing to read, so they do not
-       break apart: without this a long status wraps mid-parenthesis, and
-       "(Waiting for Security" over "Review)" is not two pieces of
-       information.
-
-       This is also what widens the column. A cell that can break anywhere
-       asks the table for almost nothing, so the slack went to title and
-       issues was left narrow -- the imbalance read as effort being greedy,
-       and effort is already at its floor: a column cannot be narrower than
-       its own heading, and "effort" is what sets that. Keeping the pair
-       whole is what makes the column ask for the width it needs, without a
-       number here that would go stale. Several issues in a cell still wrap,
-       between them, which is where a break belongs. */}}
-  .issue{white-space:nowrap}
-  .note{
-    background:var(--raise); border:1px solid var(--rule); border-radius:8px;
-    padding:.75rem 1rem; margin:1rem 0;
-  }
-  .note .prose>*:first-child{margin-top:0}
-  .note .prose>*:last-child{margin-bottom:0}
-  .noteset{color:var(--faint); font-size:.75rem; margin:.5rem 0 0}
-  .empty{color:var(--faint);font-size:13.5px}
-  footer{border-top:1px solid var(--rule);padding-top:12px;color:var(--faint);font-size:12px}
+{{.Stylesheet}}
 </style>
+{{- end}}
 
 <div class="wrap">
   <header>

@@ -11,6 +11,7 @@ import (
 
 	"github.com/scottlaird/roz/internal/filter"
 	"github.com/scottlaird/roz/internal/markdown"
+	"github.com/scottlaird/roz/internal/static"
 	"github.com/scottlaird/roz/internal/store"
 )
 
@@ -180,6 +181,14 @@ type pageContent struct {
 	// Live adds the script that reloads when the server says something moved.
 	// A page written to a file has no server to listen to.
 	Live bool
+	// Stylesheet is the CSS itself, for a page that has to stand alone —
+	// `roz render` writes a file that is opened from disk, where a linked
+	// stylesheet has nowhere to be fetched from.
+	Stylesheet template.CSS
+	// StylesheetURL is where to link it instead, which `roz serve` sets. One
+	// of the two is filled in and never both: the template branches on this
+	// one being set.
+	StylesheetURL string
 	// Favicon is the icon inline, as a data URI. See favicon in render.go for
 	// why it is not a file the page asks for, and why it is a template.URL.
 	Favicon template.URL
@@ -379,6 +388,18 @@ func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, c
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Live:        live,
 		Favicon:     favicon,
+	}
+	// A page that is being served can link its stylesheet and be told 304 on
+	// every load after the first; one being written to a file carries it.
+	// Live is the same distinction the reload script is drawn on.
+	if live {
+		content.StylesheetURL = static.URL(stylesheet)
+	} else {
+		css, err := static.Read(stylesheet)
+		if err != nil {
+			return nil, err
+		}
+		content.Stylesheet = template.CSS(css)
 	}
 
 	for _, w := range windows {

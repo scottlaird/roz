@@ -44,6 +44,9 @@ var favicon = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeT
 // a title full of angle brackets and the page is this.
 var page = template.Must(template.ParseFS(templates, "templates/page.html.tmpl"))
 
+// stylesheet is the one static file the page needs.
+const stylesheet = "roz.css"
+
 // horizon is how far ahead the calendar block looks. Two weeks is what a
 // weekly review can act on; beyond that the answer is "ask again later".
 const horizon = 14 * 24 * time.Hour

@@ -274,3 +274,53 @@ func actionWithVerb(t *testing.T, db, verb string) string {
 	id, _ := actions[0]["id"].(string)
 	return id
 }
+
+// TestChasesAreCounted is #85's second half: the wait clock reads the
+// announcement, so a chase grants more patience — and patience granted for the
+// fourth time is not the same situation as the first telling. announced_at is
+// overwritten by each one, so nothing else records how many there have been.
+func TestChasesAreCounted(t *testing.T) {
+	db, key := announceable(t)
+
+	if got := showPRJSON(t, db, key)["announce_count"]; got != float64(0) {
+		t.Errorf("announce_count = %#v before announcing, want 0", got)
+	}
+
+	for n, at := range []string{"2026-08-01", "2026-08-05", "2026-08-09"} {
+		out, err := runCLI(t, "pr", "announce", "--db", db, key,
+			"--channel", "#reviews", "--at", at)
+		if err != nil {
+			t.Fatalf("pr announce returned error: %v", err)
+		}
+		if want := "announce_count"; !strings.Contains(out, want) {
+			t.Errorf("announcing does not report %q:\n%s", want, out)
+		}
+		if got := showPRJSON(t, db, key)["announce_count"]; got != float64(n+1) {
+			t.Errorf("announce_count = %#v after %d announcements, want %d", got, n+1, n+1)
+		}
+	}
+}
+
+// TestRestatingOneAnnouncementIsNotAChase: re-running the command with the
+// same instant describes the announcement that already happened, and
+// correcting the channel on it is not a second telling. Without --at every
+// run is a different instant, which is the ordinary case.
+func TestRestatingOneAnnouncementIsNotAChase(t *testing.T) {
+	db, key := announceable(t)
+
+	if _, err := runCLI(t, "pr", "announce", "--db", db, key,
+		"--channel", "#reviews", "--at", "2026-08-01"); err != nil {
+		t.Fatalf("pr announce returned error: %v", err)
+	}
+	out, err := runCLI(t, "pr", "announce", "--db", db, key,
+		"--channel", "#eng", "--at", "2026-08-01")
+	if err != nil {
+		t.Fatalf("second announce returned error: %v", err)
+	}
+	if strings.Contains(out, "announce_count") {
+		t.Errorf("correcting the channel counted as a chase:\n%s", out)
+	}
+	if got := showPRJSON(t, db, key)["announce_count"]; got != float64(1) {
+		t.Errorf("announce_count = %#v, want 1", got)
+	}
+}

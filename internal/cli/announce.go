@@ -33,6 +33,10 @@ func newPRAnnounceCmd() *cobra.Command {
 			"Recording the announcement closes any send_for_review step waiting on\n" +
 			"it, and whatever that frees, straight away rather than at the next\n" +
 			"poll. What closed is printed.\n\n" +
+			"It also restarts the wait clock: an action waiting on this pull\n" +
+			"request gets its full allowance again from the announcement, because\n" +
+			"chasing a stalled review is a decision to accept more waiting. The\n" +
+			"chases are counted, so patience granted four times reads as such.\n\n" +
 			"Without --channel, the channel is looked up from the owner this pull\n" +
 			"request is actually going to — see `roz owner` — and the command says\n" +
 			"which one it used and why. Naming a channel explicitly still works:\n" +
@@ -88,6 +92,21 @@ func runPRAnnounce(cmd *cobra.Command, args []string) error {
 	// reachable only on purpose.
 	err = updatePR(ctx, cmd, st, store.ActorSlackManual, args[0],
 		func(p *store.PR) error {
+			// Counted, not just dated. announced_at is overwritten here, so
+			// without this a chase is indistinguishable from the first
+			// telling — and since the wait clock reads the announcement, a
+			// chase is now a grant of more patience. How many have been
+			// granted is the thing worth seeing, and the increment puts it in
+			// the log as well as the column.
+			//
+			// Only when the instant moves, which is what keeps re-running the
+			// command an idempotent thing to do: the same announcement stated
+			// twice is one announcement, and correcting the channel on one is
+			// not a second telling. Two announcements are two timestamps —
+			// without --at they always are.
+			if !p.AnnouncedAt.Valid || p.AnnouncedAt.String != at {
+				p.AnnounceCount++
+			}
 			p.AnnouncedAt = sql.NullString{String: at, Valid: true}
 			p.AnnouncedChannel = sql.NullString{String: channel, Valid: true}
 			return nil

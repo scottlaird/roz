@@ -807,3 +807,151 @@ func resetWaitingSince(t *testing.T, st *Store, a *Action, since string) {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 }
+
+// lateNow winds the clock and asks what is late, as distinct from what is
+// newly late: OverdueWaits reports a wait once, so it cannot answer whether a
+// wait already reported is still overdue.
+func lateNow(t *testing.T, st *Store, now string) map[string]int {
+	t.Helper()
+	st.now = func() time.Time { return at(t, now) }
+	late, err := st.LateActions(context.Background())
+	if err != nil {
+		t.Fatalf("LateActions() returned error: %v", err)
+	}
+	return late
+}
+
+// announceSubject gives a waiting action a subject pull request announced at
+// a chosen moment, which is what `pr announce` records.
+func announceSubject(t *testing.T, st *Store, a *Action, repo string, number int64, at string) *PR {
+	t.Helper()
+	ctx := context.Background()
+
+	trackRepo(t, st, repo)
+	pr := trackPR(t, st, repo, number)
+
+	tx, err := st.Begin(ctx, ActorSlackManual)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	if err := tx.LinkPR(ctx, a, pr.ID, RoleSubject); err != nil {
+		t.Fatalf("LinkPR() returned error: %v", err)
+	}
+	before, err := tx.LoadPR(ctx, pr.ID)
+	if err != nil {
+		t.Fatalf("LoadPR() returned error: %v", err)
+	}
+	after := before.Clone()
+	after.AnnouncedAt = sql.NullString{String: at, Valid: true}
+	after.AnnounceCount = before.AnnounceCount + 1
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+	return after
+}
+
+// TestAnnouncingStartsTheAllowanceAgain is #85: waiting_since dates the first
+// review request and never moves, so chasing a stalled review in Slack used to
+// buy no patience at all — the action went overdue again the moment it was
+// pinged.
+func TestAnnouncingStartsTheAllowanceAgain(t *testing.T) {
+	st := newStore(t)
+	// wait_review allows three days.
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	if found := overdueNow(t, st, "2026-08-05T00:00:00.000Z"); len(found) != 1 {
+		t.Fatalf("overdue = %v, want the wait after four days", found)
+	}
+
+	// Chased on the fifth, which is three more days of patience.
+	announceSubject(t, st, a, "scottlaird/roz", 1, "2026-08-05T00:00:00.000Z")
+
+	// LateActions rather than a second pass, which would report nothing here
+	// whatever the clock said: the wait was reported on the fifth, and the
+	// idempotence clause suppresses it until the deadline moves past that.
+	// This asks the question the suppression hides — is it late at all.
+	if late := lateNow(t, st, "2026-08-07T00:00:00.000Z"); len(late) != 0 {
+		t.Errorf("late two days after the chase: %v", late)
+	}
+	found := overdueNow(t, st, "2026-08-09T00:00:00.000Z")
+	if len(found) != 1 || found[0].Action.ID != a.ID {
+		t.Fatalf("overdue = %v, want [%s] four days after the chase", found, a.ID)
+	}
+	// Measured from the chase, not from the original request: eight days
+	// after waiting_since, four after the announcement.
+	if found[0].Waiting != 4 {
+		t.Errorf("waiting = %d days, want 4, measured from the announcement", found[0].Waiting)
+	}
+}
+
+// TestAnAnnouncementOnlyEverDefersADeadline: the announcement joins the same
+// max() as the other clocks, so one that predates the wait changes nothing.
+// An old announcement pulling a deadline forward would make a pull request
+// overdue for having been mentioned.
+func TestAnAnnouncementOnlyEverDefersADeadline(t *testing.T) {
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+	announceSubject(t, st, a, "scottlaird/roz", 1, "2026-07-20T00:00:00.000Z")
+
+	if found := overdueNow(t, st, "2026-08-03T00:00:00.000Z"); len(found) != 0 {
+		t.Errorf("overdue at two days: %v", found)
+	}
+	found := overdueNow(t, st, "2026-08-05T00:00:00.000Z")
+	if len(found) != 1 || found[0].Waiting != 4 {
+		t.Fatalf("overdue = %v, want one wait of 4 days, unchanged by the old announcement", found)
+	}
+}
+
+// TestAChaseIsReportedAgainAfterTheNextChase: the wait is reported once, and
+// a deadline that moves out makes the next one a different wait. Without this
+// the second stall would be silent, since the log already holds an exception.
+func TestAChaseIsReportedAgainAfterTheNextChase(t *testing.T) {
+	st := newStore(t)
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	if found := overdueNow(t, st, "2026-08-05T00:00:00.000Z"); len(found) != 1 {
+		t.Fatalf("overdue = %v, want the first report", found)
+	}
+	if found := overdueNow(t, st, "2026-08-06T00:00:00.000Z"); len(found) != 0 {
+		t.Fatalf("overdue = %v, want silence: the wait was already reported", found)
+	}
+
+	announceSubject(t, st, a, "scottlaird/roz", 1, "2026-08-06T00:00:00.000Z")
+
+	if found := overdueNow(t, st, "2026-08-10T00:00:00.000Z"); len(found) != 1 {
+		t.Errorf("overdue = %v, want the stall after the chase reported afresh", found)
+	}
+}
+
+// TestAWaitWithNoAnnouncementStillTimesOut is the caveat on #85: a repository
+// whose pipeline never announces has NULL here, and waiting with nothing
+// announced is perfectly legitimate. The clock falls back rather than never
+// firing.
+func TestAWaitWithNoAnnouncementStillTimesOut(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	a := waitingAction(t, st, "wait_review", "2026-08-01T00:00:00.000Z")
+
+	trackRepo(t, st, "scottlaird/roz")
+	pr := trackPR(t, st, "scottlaird/roz", 1)
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	if err := tx.LinkPR(ctx, a, pr.ID, RoleSubject); err != nil {
+		t.Fatalf("LinkPR() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	found := overdueNow(t, st, "2026-08-05T00:00:00.000Z")
+	if len(found) != 1 || found[0].Action.ID != a.ID {
+		t.Fatalf("overdue = %v, want [%s]: no announcement is not infinite patience", found, a.ID)
+	}
+}

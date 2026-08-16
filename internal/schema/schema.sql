@@ -456,6 +456,13 @@ CREATE TABLE pr (
   -- this there was nothing to match one against the other -- which is why
   -- stacked_on was never set. See 0030.
   head_ref           TEXT,
+  -- how many times it has been announced. announced_at is overwritten by each
+  -- one, so it says when they were last told and nothing said how often they
+  -- have had to be. That matters because the wait clock reads the
+  -- announcement: a chase buys real patience, and a third chase is not the
+  -- same situation as a first. Observed, like the two columns it counts.
+  -- Backfilled to 1 where an announcement exists. See 0039.
+  announce_count     INTEGER NOT NULL DEFAULT 0 CHECK (announce_count >= 0),
   UNIQUE (repo, number),
   CHECK (id = repo || '#' || number)
 ) STRICT;

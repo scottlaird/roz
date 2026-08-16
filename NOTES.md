@@ -2201,13 +2201,40 @@ the predicate it names are checked against the build when the database opens,
 so a verb naming a predicate this binary lacks is refused at startup. Editing
 those from the CLI would turn that check into a failure at closing time.
 
-The clock is `waiting_since` — when reviewers could first have seen it, which
-sync fills from the pull request's first review request — falling back to when
-the action was created where nothing has observed a wait beginning.
+The clock starts at the latest of four moments, so that it can only ever be
+pushed outwards: when the action was created, when it last became actionable,
+`waiting_since` — when reviewers could first have seen the pull request, which
+sync fills from its first review request — and `announced_at`, when they were
+last actually told.
+
+The last of those is the one worth explaining. `waiting_since` dates the first
+review request and never moves again, so chasing a stalled review in Slack
+bought no patience at all: the action stayed measured from the original request
+and went overdue again the moment it was pinged. In practice the ping is the
+thing that gets attention. Announcing is an explicit decision to accept more
+waiting, so it starts the allowance afresh:
+
+```console
+$ roz pr announce scottlaird/roz#39 --channel '#reviews'
+scottlaird/roz#39 announced_at: "2026-08-09T11:02:14.881Z" → "2026-08-14T09:20:03.114Z"
+scottlaird/roz#39 announce_count: "1" → "2"
+```
+
+It is not free. `announce_count` records how many tellings there have been,
+because `announced_at` is overwritten by each one and patience granted for the
+fourth time is not the same situation as a first telling — sometimes a ping is
+the last thing before escalating, and nothing should read that as fresh calm.
+Re-running the command with the same `--at` corrects one announcement rather
+than counting a second.
+
+A repository whose pipeline never announces has no `announced_at` at all, and
+waiting with nothing announced is perfectly legitimate, so the clock falls back
+rather than never firing.
 
 A wait is reported once. The log is the record of that, so nothing else has to
-remember; and if the deadline moves out because a fresh review was requested,
-it is reported again, because it is a different wait.
+remember; and if the deadline moves out — the allowance was raised, a fresh
+review was requested, or the pull request was announced again — it is reported
+again, because it is a different wait.
 
 ### A standing condition is reported once a day
 

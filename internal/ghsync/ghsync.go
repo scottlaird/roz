@@ -657,6 +657,19 @@ func applyOne(ctx context.Context, st *store.Store, observed github.PullRequest)
 		return nil, false, err
 	}
 
+	// The issues this pull request closes, as rows rather than a column, for
+	// the same reason the checks are. Reconciled rather than accumulated: a
+	// closing keyword taken out of a body is GitHub saying the pull request
+	// no longer closes that issue.
+	//
+	// An empty list is a fact here, unlike an empty column in merge() — it is
+	// GitHub reporting that the body names no issues, which is exactly the
+	// case reconciling has to act on. Only sync's own rows are touched; a
+	// person's link to the same issue survives.
+	if err := tx.ReconcileClosingIssues(ctx, observed.Key, observed.ClosingIssues); err != nil {
+		return nil, false, err
+	}
+
 	// When reviewers could first have seen it is a fact about the pull
 	// request, and the actions waiting on it inherit it. This is the only
 	// thing that ever writes action.waiting_since, which the sketch describes

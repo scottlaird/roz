@@ -22,6 +22,8 @@ func newPRCmd() *cobra.Command {
 		newPRAnnounceCmd(),
 		newPRShowCmd(),
 		newPRListCmd(),
+		newPRLinkIssueCmd(),
+		newPRUnlinkIssueCmd(),
 	)
 	return cmd
 }

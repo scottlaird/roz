@@ -17,6 +17,12 @@ import (
 // with more than twenty requested reviewers or unresolved threads is beyond
 // what this is for, and capping keeps one batch to one request.
 //
+// closingIssuesReferences is the connection behind auto-close: the issues
+// GitHub will close when this merges, having already parsed the keywords out
+// of the body. Observed rather than inferred, and correct about issues in
+// other repositories, which the keyword syntax allows and a body scan would
+// get wrong.
+//
 // comments and reviews take a window rather than a single node because the
 // newest of each may not be the one that counts: an author replying to their
 // own pull request, or a bot doing so repeatedly, has to be skipped to find
@@ -37,6 +43,9 @@ const prFields = `
     comments(last: 20) { nodes { createdAt author { login __typename } } }
     reviews(last: 20) { nodes { createdAt state author { login __typename } } }
     reviewThreads(first: 50) { nodes { isResolved isOutdated } }
+    closingIssuesReferences(first: 20) {
+      nodes { number repository { nameWithOwner } }
+    }
     commits(last: 1) {
       nodes { commit { statusCheckRollup {
         state

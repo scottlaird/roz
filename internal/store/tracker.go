@@ -351,10 +351,16 @@ func (t *Tx) ProjectsForIssue(ctx context.Context, id string) ([]string, error) 
 			"WHERE j.issue_id = ? ORDER BY p.n", id)
 }
 
-func (t *Tx) issueStrings(ctx context.Context, query string, arg string) ([]string, error) {
-	rows, err := t.tx.QueryContext(ctx, query, arg)
+func (t *Tx) issueStrings(ctx context.Context, query string, args ...any) ([]string, error) {
+	// The first argument is the subject in every caller, and is what an error
+	// should name.
+	var subject any
+	if len(args) > 0 {
+		subject = args[0]
+	}
+	rows, err := t.tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("reading issue links for %s: %w", arg, err)
+		return nil, fmt.Errorf("reading issue links for %s: %w", subject, err)
 	}
 	defer rows.Close()
 
@@ -362,7 +368,7 @@ func (t *Tx) issueStrings(ctx context.Context, query string, arg string) ([]stri
 	for rows.Next() {
 		var s string
 		if err := rows.Scan(&s); err != nil {
-			return nil, fmt.Errorf("reading issue links for %s: %w", arg, err)
+			return nil, fmt.Errorf("reading issue links for %s: %w", subject, err)
 		}
 		out = append(out, s)
 	}

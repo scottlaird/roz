@@ -1,6 +1,11 @@
 package store
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // A Relation is one thing an entity is connected to that is not a column of
 // its own table.
@@ -22,7 +27,116 @@ type Relation struct {
 	// Load reads the far end for one record. Returning nil means there is
 	// nothing there, and the relation is left out entirely rather than
 	// rendered empty.
+	//
+	// Nil where the relation exists only to be traversed: a filter can follow
+	// a project to its actions, and `show` does not print them, because
+	// `action list --project` already does and printing them twice was the
+	// thing this file set out to stop.
 	Load func(ctx context.Context, tx *Tx, id string) (any, error)
+
+	// Join describes how to reach the far end, for a caller that has to build
+	// a query rather than read one record.
+	//
+	// The original comment here said the join was deliberately not described,
+	// because the queries were hand-written and generating them was never the
+	// point. That held while the only consumer was `show`. A filter that says
+	// "projects with a waiting action" cannot be hand-written, because the
+	// predicate inside it is somebody's typing — so the connection has to be
+	// data, and this is that data. Load stays: what `show` prints is still a
+	// query somebody wrote and tested.
+	Join *Join
+}
+
+// JoinKind says whether the far end is one record or many.
+type JoinKind int
+
+const (
+	// ToMany reads as a list, and is what an existential quantifier walks.
+	ToMany JoinKind = iota
+	// ToOne reads as a record or nothing — a project's parent.
+	ToOne
+)
+
+// Join is the shape of a connection, in enough detail to generate a
+// correlated subquery over it.
+//
+// Deliberately not a general join language. It says which table, which column
+// on each side, and optionally the junction between them, which covers every
+// connection roz has. Anything needing more than that is a query somebody
+// should write by hand, and Load is where it goes.
+type Join struct {
+	Kind JoinKind
+	// Table is the far table.
+	Table string
+	// Near is the column on this side; almost always "id".
+	Near string
+	// Far is the column on the far side that Near is matched against — or,
+	// where there is a junction, the far column the junction points at.
+	Far string
+	// Via is the junction table for a many-to-many, nil for a direct link.
+	Via *Junction
+	// Blank returns an empty record of the far entity, so a caller can read
+	// its columns without knowing its type.
+	Blank func() any
+}
+
+// Junction is the table in the middle of a many-to-many.
+type Junction struct {
+	Table string
+	// Near is its column pointing back at this entity.
+	Near string
+	// Far is its column pointing at the far entity.
+	Far string
+	// Only narrows the junction to rows matching fixed values — action_pr
+	// carries both the subject and the context pull requests, and they are
+	// different relations over one table.
+	Only map[string]any
+}
+
+// OnlyClauses renders a junction's fixed conditions, in a stable order so the
+// SQL a filter produces does not depend on a map walk.
+func (j *Junction) OnlyClauses(alias string) ([]string, []any) {
+	if j == nil || len(j.Only) == 0 {
+		return nil, nil
+	}
+	columns := make([]string, 0, len(j.Only))
+	for column := range j.Only {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+
+	clauses := make([]string, 0, len(columns))
+	args := make([]any, 0, len(columns))
+	for _, column := range columns {
+		clauses = append(clauses, fmt.Sprintf("%s.%s = ?", alias, column))
+		args = append(args, j.Only[column])
+	}
+	return clauses, args
+}
+
+// Joins reports the traversable connections of a record, keyed by name.
+func Joins(r any) map[string]Join {
+	related, ok := r.(Related)
+	if !ok {
+		return nil
+	}
+	joins := map[string]Join{}
+	for _, rel := range related.relations() {
+		if rel.Join != nil {
+			joins[rel.Name] = *rel.Join
+		}
+	}
+	return joins
+}
+
+// TableOf names the table a record lives in, which is what a correlated
+// subquery has to qualify its outer references with.
+func TableOf(r any) (string, error) {
+	record, ok := r.(Record)
+	if !ok {
+		return "", fmt.Errorf("%T is not a record", r)
+	}
+	return record.table(), nil
 }
 
 // Related is a Record connected to something beyond its own columns.
@@ -52,6 +166,10 @@ func (t *Tx) Relations(ctx context.Context, r Record) (map[string]any, error) {
 
 	var loaded map[string]any
 	for _, rel := range related.relations() {
+		if rel.Load == nil {
+			// Traversable but not printable: see Relation.Load.
+			continue
+		}
 		value, err := rel.Load(ctx, t, r.subjectID())
 		if err != nil {
 			return nil, err
@@ -88,10 +206,46 @@ func (t *Tx) MarshalRecord(ctx context.Context, r Record) ([]byte, error) {
 // closing this frees, and the ranking counts. It was visible nowhere.
 func (a *Action) relations() []Relation {
 	return []Relation{
-		{Name: "blocked_by", Load: blockedByIDs},
-		{Name: "blocking", Load: blockingIDs},
-		{Name: "subject_pr", Load: subjectPRID},
-		{Name: "context_prs", Load: contextPRIDs},
+		{
+			Name: "blocked_by", Load: blockedByIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "action", Near: "id", Far: "id",
+				Via:   &Junction{Table: "action_blocks", Near: "blocked_id", Far: "blocker_id"},
+				Blank: func() any { return &Action{} },
+			},
+		},
+		{
+			Name: "blocking", Load: blockingIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "action", Near: "id", Far: "id",
+				Via:   &Junction{Table: "action_blocks", Near: "blocker_id", Far: "blocked_id"},
+				Blank: func() any { return &Action{} },
+			},
+		},
+		{
+			// The pull request this action is about, which is the traversal
+			// the queue side wants: "waits whose pull request has merged".
+			Name: "subject_pr", Load: subjectPRID,
+			Join: &Join{
+				Kind: ToOne, Table: "pr", Near: "id", Far: "id",
+				Via: &Junction{
+					Table: "action_pr", Near: "action_id", Far: "pr_id",
+					Only: map[string]any{"role": RoleSubject},
+				},
+				Blank: func() any { return &PR{} },
+			},
+		},
+		{
+			Name: "context_prs", Load: contextPRIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "pr", Near: "id", Far: "id",
+				Via: &Junction{
+					Table: "action_pr", Near: "action_id", Far: "pr_id",
+					Only: map[string]any{"role": RoleContext},
+				},
+				Blank: func() any { return &PR{} },
+			},
+		},
 		{Name: "held_by", Load: heldByIDs},
 	}
 }
@@ -105,7 +259,38 @@ func (p *Project) relations() []Relation {
 	return []Relation{
 		{Name: "blocked_by", Load: projectBlockedByIDs},
 		{Name: "blocking", Load: projectBlockingIDs},
-		{Name: "issues", Load: issueIDs},
+		{
+			Name: "issues", Load: issueIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "tracker_issue", Near: "id", Far: "id",
+				Via:   &Junction{Table: "project_tracker_issue", Near: "project_id", Far: "issue_id"},
+				Blank: func() any { return &TrackerIssue{} },
+			},
+		},
+		// The three below are traversal-only: they print nothing, for the
+		// reason the comment above gives, and exist so a filter can follow
+		// them.
+		{
+			Name: "actions",
+			Join: &Join{
+				Kind: ToMany, Table: "action", Near: "id", Far: "project_id",
+				Blank: func() any { return &Action{} },
+			},
+		},
+		{
+			Name: "parent",
+			Join: &Join{
+				Kind: ToOne, Table: "project", Near: "parent_id", Far: "id",
+				Blank: func() any { return &Project{} },
+			},
+		},
+		{
+			Name: "children",
+			Join: &Join{
+				Kind: ToMany, Table: "project", Near: "id", Far: "parent_id",
+				Blank: func() any { return &Project{} },
+			},
+		},
 	}
 }
 
@@ -115,7 +300,14 @@ func (p *Project) relations() []Relation {
 // gave no clue which piece of work it belonged to.
 func (r *PR) relations() []Relation {
 	return []Relation{
-		{Name: "actions", Load: actionsAboutPR},
+		{
+			Name: "actions", Load: actionsAboutPR,
+			Join: &Join{
+				Kind: ToMany, Table: "action", Near: "id", Far: "id",
+				Via:   &Junction{Table: "action_pr", Near: "pr_id", Far: "action_id"},
+				Blank: func() any { return &Action{} },
+			},
+		},
 		{Name: "checks", Load: checkStates},
 	}
 }
@@ -251,4 +443,61 @@ func actionIDs(actions []*Action) []string {
 		ids[i] = a.ID
 	}
 	return ids
+}
+
+// ReadRelated reads the far side of a join for one record, as column maps.
+//
+// One query, generated from the same description the filter pushes down, so
+// the two paths cannot drift: whatever `EXISTS` walks is what this returns.
+//
+// Column maps rather than typed records, because the caller is a filter that
+// only wants to compare values, and returning `any` per entity would mean a
+// type switch for every entity roz has.
+func ReadRelated(ctx context.Context, tx *Tx, join Join, id string) ([]map[string]any, error) {
+	columns, err := ColumnTypes(join.Blank())
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(columns))
+	for i, c := range columns {
+		names[i] = "far." + c.Name
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM %s far", strings.Join(names, ", "), join.Table)
+	args := []any{id}
+	if join.Via != nil {
+		query += fmt.Sprintf(" JOIN %s j ON j.%s = far.%s WHERE j.%s = ?",
+			join.Via.Table, join.Via.Far, join.Far, join.Via.Near)
+		if clauses, only := join.Via.OnlyClauses("j"); len(clauses) > 0 {
+			query += " AND " + strings.Join(clauses, " AND ")
+			args = append(args, only...)
+		}
+	} else {
+		query += fmt.Sprintf(" WHERE far.%s = ?", join.Far)
+	}
+
+	rows, err := tx.tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading the far side of a join on %s: %w", join.Table, err)
+	}
+	defer rows.Close()
+
+	var found []map[string]any
+	for rows.Next() {
+		holders := make([]any, len(columns))
+		for i := range holders {
+			holders[i] = new(any)
+		}
+		if err := rows.Scan(holders...); err != nil {
+			return nil, fmt.Errorf("reading the far side of a join on %s: %w", join.Table, err)
+		}
+		row := make(map[string]any, len(columns))
+		for i, c := range columns {
+			if value := *(holders[i].(*any)); value != nil {
+				row[c.Name] = value
+			}
+		}
+		found = append(found, row)
+	}
+	return found, rows.Err()
 }

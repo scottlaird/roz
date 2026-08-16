@@ -376,11 +376,24 @@ func runPRList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	filter, err := prFilterFrom(cmd)
+	query, err := prFilterFrom(cmd)
 	if err != nil {
 		return err
 	}
-	prs, err := st.ListPRs(ctx, filter)
+	// The one listing that pushes a CEL filter into its query. Compiled here
+	// so the WHERE fragment reaches the SELECT; whatever SQLite could not take
+	// is compiled again by runListing and run over the rows, which agrees
+	// because the split is a function of the expression alone.
+	cel, err := filterFrom(cmd, &store.PR{})
+	if err != nil {
+		return err
+	}
+	query.Where, query.WhereArgs = cel.SQL()
+	// Whatever the query could not take runs in Go, and a traversal there
+	// needs somewhere to read the far side from.
+	cel.WithLoader(ctx, storeLoader{st: st})
+
+	prs, err := st.ListPRs(ctx, query)
 	if err != nil {
 		return err
 	}

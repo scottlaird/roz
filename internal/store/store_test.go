@@ -315,3 +315,34 @@ func TestInitReportsAMigration(t *testing.T) {
 		t.Errorf("Init() to = %d, want %d", got, want)
 	}
 }
+
+// TestLikeIsCaseSensitive guards the pragma the filter language depends on.
+//
+// SQLite's LIKE is case-insensitive for ASCII by default, which made
+// `title LIKE 'fix%'` match "Fix the thing" — so a filter's startsWith could
+// not be pushed into a query without changing its meaning. The store sets
+// case_sensitive_like on every connection, and if that ever comes off, this is
+// what says so: without it, filters go quietly case-insensitive in SQL and
+// stay case-sensitive in Go, which is the divergence the whole allow-list
+// exists to prevent.
+//
+// Asserted over several connections rather than one, because that is the
+// failure mode a plain PRAGMA would have had: database/sql pools them, and
+// half a pool answering LIKE differently is worse than either answer.
+func TestLikeIsCaseSensitive(t *testing.T) {
+	st := newStore(t)
+
+	for i := 0; i < 5; i++ {
+		var insensitive, sensitive bool
+		row := st.db.QueryRow(`SELECT 'ABC' LIKE 'abc%', 'abc' LIKE 'abc%'`)
+		if err := row.Scan(&insensitive, &sensitive); err != nil {
+			t.Fatalf("reading LIKE behaviour: %v", err)
+		}
+		if insensitive {
+			t.Fatal("'ABC' LIKE 'abc%' is true: case_sensitive_like is not set")
+		}
+		if !sensitive {
+			t.Fatal("'abc' LIKE 'abc%' is false: LIKE is not working at all")
+		}
+	}
+}

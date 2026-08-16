@@ -240,6 +240,20 @@ func dsn(path string) string {
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "journal_mode(WAL)")
+	// LIKE is case-insensitive for ASCII by default, which is a surprise
+	// waiting to happen and the reason a filter's startsWith could not be
+	// pushed into a query: `title LIKE 'fix%'` matched "Fix the thing" where
+	// CEL's startsWith did not, so the same expression meant two things.
+	//
+	// Nothing in roz wanted the insensitivity. The only LIKE in its own SQL is
+	// migration 0028's assertion against sqlite_schema, whose pattern already
+	// matches the stored DDL exactly, case included.
+	//
+	// A DSN parameter rather than an Exec, for the reason the other three are:
+	// this is per-connection and database/sql pools connections, so a plain
+	// PRAGMA would leave most of them without it — and half a pool answering
+	// LIKE differently is worse than either answer.
+	q.Add("_pragma", "case_sensitive_like(1)")
 	return "file:" + path + "?" + q.Encode()
 }
 

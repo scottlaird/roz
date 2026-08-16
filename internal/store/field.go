@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -214,4 +215,125 @@ func boolText(b bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+// ColumnType is the shape of one column, for a caller that has to build a
+// type system of its own over a record — a filter language, say.
+//
+// Coarse on purpose: SQLite has four storage classes worth caring about here,
+// and a caller wanting more can read the struct itself. JSON says the column
+// holds a JSON array rather than a scalar, which is a different kind of
+// question to ask of it.
+type ColumnType struct {
+	Name string
+	// Kind is "text", "integer", "boolean" or "real".
+	Kind string
+	// JSON says the column's text is itself JSON — the format:"json" columns.
+	JSON bool
+	// Nullable says the column is a sql.Null* type, so a value may be absent
+	// rather than empty.
+	Nullable bool
+}
+
+// ColumnTypes reports the columns a record carries, with enough about each to
+// build a query language over it.
+//
+// Exported for the same reason Columns is: something outside the store has to
+// be able to name and type what a record holds, without a second copy of the
+// struct tags to drift from these.
+func ColumnTypes(r any) ([]ColumnType, error) {
+	fields, err := fieldsOfStruct(r)
+	if err != nil {
+		return nil, err
+	}
+	v := reflect.ValueOf(r).Elem().Type()
+
+	types := make([]ColumnType, len(fields))
+	for i, f := range fields {
+		t := ColumnType{Name: f.column, JSON: f.format == formatJSON}
+		t.Kind, t.Nullable = kindOfGoType(v.Field(f.index).Type)
+		types[i] = t
+	}
+	return types, nil
+}
+
+// kindOfGoType maps a struct field's type to a storage kind.
+func kindOfGoType(t reflect.Type) (kind string, nullable bool) {
+	switch t {
+	case reflect.TypeOf(sql.NullString{}):
+		return "text", true
+	case reflect.TypeOf(sql.NullInt64{}):
+		return "integer", true
+	case reflect.TypeOf(sql.NullBool{}):
+		return "boolean", true
+	case reflect.TypeOf(sql.NullFloat64{}):
+		return "real", true
+	}
+	switch t.Kind() {
+	case reflect.Bool:
+		return "boolean", false
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		return "integer", false
+	case reflect.Float32, reflect.Float64:
+		return "real", false
+	default:
+		return "text", false
+	}
+}
+
+// ColumnValues reads a record's columns into a map, with absent values left
+// out entirely rather than zeroed.
+//
+// The distinction is the point: a NULL column is not an empty string, and a
+// filter that could not tell them apart would answer differently from the same
+// filter run as SQL.
+func ColumnValues(r any) (map[string]any, error) {
+	fields, err := fieldsOfStruct(r)
+	if err != nil {
+		return nil, err
+	}
+	v := reflect.ValueOf(r).Elem()
+
+	values := make(map[string]any, len(fields))
+	for _, f := range fields {
+		value, ok := valueOfField(v.Field(f.index))
+		if !ok {
+			continue
+		}
+		if f.format == formatJSON {
+			var list []string
+			if text, isText := value.(string); isText && text != "" {
+				if err := json.Unmarshal([]byte(text), &list); err != nil {
+					// A column that does not hold what it says it holds is
+					// not a reason to fail a listing: it reads as empty, and
+					// the filter simply does not match it.
+					list = nil
+				}
+			}
+			values[f.column] = list
+			continue
+		}
+		values[f.column] = value
+	}
+	return values, nil
+}
+
+// valueOfField unwraps a sql.Null*, reporting absence rather than a zero.
+func valueOfField(v reflect.Value) (any, bool) {
+	switch value := v.Interface().(type) {
+	case sql.NullString:
+		return value.String, value.Valid
+	case sql.NullInt64:
+		return value.Int64, value.Valid
+	case sql.NullBool:
+		return value.Bool, value.Valid
+	case sql.NullFloat64:
+		return value.Float64, value.Valid
+	}
+	switch v.Kind() {
+	case reflect.Int, reflect.Int32:
+		return v.Int(), true
+	default:
+		return v.Interface(), true
+	}
 }

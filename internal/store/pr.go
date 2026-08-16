@@ -286,6 +286,15 @@ type PRFilter struct {
 	//
 	// Compared as text, which is correct because both sides are ISO-8601 UTC.
 	Since string
+	// Where is a WHERE fragment somebody else compiled — the SQL half of a
+	// CEL filter. Opaque here on purpose: what it means is the filter
+	// package's business, and this only has to put it in the query with its
+	// arguments in the right order.
+	//
+	// Parameterised, always. The values in it are somebody's typing.
+	Where string
+	// WhereArgs are its parameters, in the order the fragment names them.
+	WhereArgs []any
 	// Sort orders by columns instead, when one was asked for. It wins over
 	// the ranking, which cannot be combined with it: a ranking is not a key
 	// to break a tie in, it is the whole ordering.
@@ -573,6 +582,10 @@ func (f PRFilter) clauses() ([]string, []any) {
 	if f.Since != "" {
 		where = append(where, "merged_at >= ?")
 		args = append(args, f.Since)
+	}
+	if f.Where != "" {
+		where = append(where, "("+f.Where+")")
+		args = append(args, f.WhereArgs...)
 	}
 	return where, args
 }

@@ -715,11 +715,23 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	}
 	defer st.Close()
 
-	filter, err := projectFilterFrom(cmd)
+	query, err := projectFilterFrom(cmd)
 	if err != nil {
 		return err
 	}
-	projects, err := st.ListProjects(ctx, filter)
+	// The second listing to push a CEL filter into its query, and the one
+	// where it matters: a filter that reaches a project's actions or children
+	// is a correlated subquery here and a query per row otherwise.
+	cel, err := filterFrom(cmd, &store.Project{})
+	if err != nil {
+		return err
+	}
+	query.Where, query.WhereArgs = cel.SQL()
+	// Whatever the query could not take runs in Go, and a traversal there
+	// needs somewhere to read the far side from.
+	cel.WithLoader(ctx, storeLoader{st: st})
+
+	projects, err := st.ListProjects(ctx, query)
 	if err != nil {
 		return err
 	}

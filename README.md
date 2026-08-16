@@ -222,8 +222,9 @@ example/server#804    Retry the upstream fetch    CHANGES_REQUESTED  3
 example/server#812    Rate-limit the public API   REVIEW_REQUIRED    0
 ```
 
-`--filter` takes an expression over whatever columns the listing has, and is
-pushed into SQL where it provably means the same thing there.
+`--filter` takes a [CEL](https://cel.dev) expression over whatever columns the
+listing has, and is pushed into SQL where it provably means the same thing
+there.
 
 ## Alice wants to know which open PRs are blocked on comments
 

@@ -426,6 +426,12 @@ func (e *joinEnv) subquery(x exists, inner string, args []any) (string, []any) {
 		fmt.Fprintf(&from, " JOIN %s j ON j.%s = %s.%s",
 			join.Via.Table, join.Via.Far, alias, join.Far)
 		where = append(where, fmt.Sprintf("j.%s = %s.%s", join.Via.Near, e.base, join.Near))
+		if clauses, only := join.Via.OnlyClauses("j"); len(clauses) > 0 {
+			where = append(where, clauses...)
+			// The junction's own conditions bind before the predicate's, since
+			// they are written first in the statement.
+			args = append(only, args...)
+		}
 	} else {
 		where = append(where, fmt.Sprintf("%s.%s = %s.%s", alias, join.Far, e.base, join.Near))
 	}
@@ -448,6 +454,16 @@ func (e *joinEnv) subquery(x exists, inner string, args []any) (string, []any) {
 // meets a null in the middle of a field access.
 func (e *joinEnv) toOne(relation, inner string, args []any) (string, []any) {
 	join := e.joins[relation]
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s.%s = %s.%s AND %s)",
-		join.Table, relation, relation, join.Far, e.base, join.Near, inner), args
+	if join.Via == nil {
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s.%s = %s.%s AND %s)",
+			join.Table, relation, relation, join.Far, e.base, join.Near, inner), args
+	}
+
+	where := []string{fmt.Sprintf("j.%s = %s.%s", join.Via.Near, e.base, join.Near)}
+	clauses, only := join.Via.OnlyClauses("j")
+	where = append(where, clauses...)
+	where = append(where, inner)
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s JOIN %s j ON j.%s = %s.%s WHERE %s)",
+		join.Table, relation, join.Via.Table, join.Via.Far, relation, join.Far,
+		strings.Join(where, " AND ")), append(only, args...)
 }

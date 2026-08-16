@@ -85,9 +85,12 @@ type Filter struct {
 	// answering.
 	loader Loader
 	ctx    context.Context
-	// traverses names the relations the Go pass needs, so a missing loader is
-	// an error rather than an empty result.
-	traverses []string
+	// traversesWhole and traversesResidual name the relations each program
+	// needs. Two of them, because which one runs depends on whether a caller
+	// took the SQL — and asking for a loader the running program does not need
+	// would refuse a filter that works.
+	traversesWhole    []string
+	traversesResidual []string
 }
 
 // Compile builds a filter over the columns of blank, which is an empty record
@@ -186,9 +189,9 @@ func Compile(blank any, expr string) (*Filter, error) {
 		if f.residual, err = programOf(env, ast); err != nil {
 			return nil, fmt.Errorf("planning --filter %q: %w", f.residualSrc, err)
 		}
-		// What the Go pass will have to read. Kept so that "nothing matched"
+		// What this program will have to read. Kept so that "nothing matched"
 		// and "nowhere to read from" stop looking alike.
-		f.traverses = relationsIn(ast.NativeRep().Expr(), joins)
+		f.traversesResidual = relationsIn(ast.NativeRep().Expr(), joins)
 	}
 
 	whole, err := compileTerm(env, expr)
@@ -198,6 +201,7 @@ func Compile(blank any, expr string) (*Filter, error) {
 	if f.whole, err = programOf(env, whole); err != nil {
 		return nil, fmt.Errorf("planning --filter %q: %w", expr, err)
 	}
+	f.traversesWhole = relationsIn(whole.NativeRep().Expr(), joins)
 	return f, nil
 }
 
@@ -505,22 +509,22 @@ func (f *Filter) Keep(record any) (bool, error) {
 	if f == nil {
 		return true, nil
 	}
-	program, source := f.whole, f.source
+	program, source, needs := f.whole, f.source, f.traversesWhole
 	if f.pushedDown {
 		if f.residual == nil {
 			return true, nil
 		}
-		program, source = f.residual, f.residualSrc
+		program, source, needs = f.residual, f.residualSrc, f.traversesResidual
 	}
 
-	if len(f.traverses) > 0 && f.loader == nil {
+	if len(needs) > 0 && f.loader == nil {
 		// Evaluating would fail to resolve the name, and a failure to resolve
 		// is swallowed below as "this row does not match" — which would turn a
 		// wiring mistake into an empty listing nobody can tell from a correct
 		// one.
 		return false, fmt.Errorf(
 			"--filter %q reaches %s, and this listing has nowhere to read it from",
-			source, strings.Join(f.traverses, ", "))
+			source, strings.Join(needs, ", "))
 	}
 
 	values, err := store.ColumnValues(record)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -152,6 +153,15 @@ func dbPathFrom(cmd *cobra.Command) (string, error) {
 
 // openStore opens the database named by --db, translating an uninitialised
 // database into advice rather than a missing-table error.
+// openStoreKey is where a command's store is kept for the listing tail.
+type openStoreKey struct{}
+
+// storeOn returns the store a command opened, or nil.
+func storeOn(cmd *cobra.Command) *store.Store {
+	st, _ := cmd.Context().Value(openStoreKey{}).(*store.Store)
+	return st
+}
+
 func openStore(cmd *cobra.Command) (*store.Store, error) {
 	dbPath, err := dbPathFrom(cmd)
 	if err != nil {
@@ -164,6 +174,11 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 		}
 		return nil, err
 	}
+	// Remembered on the command, so the shared listing tail can give a filter
+	// somewhere to read relations from without every list command being
+	// changed to hand it over. The store belongs to the command either way:
+	// it opened it and it closes it.
+	cmd.SetContext(context.WithValue(cmd.Context(), openStoreKey{}, st))
 	return st, nil
 }
 

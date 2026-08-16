@@ -242,3 +242,43 @@ func TestARefusalIsNotADemotion(t *testing.T) {
 		t.Error("an unanswerable filter compiled")
 	}
 }
+
+// TestTheJunctionCanBeNarrowed: action_pr holds both the subject pull request
+// and the context ones, so the two are different relations over one table and
+// the junction has to say which rows it means.
+func TestTheJunctionCanBeNarrowed(t *testing.T) {
+	f, err := Compile(&store.Action{}, `subject_pr.state == "MERGED"`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+
+	where, args := f.SQL()
+	if !strings.Contains(where, "j.role = ?") {
+		t.Errorf("SQL does not narrow the junction:\n  %s", where)
+	}
+	if len(args) != 2 || args[0] != store.RoleSubject || args[1] != "MERGED" {
+		t.Errorf("args = %v, want the role before the predicate's value", args)
+	}
+}
+
+// TestASetIsOneQuery: `state in [...]` is how anybody would write the filter
+// this experiment started from.
+func TestASetIsOneQuery(t *testing.T) {
+	f, err := Compile(&store.PR{}, `state in ["OPEN", "MERGED"]`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	if where, _ := f.SQL(); where == "" {
+		t.Error("a set membership test did not push down")
+	}
+
+	// A set of the wrong type does not: SQLite compares across types by
+	// affinity where CEL calls it an error.
+	mixed, err := Compile(&store.PR{}, `state in ["OPEN", 3]`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	if where, _ := mixed.SQL(); where != "" {
+		t.Errorf("a mixed set was pushed down as %q", where)
+	}
+}

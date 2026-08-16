@@ -114,6 +114,13 @@ func pushableShape(e celast.Expr, columns scope) bool {
 		return comparesToLiteral(args, columns, notEqualsRule) ||
 			comparesColumns(args, columns, true)
 
+	// `state in ["OPEN", "MERGED"]` is how anybody would write the flagship
+	// filter, and it converts to a json_each over a json_array. NULL IN (…) is
+	// NULL in SQL and false in CEL, which excludes either way — the same
+	// agreement equality has, for the same reason.
+	case operators.In:
+		return isInSet(args, columns)
+
 	case operators.Less, operators.LessEquals, operators.Greater, operators.GreaterEquals:
 		return comparesToLiteral(args, columns, orderedRule) ||
 			comparesColumns(args, columns, false)
@@ -173,6 +180,38 @@ func notEqualsRule(c store.ColumnType, literal string) bool {
 // CEL, and both exclude the row. Same-type only, for affinity's sake.
 func orderedRule(c store.ColumnType, literal string) bool {
 	return literal == c.Kind
+}
+
+// isInSet checks `col in [literal, …]`.
+//
+// Every element has to be the column's own kind. A mixed list would compare
+// across types, which SQLite does by affinity and CEL calls an error — the
+// same trap a mistyped literal is, one container along.
+func isInSet(args []celast.Expr, columns scope) bool {
+	if len(args) != 2 {
+		return false
+	}
+	c, ok := columns.resolve(args[0])
+	if !ok || c.JSON {
+		return false
+	}
+	set := args[1]
+	if set == nil || set.Kind() != celast.ListKind {
+		return false
+	}
+	elements := set.AsList().Elements()
+	if len(elements) == 0 {
+		// An empty set matches nothing, which both engines agree on — but it
+		// is more likely a mistake than a question, and refusing it costs a
+		// pushdown of a filter nobody wanted.
+		return false
+	}
+	for _, element := range elements {
+		if literalKind(element) != c.Kind {
+			return false
+		}
+	}
+	return true
 }
 
 // comparesColumns checks a comparison between two columns, which is what a

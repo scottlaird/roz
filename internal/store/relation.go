@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -86,6 +87,31 @@ type Junction struct {
 	Near string
 	// Far is its column pointing at the far entity.
 	Far string
+	// Only narrows the junction to rows matching fixed values — action_pr
+	// carries both the subject and the context pull requests, and they are
+	// different relations over one table.
+	Only map[string]any
+}
+
+// OnlyClauses renders a junction's fixed conditions, in a stable order so the
+// SQL a filter produces does not depend on a map walk.
+func (j *Junction) OnlyClauses(alias string) ([]string, []any) {
+	if j == nil || len(j.Only) == 0 {
+		return nil, nil
+	}
+	columns := make([]string, 0, len(j.Only))
+	for column := range j.Only {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+
+	clauses := make([]string, 0, len(columns))
+	args := make([]any, 0, len(columns))
+	for _, column := range columns {
+		clauses = append(clauses, fmt.Sprintf("%s.%s = ?", alias, column))
+		args = append(args, j.Only[column])
+	}
+	return clauses, args
 }
 
 // Joins reports the traversable connections of a record, keyed by name.
@@ -180,10 +206,46 @@ func (t *Tx) MarshalRecord(ctx context.Context, r Record) ([]byte, error) {
 // closing this frees, and the ranking counts. It was visible nowhere.
 func (a *Action) relations() []Relation {
 	return []Relation{
-		{Name: "blocked_by", Load: blockedByIDs},
-		{Name: "blocking", Load: blockingIDs},
-		{Name: "subject_pr", Load: subjectPRID},
-		{Name: "context_prs", Load: contextPRIDs},
+		{
+			Name: "blocked_by", Load: blockedByIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "action", Near: "id", Far: "id",
+				Via:   &Junction{Table: "action_blocks", Near: "blocked_id", Far: "blocker_id"},
+				Blank: func() any { return &Action{} },
+			},
+		},
+		{
+			Name: "blocking", Load: blockingIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "action", Near: "id", Far: "id",
+				Via:   &Junction{Table: "action_blocks", Near: "blocker_id", Far: "blocked_id"},
+				Blank: func() any { return &Action{} },
+			},
+		},
+		{
+			// The pull request this action is about, which is the traversal
+			// the queue side wants: "waits whose pull request has merged".
+			Name: "subject_pr", Load: subjectPRID,
+			Join: &Join{
+				Kind: ToOne, Table: "pr", Near: "id", Far: "id",
+				Via: &Junction{
+					Table: "action_pr", Near: "action_id", Far: "pr_id",
+					Only: map[string]any{"role": RoleSubject},
+				},
+				Blank: func() any { return &PR{} },
+			},
+		},
+		{
+			Name: "context_prs", Load: contextPRIDs,
+			Join: &Join{
+				Kind: ToMany, Table: "pr", Near: "id", Far: "id",
+				Via: &Junction{
+					Table: "action_pr", Near: "action_id", Far: "pr_id",
+					Only: map[string]any{"role": RoleContext},
+				},
+				Blank: func() any { return &PR{} },
+			},
+		},
 		{Name: "held_by", Load: heldByIDs},
 	}
 }
@@ -402,14 +464,19 @@ func ReadRelated(ctx context.Context, tx *Tx, join Join, id string) ([]map[strin
 	}
 
 	query := fmt.Sprintf("SELECT %s FROM %s far", strings.Join(names, ", "), join.Table)
+	args := []any{id}
 	if join.Via != nil {
 		query += fmt.Sprintf(" JOIN %s j ON j.%s = far.%s WHERE j.%s = ?",
 			join.Via.Table, join.Via.Far, join.Far, join.Via.Near)
+		if clauses, only := join.Via.OnlyClauses("j"); len(clauses) > 0 {
+			query += " AND " + strings.Join(clauses, " AND ")
+			args = append(args, only...)
+		}
 	} else {
 		query += fmt.Sprintf(" WHERE far.%s = ?", join.Far)
 	}
 
-	rows, err := tx.tx.QueryContext(ctx, query, id)
+	rows, err := tx.tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reading the far side of a join on %s: %w", join.Table, err)
 	}

@@ -509,6 +509,12 @@ func runListing[T any](cmd *cobra.Command, set columnSet[T], rows []T, ctx rende
 	if err != nil {
 		return err
 	}
+	// Whatever the query could not take runs here, and a traversal needs
+	// somewhere to read the far side from. The store is the one the command
+	// already opened.
+	if st := storeOn(cmd); st != nil {
+		f.WithLoader(cmd.Context(), storeLoader{st: st})
+	}
 	if err := explainFilter(cmd, f, flagFiltersFor(cmd)); err != nil {
 		return err
 	}

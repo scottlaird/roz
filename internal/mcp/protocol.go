@@ -80,9 +80,6 @@ type Server struct {
 	// Name and Version identify this server to the client.
 	Name    string
 	Version string
-	// client is what the other end called itself at initialize, which is as
-	// close to an identity as the protocol offers.
-	client string
 	// Tools is what it exposes.
 	Tools Tools
 	// Log receives anything worth saying. It must not be stdout, which
@@ -96,6 +93,9 @@ type Server struct {
 // command is executed by running the CLI's own command tree, which keeps some
 // state in package-level flags, so two at once would race.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	// One session for the stream, which is what stdio is: the process was
+	// spawned by its client and serves nobody else for as long as it lives.
+	sess := &Session{}
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
 	encoder := json.NewEncoder(out)
@@ -118,7 +118,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			continue
 		}
 
-		result, rpcErr := s.dispatch(ctx, req)
+		result, rpcErr := s.dispatch(ctx, sess, req)
 		if req.isNotification() {
 			continue // no id, no reply, whatever happened
 		}
@@ -137,14 +137,29 @@ func (s *Server) write(encoder *json.Encoder, r response) {
 	}
 }
 
-func (s *Server) dispatch(ctx context.Context, req request) (any, *rpcError) {
+// Session is what one connection knows about itself.
+//
+// It exists because the client's name is per-connection and was per-server.
+// Over stdio that is the same thing — the process has exactly one client — and
+// over HTTP it is not: one server answers many, and a name stored on the
+// server is whichever client initialised most recently. That is not a race
+// about a string. Every write is recorded as agent:<name>, so the wrong one
+// misattributes it in the log, and the actor column exists precisely to be
+// trusted about who did what.
+type Session struct {
+	// Client is what the other end called itself at initialize, which is as
+	// close to an identity as the protocol offers.
+	Client string
+}
+
+func (s *Server) dispatch(ctx context.Context, sess *Session, req request) (any, *rpcError) {
 	if req.JSONRPC != "" && req.JSONRPC != "2.0" {
 		return nil, &rpcError{Code: codeInvalidRequest, Message: "expected jsonrpc 2.0"}
 	}
 
 	switch req.Method {
 	case "initialize":
-		return s.initialize(req.Params), nil
+		return s.initialize(sess, req.Params), nil
 	case "notifications/initialized", "notifications/cancelled":
 		return nil, nil
 	case "ping":
@@ -152,13 +167,13 @@ func (s *Server) dispatch(ctx context.Context, req request) (any, *rpcError) {
 	case "tools/list":
 		return map[string]any{"tools": s.Tools.List()}, nil
 	case "tools/call":
-		return s.callTool(ctx, req.Params)
+		return s.callTool(ctx, sess, req.Params)
 	default:
 		return nil, &rpcError{Code: codeMethodNotFound, Message: "no method " + req.Method}
 	}
 }
 
-func (s *Server) initialize(params json.RawMessage) any {
+func (s *Server) initialize(sess *Session, params json.RawMessage) any {
 	var asked struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		ClientInfo      struct {
@@ -166,7 +181,7 @@ func (s *Server) initialize(params json.RawMessage) any {
 		} `json:"clientInfo"`
 	}
 	_ = json.Unmarshal(params, &asked)
-	s.client = asked.ClientInfo.Name
+	sess.Client = asked.ClientInfo.Name
 
 	return map[string]any{
 		"protocolVersion": negotiate(asked.ProtocolVersion),
@@ -187,7 +202,7 @@ func negotiate(asked string) string {
 	return supportedVersions[0]
 }
 
-func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, *rpcError) {
+func (s *Server) callTool(ctx context.Context, sess *Session, params json.RawMessage) (any, *rpcError) {
 	var call struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -199,7 +214,7 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, *rp
 		return nil, &rpcError{Code: codeInvalidParams, Message: "no tool named"}
 	}
 
-	output, err := s.Tools.Call(WithClient(ctx, s.client), call.Name, call.Arguments)
+	output, err := s.Tools.Call(WithClient(ctx, sess.Client), call.Name, call.Arguments)
 	if err != nil {
 		// A tool that refused its input is a result, not a transport
 		// failure: the agent should see the message and try again, rather

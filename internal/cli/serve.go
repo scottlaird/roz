@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/scottlaird/roz/internal/ghsync"
+	"github.com/scottlaird/roz/internal/mcp"
 	"github.com/scottlaird/roz/internal/metrics"
 	"github.com/scottlaird/roz/internal/server"
 	"github.com/scottlaird/roz/internal/service"
@@ -46,12 +47,16 @@ func newServeCmd() *cobra.Command {
 	f.Int(flagMaxFailures, ghsync.DefaultMaxFailures,
 		"consecutive sync failures to tolerate before giving up; 0 to keep trying")
 	f.Bool(flagNoSync, false, "serve and tail, but do not poll GitHub")
+	f.Bool(flagMCP, false,
+		"also serve MCP at /mcp, so an agent survives a restart of this process")
+	f.String(flagAgent, "mcp", "actor name for an MCP client that does not identify itself")
 	f.Bool(flagNoWatch, false, "serve and poll, but do not print the log")
 	return cmd
 }
 
 const (
 	flagNoSync  = "no-sync"
+	flagMCP     = "mcp"
 	flagNoWatch = "no-watch"
 )
 
@@ -80,12 +85,16 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 
+	web, err := httpServer(cmd, st, options)
+	if err != nil {
+		return err
+	}
 	services := []service.Service{
 		// First because it governs the rest: if the schema moves, none of them
 		// should keep running, and the service runner stops the others as soon
 		// as this one returns an error.
 		&schemaGuard{store: st},
-		server.New(options.addr, pageFor(st), st.LatestEventSeq, cmd.ErrOrStderr()),
+		web,
 	}
 	if !options.noSync {
 		services = append(services, &ghsync.Syncer{
@@ -126,6 +135,8 @@ type serveOptions struct {
 	rateLimitFloor int
 	maxFailures    int
 	noSync         bool
+	mcp            bool
+	mcpAgent       string
 	noWatch        bool
 }
 
@@ -147,6 +158,12 @@ func serveOptionsFrom(cmd *cobra.Command) (serveOptions, error) {
 		return o, err
 	}
 	if o.maxFailures, err = f.GetInt(flagMaxFailures); err != nil {
+		return o, err
+	}
+	if o.mcp, err = f.GetBool(flagMCP); err != nil {
+		return o, err
+	}
+	if o.mcpAgent, err = f.GetString(flagAgent); err != nil {
 		return o, err
 	}
 	if o.noSync, err = f.GetBool(flagNoSync); err != nil {
@@ -175,4 +192,31 @@ func (t *tailer) Run(ctx context.Context) error {
 		interval: time.Second,
 		format:   outputTable,
 	})
+}
+
+// httpServer builds the page server, with the MCP endpoint on it when asked.
+//
+// The endpoint is opt-in because of what it exposes rather than what it costs.
+// Stdio is reachable only by the process that spawned it; this is reachable by
+// anything running locally, and these are write tools. Origin validation stops
+// a browser being turned into a client and does nothing about a local process,
+// so the honest default is off.
+func httpServer(cmd *cobra.Command, st *store.Store, options serveOptions) (service.Service, error) {
+	srv := server.New(options.addr, pageFor(st), st.LatestEventSeq, cmd.ErrOrStderr())
+	if !options.mcp {
+		return srv, nil
+	}
+	// Resolved once here rather than read per call, the way `roz mcp` does it:
+	// the tool tree is handed the path, so nothing it does depends on a flag
+	// this process might parse again.
+	path, err := dbPathFrom(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return srv.WithMCP(&mcp.HTTP{Server: &mcp.Server{
+		Name:    "roz",
+		Version: version,
+		Tools:   &mcpTools{db: path, agent: actorName(options.mcpAgent)},
+		Log:     cmd.ErrOrStderr(),
+	}}), nil
 }

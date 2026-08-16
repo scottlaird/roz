@@ -46,6 +46,10 @@ type Result struct {
 	// Overdue lists the actions that have been waiting longer than their verb
 	// allows. Reported, not changed: what to do about one is a judgement.
 	Overdue []store.Overdue
+	// Unannounced lists the waits on a review nobody was asked for. Reported
+	// the same way and for the same reason, and a different problem: a slow
+	// review is chased, and one nobody requested is announced.
+	Unannounced []store.Unannounced
 	// Settled lists the actions closed because what was observed satisfied
 	// their predicate, with whatever each closure cascaded into.
 	Settled []store.Settled
@@ -617,6 +621,16 @@ func checkOverdue(ctx context.Context, st *store.Store, result *Result) error {
 		return err
 	}
 	result.Overdue = overdue
+
+	// Structural rather than timed, so it is checked here beside the deadline
+	// sweep rather than waiting for one: a wait on a review nobody requested
+	// is wrong the moment it starts, and the timeout would eventually report
+	// it with the wrong explanation. See store.UnannouncedWaits.
+	unannounced, err := st.UnannouncedWaits(ctx, store.ActorPredicate)
+	if err != nil {
+		return err
+	}
+	result.Unannounced = unannounced
 	return nil
 }
 

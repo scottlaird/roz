@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>roz{{with .Owner}} · {{.}}{{end}}</title>
+<title>{{.Title}}</title>
 <link rel="icon" type="image/png" sizes="32x32" href="{{.Favicon}}">
 {{/* Served rather than inlined, so a browser fetches it once and is told 304
      for every load after that. It was inlined while `roz render` wrote the

@@ -378,3 +378,102 @@ func TestProjectsPageDrawsTheTreeOnlyWithoutAView(t *testing.T) {
 		t.Errorf("the flat listing lost a child project:\n%s", viewed)
 	}
 }
+
+// TestTheTitleSaysWhichPageItIs. Every page used to be titled "roz", which is
+// a row of tabs nobody can pick from — and the identifier, which is what
+// somebody is looking for, was the one thing not in it.
+func TestTheTitleSaysWhichPageItIs(t *testing.T) {
+	db, ids := pageFixture(t)
+	if _, err := runCLI(t, "view", "add", "writing", "--db", db,
+		"--entity", "action", "--filter", `verb == "write"`); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	for _, tt := range []struct {
+		at   route
+		want string
+	}{
+		{route{}, "<title>roz</title>"},
+		{route{kind: pageProjects}, "<title>roz: projects</title>"},
+		{route{kind: pageActions}, "<title>roz: actions</title>"},
+		{route{kind: pageActions, view: "writing"}, "<title>roz: actions: writing</title>"},
+		{route{kind: pageProject, id: ids.project}, "<title>roz: " + ids.project + ": live work</title>"},
+		{route{kind: pageAction, id: ids.action}, "<title>roz: " + ids.action + ": do the thing</title>"},
+	} {
+		name := tt.at.kind
+		if name == "" {
+			name = "index"
+		}
+		if tt.at.view != "" {
+			name += "-" + tt.at.view
+		}
+		t.Run(name, func(t *testing.T) {
+			if body := routeHTML(t, db, tt.at); !strings.Contains(body, tt.want) {
+				t.Errorf("title is not %q:\n%s", tt.want, titleOf(body))
+			}
+		})
+	}
+}
+
+// TestTheOwnerStaysWithTheToolName: the owner labels the whole queue rather
+// than the page, so it goes before the part that says which page this is.
+func TestTheOwnerStaysWithTheToolName(t *testing.T) {
+	db, ids := pageFixture(t)
+	if _, err := runCLI(t, "config", "set", "--db", db, "--owner", "scott"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+
+	body := routeHTML(t, db, route{kind: pageProject, id: ids.project})
+	want := "<title>roz · scott: " + ids.project + ": live work</title>"
+	if !strings.Contains(body, want) {
+		t.Errorf("title is not %q:\n%s", want, titleOf(body))
+	}
+}
+
+// titleOf is the title element alone, for an error that shows the relevant
+// line rather than the whole page.
+func titleOf(page string) string {
+	_, rest, found := strings.Cut(page, "<title>")
+	if !found {
+		return "(no title)"
+	}
+	title, _, _ := strings.Cut(rest, "</title>")
+	return "<title>" + title + "</title>"
+}
+
+// TestTheTitleIsTextNotMarkup pins the reason the entity pages read the stored
+// title rather than the rendered one, which is the sort of thing somebody
+// simplifies away: projectView.Title is right there and is already
+// template.HTML, so using it would look like the obvious move.
+//
+// It is not. That field has been through the prose renderer, so a title naming
+// another project carries an <a> by the time it reaches the page — and a
+// title bar cannot draw a link. It would arrive escaped instead, and the tab
+// would read `roz: SL9: Fix &lt;a href=...&gt;SL8&lt;/a&gt;`.
+func TestTheTitleIsTextNotMarkup(t *testing.T) {
+	db, ids := pageFixture(t)
+	// A title that both links (the identifier exists) and would need escaping.
+	named := "Fix " + ids.closed + " & the `code span` <here>"
+	subject := addProject(t, db, named)
+
+	body := routeHTML(t, db, route{kind: pageProject, id: subject})
+
+	// The body links it, which is what the prose renderer is for.
+	if !strings.Contains(body, `<a href="/project/`+ids.closed+`"`) {
+		t.Errorf("the heading did not link %s:\n%s", ids.closed, body)
+	}
+
+	title := titleOf(body)
+	// The tab says the same thing in text: escaped once, for the identifier
+	// and the angle bracket alike, and carrying no markup of its own.
+	for _, want := range []string{ids.closed, "`code span`", "&lt;here&gt;", "&amp;"} {
+		if !strings.Contains(title, want) {
+			t.Errorf("title is missing %q: %s", want, title)
+		}
+	}
+	for _, unwanted := range []string{"href=", "&lt;a ", "&amp;lt;", "&amp;amp;"} {
+		if strings.Contains(title, unwanted) {
+			t.Errorf("title carries %q, so it was built from the rendered row: %s", unwanted, title)
+		}
+	}
+}

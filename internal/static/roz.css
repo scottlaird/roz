@@ -154,3 +154,59 @@ footer{border-top:1px solid var(--rule);padding-top:12px;color:var(--faint);font
 nav.views{display:flex;flex-wrap:wrap;gap:.75rem;margin:-.25rem 0 1rem;font-size:13.5px}
 nav.views .current{color:var(--fg);font-weight:600}
 nav.views a{color:var(--mid)}
+
+/* The dependency diagram. The <pre> is the mermaid source, and stays readable
+   as text on its own: a client that never draws it shows the graph written
+   out, which is worse than a picture and much better than a blank box. */
+.graph{background:var(--raise);border:1px solid var(--rule);border-radius:8px;
+       padding:14px;margin:10px 0;overflow-x:auto}
+.graph pre.mermaid{margin:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+                   color:var(--faint);white-space:pre}
+.graph svg{max-width:100%;height:auto}
+.coverage{font-size:13px;color:var(--mid);margin:8px 0 0}
+.coverage p{margin:.35em 0}
+.coverage ul{margin:.35em 0;padding-left:1.2em}
+.coverage li{margin:.15em 0}
+.coverage .left-out{color:var(--faint)}
+h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
+          margin-left:.6em;color:var(--link)}
+
+/* The diagram's own colours. They live here rather than in the mermaid source
+   because mermaid's classDef cannot parse a CSS var() — its grammar ends the
+   token at the bracket — so writing the palette into the diagram would mean
+   literal colours, and literal colours do not follow the page into dark mode.
+   The class name reaches the SVG, which is all this needs. */
+/* !important throughout, which is not a style choice. Mermaid writes its own
+   stylesheet into the SVG keyed on the diagram's generated id -- selectors like
+   `#mermaid-1786 .node rect` -- and an id beats any number of classes, so
+   nothing written here can win on specificity. The alternative is mermaid's
+   themeVariables, which take literal colours and would not follow the page
+   into dark mode. */
+.graph .node rect,.graph .node circle,.graph .node polygon,.graph .node path{
+  fill:var(--raise)!important;stroke:var(--rule)!important}
+/* text and tspan, not .nodeLabel: that class only exists on the html-label
+   path, and this diagram deliberately has no html labels. Without htmlLabels a
+   label is a <text> with tspans inside, inheriting fill:#333 from the svg
+   root -- which is invisible on a dark page. */
+.graph .node text,.graph .node tspan,.graph .nodeLabel{fill:var(--ink)!important;
+  color:var(--ink)!important}
+.graph .node .background{fill:none!important}
+.graph .edgeLabel rect{fill:var(--paper)!important}
+.graph .flowchart-link,.graph .edgePath path.path{stroke:var(--faint)!important}
+.graph marker path{fill:var(--faint)!important;stroke:var(--faint)!important}
+
+.graph .node.blocked rect,.graph .node.blocked path,
+.graph .node.late rect,.graph .node.late path{
+  fill:var(--bad-bg)!important;stroke:var(--bad)!important}
+.graph .node.snoozed rect,.graph .node.snoozed path,
+.graph .node.wait rect,.graph .node.wait path{
+  fill:var(--wait-bg)!important;stroke:var(--wait)!important}
+.graph .node.click rect,.graph .node.click path{
+  fill:var(--click-bg)!important;stroke:var(--click)!important}
+.graph .node.decide rect,.graph .node.decide path{
+  fill:var(--decide-bg)!important;stroke:var(--decide)!important}
+.graph .node.session rect,.graph .node.session path{
+  fill:var(--raise)!important;stroke:var(--session)!important}
+.graph .node.open rect,.graph .node.open path{
+  fill:var(--raise)!important;stroke:var(--link)!important}
+.graph .node.clickable{cursor:pointer}

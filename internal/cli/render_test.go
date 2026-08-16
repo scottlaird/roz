@@ -78,15 +78,40 @@ func TestRender(t *testing.T) {
 	// The index shows live work. What it leaves out -- closed, blocked,
 	// hidden -- is no longer appended to the bottom of it: each of those has
 	// its own page now, and a reference to one leaves rather than jumping.
+	//
+	// The listings, that is. The dependency diagram below them is about
+	// exactly the work they omit -- what is blocked, and what it is blocked on
+	// -- so the rule is tested against the part of the page it is a rule
+	// about, rather than against the whole document.
+	listings, diagram, split := strings.Cut(out, "<h2>dependencies")
+	if !split {
+		t.Fatalf("the page has no dependencies section:\n%s", out)
+	}
 	for _, unwanted := range []string{
 		"Roll the change out", // blocked
 		"Tidy up after",       // hidden
 		"Retire the old pool", // superseded
 	} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("the page still carries %q, which belongs on its own page now:\n%s",
-				unwanted, out)
+		if strings.Contains(listings, unwanted) {
+			t.Errorf("the listings still carry %q, which belongs on its own page now:\n%s",
+				unwanted, listings)
 		}
+	}
+
+	// And the diagram does name them, which is the whole point of it: a graph
+	// of what is blocked that leaves out the blocked thing draws nothing worth
+	// looking at.
+	for _, want := range []string{
+		"Roll the change out", // blocked by the ready one
+		"Tidy up after",       // folded behind it
+	} {
+		if !strings.Contains(diagram, want) {
+			t.Errorf("the diagram does not name %q, which is what it is for:\n%s", want, diagram)
+		}
+	}
+	// A superseded project is not live work and is not a dependency of any.
+	if strings.Contains(diagram, "Retire the old pool") {
+		t.Errorf("the diagram draws a superseded project:\n%s", diagram)
 	}
 
 	// A calendar window beyond the horizon is not an entity anything links to,

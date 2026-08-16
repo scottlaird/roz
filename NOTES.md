@@ -868,6 +868,74 @@ fast is retired
 Editing a pipeline never touches a chain already running. Steps are copied into
 actions when a chain starts, so nothing reads the pipeline again afterwards.
 
+## What is blocked on what
+
+Blocking is recorded in three places and was visible in none of them: project
+to project, action to action, and an action advancing a project. The page was a
+flat list, so "what does finishing this actually need" was a question you
+answered by reading rows and holding the graph in your head.
+
+The diagram is on the index under the projects table, and on `/dependencygraph`
+by itself. The server produces mermaid source and the browser draws it —
+layout is the valuable part and the part nothing here wants to write.
+
+### Pruning is the design
+
+Drawing every open project and action at once is sixty boxes with three arrows
+between them, which is strictly worse than the list above it: the list at least
+has an order. So a node earns its place by being part of a dependency:
+
+- a project is seeded by a blocking edge whose **other end is also open**;
+- an action the same way, by blocking or by being folded behind another; a pull
+  request by being stacked on another;
+- **containment seeds nothing.** A parent is not a blocker — `--parent` says so
+  — and starting from it would draw every project that is part of something. It
+  is drawn between nodes already present, and pulls in a parent one level so a
+  group of blocked siblings reads as the thing they belong to;
+- a seeded project pulls in its open actions, and a seeded action pulls in its
+  project. That is the layer a list has no room for: the dependency is really
+  about one write step nobody has done.
+
+**Closed ends are dropped rather than drawn faded.** Edges are never deleted,
+so every chain ever completed is still there; drawing them answers "how did we
+get here" at the cost of never answering "what now".
+
+The page says how many open projects and actions were left out, because a
+diagram that is small for a good reason and one that is broken look identical.
+It also states what it draws, since a diagram implies completeness and this one
+is a view of four edge tables.
+
+### The renderer
+
+mermaid, pinned to a version and checked against its hash, fetched from a CDN —
+the one thing on the page that comes from anywhere else. If it does not load,
+nothing runs and the `<pre>` stays as the diagram written out as text, which is
+legible and much better than an empty box. It is fetched only where there is a
+diagram to draw.
+
+`securityLevel: loose` with `htmlLabels: false`, and the pair is the point.
+Loose is what lets a node link to its own page; html labels off is what makes
+that safe, because a label is then SVG text rather than markup — and labels
+carry pull-request titles, which come from GitHub and are not ours. **Set it at
+both levels**: under `flowchart` alone the renderer reads the top-level default
+and a label of `<img src=x onerror=…>` reaches the DOM as an actual element.
+
+Colours live in `roz.css` rather than in `classDef`, because mermaid's grammar
+cannot parse a CSS `var()` — the bracket ends the token — and literal colours
+would not follow the page into dark mode. They need `!important`: mermaid keys
+its own stylesheet on the diagram's generated id, and an id beats any number of
+classes.
+
+### What it does not show
+
+`pr.stacked_on` is drawn, and the issue that asked for this said it could not
+be: the column was added by 0002 and set by nothing until `head_ref` arrived in
+0030 and gave `ResolveStacking` something to match on. Nothing is open and
+stacked at the moment, so that path is unexercised on real data.
+
+An action's subject pull request is not an edge yet, so a stack and the work
+that produced it are two disconnected pictures.
+
 ## The page links to itself
 
 Every action and project has an anchor, which is its identifier verbatim:

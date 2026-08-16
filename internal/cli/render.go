@@ -53,6 +53,7 @@ var pages = map[string]*template.Template{
 	pageActions:  parsePage("actions"),
 	pageProject:  parsePage("project"),
 	pageAction:   parsePage("action"),
+	pageGraph:    parsePage("dependencygraph"),
 }
 
 // The pages, named by the route that reaches them.
@@ -62,6 +63,7 @@ const (
 	pageActions  = "actions"
 	pageProject  = "project"
 	pageAction   = "action"
+	pageGraph    = "dependencygraph"
 )
 
 func parsePage(body string) *template.Template {

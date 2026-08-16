@@ -95,4 +95,9 @@
     </div>
     {{else}}<p class="empty">no active projects</p>{{end}}
   </section>
+
+  <section>
+    <h2>dependencies <a class="more" href="/dependencygraph">on its own page</a></h2>
+    {{template "graph" .Graph}}
+  </section>
 {{end}}

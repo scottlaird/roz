@@ -195,19 +195,12 @@ func TestASecondHopIsRefusedRatherThanAnswered(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "a relation of a related record",
-			blank: &store.PR{}, expr: `actions.exists(a, a.project.priority == 1)`,
-			want: "a.project.priority",
-		},
-		{
+			// Two relations of the same name: each level would alias the same
+			// table, and `parent.id = parent.parent_id` is SQL that runs and
+			// compares a row to itself.
 			name:  "a chained to-one",
 			blank: &store.Project{}, expr: `parent.parent.title == "x"`,
 			want: "parent.parent.title",
-		},
-		{
-			name:  "a traversal inside a traversal",
-			blank: &store.Project{}, expr: `children.exists(c, c.actions.exists(a, a.verb == "merge"))`,
-			want: "c.actions",
 		},
 	}
 
@@ -280,5 +273,115 @@ func TestASetIsOneQuery(t *testing.T) {
 	}
 	if where, _ := mixed.SQL(); where != "" {
 		t.Errorf("a mixed set was pushed down as %q", where)
+	}
+}
+
+// TestAChainBecomesNestedExists is #200: two hops, and the second is where the
+// useful questions are. "PRs for SL41" names a thing; "PRs for anything
+// urgent" names a property, and that is the one somebody asks every morning.
+func TestAChainBecomesNestedExists(t *testing.T) {
+	tests := []struct {
+		name  string
+		blank any
+		expr  string
+		want  []string
+	}{
+		{
+			name:  "a to-one beyond a to-many",
+			blank: &store.PR{},
+			expr:  `actions.exists(a, a.project.priority == 1)`,
+			want: []string{
+				"EXISTS (SELECT 1 FROM action a JOIN action_pr j ON j.action_id = a.id",
+				"j.pr_id = pr.id",
+				"EXISTS (SELECT 1 FROM project project WHERE project.id = a.project_id",
+				"project.priority = ?",
+			},
+		},
+		{
+			name:  "a to-many beyond a to-many",
+			blank: &store.Project{},
+			expr:  `children.exists(c, c.actions.exists(a, a.verb == "merge"))`,
+			want: []string{
+				"EXISTS (SELECT 1 FROM project c WHERE c.parent_id = project.id",
+				"EXISTS (SELECT 1 FROM action a WHERE a.project_id = c.id",
+				"a.verb = ?",
+			},
+		},
+		{
+			name:  "a column and a chain in one predicate",
+			blank: &store.PR{},
+			expr:  `actions.exists(a, a.verb == "merge" && a.project.priority == 1)`,
+			want: []string{
+				"a.verb = ?",
+				"EXISTS (SELECT 1 FROM project project WHERE project.id = a.project_id",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Compile(tt.blank, tt.expr)
+			if err != nil {
+				t.Fatalf("Compile(%q) returned error: %v", tt.expr, err)
+			}
+			where, _ := f.SQL()
+			for _, want := range tt.want {
+				if !strings.Contains(where, want) {
+					t.Errorf("SQL is missing %q:\n%s", want, where)
+				}
+			}
+			if f.RunsInGo() {
+				t.Errorf("a chain left something for Go, which cannot answer it:\n%s", f.Explain())
+			}
+		})
+	}
+}
+
+// TestAChainWillNotRunInGo is the safety property the whole design turns on.
+//
+// In Go the far row is a map of columns, so the second hop is a missing key,
+// which CEL reports as an error and Keep swallows as "does not match" — for
+// every row. An empty listing that looks exactly like a correct one is the one
+// answer this must never give, so a listing that did not take the SQL is told
+// so instead.
+func TestAChainWillNotRunInGo(t *testing.T) {
+	f, err := Compile(&store.PR{}, `actions.exists(a, a.project.priority == 1)`)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+
+	// Keep without SQL: the listing never put the clause in its query.
+	_, err = f.Keep(&store.PR{ID: "owner/repo#1"})
+	if err == nil {
+		t.Fatal("Keep answered without the query having run the chain")
+	}
+	for _, want := range []string{"two relations", "does not push filters"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to say %q", err, want)
+		}
+	}
+
+	// Having taken the SQL, there is nothing left for Go and every row stands.
+	f.SQL()
+	kept, err := f.Keep(&store.PR{ID: "owner/repo#1"})
+	if err != nil {
+		t.Fatalf("Keep returned error after the query took the clause: %v", err)
+	}
+	if !kept {
+		t.Error("a row was dropped by a filter the query had already answered")
+	}
+}
+
+// TestAChainHasADepthLimit: parent.parent.parent… is finite and unbounded, and
+// each level is a nested subquery, so the cost is multiplicative. The person
+// waiting for the answer is the person who wrote the expression.
+func TestAChainHasADepthLimit(t *testing.T) {
+	expr := `children.exists(a, a.children.exists(b, b.children.exists(c, c.children.exists(d, d.title == "x"))))`
+	_, err := Compile(&store.Project{}, expr)
+	if err == nil {
+		t.Fatal("a chain past the limit compiled")
+	}
+	if !strings.Contains(err.Error(), "relations deep") {
+		t.Errorf("error = %v, want it to say how deep it went", err)
 	}
 }

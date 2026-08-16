@@ -246,6 +246,19 @@ func (a *Action) relations() []Relation {
 				Blank: func() any { return &PR{} },
 			},
 		},
+		{
+			// The project it advances, which is a column here and a
+			// traversal-only relation: `pr list --filter 'actions.exists(a,
+			// a.project.priority == 1)'` is the question #200 is named after,
+			// and without this there is nothing for the second hop to follow.
+			// It prints nothing — project_id is already on the row — and
+			// exists so a filter can reach the project's own columns.
+			Name: "project",
+			Join: &Join{
+				Kind: ToOne, Table: "project", Near: "project_id", Far: "id",
+				Blank: func() any { return &Project{} },
+			},
+		},
 		{Name: "held_by", Load: heldByIDs},
 	}
 }

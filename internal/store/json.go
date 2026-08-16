@@ -71,13 +71,16 @@ func MarshalRecord(r any) ([]byte, error) {
 	return json.Marshal(object)
 }
 
-// marshalRecordWith encodes a record together with values that are not
-// columns of its table — what Tx.MarshalRecord has loaded from its relations.
+// MarshalRecordWith encodes a record together with values that are not
+// columns of its table: what Tx.MarshalRecord has loaded from its relations,
+// or a property of the database that belongs beside the row without living in
+// it — the identifier prefixes on `config show`, which are the sequence
+// table's.
 //
 // The extras are merged after the columns and cannot collide with one: a
 // relation named after a column would be a mistake worth making loudly, and
 // the entity declaring both is the place to notice it.
-func marshalRecordWith(r any, extra map[string]any) ([]byte, error) {
+func MarshalRecordWith(r any, extra map[string]any) ([]byte, error) {
 	object, err := recordObject(r)
 	if err != nil {
 		return nil, err

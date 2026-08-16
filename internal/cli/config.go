@@ -28,6 +28,10 @@ func newConfigCmd() *cobra.Command {
 			"page. These are properties of the queue, not of one command, so they\n" +
 			"live in the database with everything else and are visible to anything\n" +
 			"reading it.\n\n" +
+			"`show` also prints the identifier prefixes, which are a property of\n" +
+			"the queue in the same sense but not a setting: they are chosen at\n" +
+			"`init` and write-once afterwards, since changing one would orphan\n" +
+			"every identifier already issued. `set` does not offer them.\n\n" +
 			"There is one row and no way to make a second. Changing a setting is\n" +
 			"logged like any other change, so `roz watch` shows it and the log\n" +
 			"says when the page started linking somewhere new.\n\n" +
@@ -65,15 +69,30 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	encoded, err := store.MarshalRecordWith(cfg, prefixesOf(st))
+	if err != nil {
+		return err
+	}
 	if format == outputJSON {
-		encoded, err := store.MarshalRecord(cfg)
-		if err != nil {
-			return err
-		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
 		return err
 	}
-	return writeRecordDetail(cmd.OutOrStdout(), cfg)
+	return writeDetail(cmd.OutOrStdout(), encoded)
+}
+
+// prefixesOf is what a database calls its projects and actions, printed
+// beside the settings because that is where somebody looks for them.
+//
+// They are not columns of config and deliberately are not: they belong to the
+// sequence table, which is the authority on what has been issued, and copying
+// them into config would give two answers a chance to disagree. Read-only for
+// the same reason `config set` does not offer them — they are chosen at init
+// and write-once afterwards.
+func prefixesOf(st *store.Store) map[string]any {
+	return map[string]any{
+		"project_prefix": st.Prefix(store.EntityProject),
+		"action_prefix":  st.Prefix(store.EntityAction),
+	}
 }
 
 func newConfigSetCmd() *cobra.Command {

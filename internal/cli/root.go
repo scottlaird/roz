@@ -56,7 +56,6 @@ func NewRootCmd() *cobra.Command {
 		newExceptionCmd(),
 		newPageCmd(),
 		newRefCmd(),
-		newRenderCmd(),
 		newServeCmd(),
 		newMCPCmd(),
 		newWatchCmd(),

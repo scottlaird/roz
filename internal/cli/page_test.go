@@ -83,7 +83,7 @@ func TestPageNoteRendersAsMarkdownAndLinks(t *testing.T) {
 		t.Fatalf("page set returned error: %v", err)
 	}
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestPageNoteRendersAsMarkdownAndLinks(t *testing.T) {
 func TestEmptySlotsDrawNothing(t *testing.T) {
 	db := initDB(t)
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestEmptySlotsDrawNothing(t *testing.T) {
 	if _, err := runCLI(t, "page", "set", "footer", "--db", db, "--body", "one note"); err != nil {
 		t.Fatalf("page set returned error: %v", err)
 	}
-	page, err = runCLI(t, "render", "--db", db)
+	page, err = renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestPageClearEmptiesWithoutDeleting(t *testing.T) {
 		t.Fatalf("page clear returned error: %v", err)
 	}
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}

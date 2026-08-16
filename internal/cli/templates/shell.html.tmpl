@@ -3,20 +3,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>roz{{with .Owner}} · {{.}}{{end}}</title>
 <link rel="icon" type="image/png" sizes="32x32" href="{{.Favicon}}">
-{{/* One stylesheet, and how it gets here depends on where "here" is.
-     `roz serve` links it, so a browser revalidates once and is told 304;
-     `roz render` inlines it, because that file is opened from disk as often
-     as it is served and a second request is a thing that can fail. One
-     source either way -- internal/static/roz.css -- so the two cannot
-     drift. Colours come from the verb's rank class, so a class that was
-     never styled is not expressible. */}}
-{{if .StylesheetURL -}}
+{{/* Served rather than inlined, so a browser fetches it once and is told 304
+     for every load after that. It was inlined while `roz render` wrote the
+     page to a file, where a linked stylesheet had nowhere to be fetched from;
+     nothing writes a file any more. */}}
 <link rel="stylesheet" href="{{.StylesheetURL}}">
-{{- else -}}
-<style>
-{{.Stylesheet}}
-</style>
-{{- end}}
 
 <div class="wrap">
   <header>

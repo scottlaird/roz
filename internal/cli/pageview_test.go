@@ -85,7 +85,7 @@ func breakView(t *testing.T, db, name string) {
 
 func pageHTML(t *testing.T, db string) string {
 	t.Helper()
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -101,24 +101,4 @@ func projectsTable(page string) string {
 	}
 	table, _, _ := strings.Cut(rest, "</table>")
 	return table
-}
-
-// TestRenderStandsAlone: the file `roz render` writes is opened from disk as
-// often as it is served, and a linked stylesheet has nowhere to be fetched
-// from there. The served page links it instead and is told 304.
-func TestRenderStandsAlone(t *testing.T) {
-	db := initDB(t)
-	addProject(t, db, "live work")
-
-	written := pageHTML(t, db)
-	if !strings.Contains(written, "<style>") {
-		t.Error("the written page does not carry its stylesheet")
-	}
-	if strings.Contains(written, `href="/static/`) {
-		t.Error("the written page links a stylesheet it cannot fetch")
-	}
-	// The CSS is really there, not an empty tag.
-	if !strings.Contains(written, "--paper:") {
-		t.Error("the inlined stylesheet is empty")
-	}
 }

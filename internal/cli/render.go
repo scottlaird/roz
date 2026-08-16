@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/scottlaird/roz/internal/store"
 )
 
@@ -81,60 +79,6 @@ const stylesheet = "roz.css"
 // horizon is how far ahead the calendar block looks. Two weeks is what a
 // weekly review can act on; beyond that the answer is "ask again later".
 const horizon = 14 * 24 * time.Hour
-
-func newRenderCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "render",
-		Short: "Regenerate the status page from the database",
-		Long: "The page is a view; the database is the truth. Nothing here is\n" +
-			"authoritative and nothing reads it back, so regenerating it is always\n" +
-			"safe.\n\n" +
-			"This version is three preformatted blocks and no design worth the\n" +
-			"name: the calendar for the next fortnight, the unblocked actions, and\n" +
-			"the live projects. It exists to be looked at, not admired.",
-		Args: cobra.NoArgs,
-		RunE: runRender,
-	}
-	cmd.Flags().String(flagOut, "-", "output path, or - for stdout")
-	return cmd
-}
-
-func runRender(cmd *cobra.Command, _ []string) error {
-	path, err := cmd.Flags().GetString(flagOut)
-	if err != nil {
-		return err
-	}
-
-	st, err := openStore(cmd)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	page, err := renderPage(cmd.Context(), st, time.Now(), false)
-	if err != nil {
-		return err
-	}
-
-	if path == "-" {
-		_, err := cmd.OutOrStdout().Write(page)
-		return err
-	}
-	if err := os.WriteFile(path, page, 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), path)
-	return nil
-}
-
-// renderPage builds the whole page in memory.
-//
-// In memory rather than streamed so that a failure half way through leaves
-// the previous page in place: a status page that is truncated looks like an
-// empty queue, which is the one wrong answer that matters.
-func renderPage(ctx context.Context, st *store.Store, now time.Time, live bool) ([]byte, error) {
-	return renderRoute(ctx, st, now, live, route{})
-}
 
 // renderRoute builds one page: the index, a listing, or one entity.
 //

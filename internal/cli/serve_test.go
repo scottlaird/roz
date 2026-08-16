@@ -23,7 +23,7 @@ func TestServeServesTheRenderedPage(t *testing.T) {
 	base := serving(t, db, "--no-sync", "--no-watch")
 
 	body := fetch(t, base+"/")
-	rendered, err := runCLI(t, "render", "--db", db)
+	rendered, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestServedPageIsLive(t *testing.T) {
 		t.Errorf("the served page does not listen for changes:\n%s", served)
 	}
 
-	written, err := runCLI(t, "render", "--db", db)
+	written, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}

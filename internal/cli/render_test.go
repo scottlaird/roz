@@ -1,13 +1,12 @@
 package cli
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/internal/static"
 )
 
 // renderedFixture builds a database with something in every block, and
@@ -59,7 +58,7 @@ func addWindow(t *testing.T, db, kind, label, starts, ends string) {
 func TestRender(t *testing.T) {
 	db := renderedFixture(t)
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -102,33 +101,12 @@ func TestRender(t *testing.T) {
 	}
 }
 
-func TestRenderToAFile(t *testing.T) {
-	db := renderedFixture(t)
-	path := filepath.Join(t.TempDir(), "status.html")
-
-	out, err := runCLI(t, "render", "--db", db, "--out", path)
-	if err != nil {
-		t.Fatalf("render --out returned error: %v", err)
-	}
-	if !strings.Contains(out, path) {
-		t.Errorf("render did not say where it wrote:\n%s", out)
-	}
-
-	written, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading the page: %v", err)
-	}
-	if !strings.Contains(string(written), "Split the pool config") {
-		t.Errorf("the file does not hold the page:\n%s", written)
-	}
-}
-
 // TestRenderEscapes: the blocks are inside <pre>, and a title is free text.
 func TestRenderEscapes(t *testing.T) {
 	db := initDB(t)
 	addAction(t, db, "--title", "fix <script>alert(1)</script> & friends", "--verb", "write")
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -147,7 +125,7 @@ func TestRenderProseIsMarkdown(t *testing.T) {
 	addAction(t, db, "--title", "the *old* pipeline", "--verb", "write",
 		"--why", "unblocks the *split*, once `roz sync github` runs")
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -170,7 +148,7 @@ func TestRenderProseIsMarkdown(t *testing.T) {
 func TestRenderEmpty(t *testing.T) {
 	db := initDB(t)
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -204,7 +182,7 @@ func TestTemplateIsTheOneOnDisk(t *testing.T) {
 	}
 
 	db := initDB(t)
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -233,7 +211,7 @@ func TestRenderSortsByPriority(t *testing.T) {
 	addAction(t, db, "--title", "loose work", "--verb", "write")
 	addAction(t, db, "--title", "urgent work", "--verb", "write", "--project", high)
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -366,7 +344,7 @@ func TestRenderReadsTheConfiguredJira(t *testing.T) {
 	addAction(t, db, "--title", "Close CDSS-1557", "--verb", "write",
 		"--why", "blocked on CDSS-1557")
 
-	before, err := runCLI(t, "render", "--db", db)
+	before, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -380,7 +358,7 @@ func TestRenderReadsTheConfiguredJira(t *testing.T) {
 		t.Fatalf("config set returned error: %v", err)
 	}
 
-	after, err := runCLI(t, "render", "--db", db)
+	after, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -395,7 +373,7 @@ func TestRenderReadsTheConfiguredJira(t *testing.T) {
 func TestRenderShowsTheOwner(t *testing.T) {
 	db := initDB(t)
 
-	before, err := runCLI(t, "render", "--db", db)
+	before, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -406,7 +384,7 @@ func TestRenderShowsTheOwner(t *testing.T) {
 	if _, err := runCLI(t, "config", "set", "--db", db, "--owner", "scott"); err != nil {
 		t.Fatalf("config set returned error: %v", err)
 	}
-	after, err := runCLI(t, "render", "--db", db)
+	after, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -427,7 +405,7 @@ func TestRenderPrefersTheEnvironment(t *testing.T) {
 	}
 
 	t.Setenv("ROZ_JIRA_BASE_URL", "https://override.example.com/browse")
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -448,7 +426,7 @@ func TestRenderProjectSummary(t *testing.T) {
 		"**Ranking**, then `unblocks_count`.\n\n- first\n- second")
 	addProject(t, db, "No summary here")
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -476,7 +454,7 @@ func TestRenderProjectTitleStaysLiteral(t *testing.T) {
 	db := initDB(t)
 	addProject(t, db, "the *old* pipeline", "--summary", "replaced by the *new* one")
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -498,7 +476,7 @@ func TestRenderProjectTitleStaysLiteral(t *testing.T) {
 func TestPageCarriesItsFavicon(t *testing.T) {
 	db := initDB(t)
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -524,7 +502,7 @@ func TestPageShowsAnExpiredSnooze(t *testing.T) {
 		t.Fatalf("action snooze returned error: %v", err)
 	}
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -549,7 +527,7 @@ func TestPageLeavesALiveSnoozeHidden(t *testing.T) {
 		t.Fatalf("action snooze returned error: %v", err)
 	}
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -581,7 +559,7 @@ func TestPageTooltipsLinksFromTheDatabase(t *testing.T) {
 	addAction(t, db, "--title", "look at "+key, "--verb", "decide",
 		"--why", "blocked on [that one](https://github.com/owner/repo/pull/1)")
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -600,7 +578,7 @@ func TestPageLeavesUntrackedLinksBare(t *testing.T) {
 	db := initDB(t)
 	addAction(t, db, "--title", "look at owner/other#99", "--verb", "decide")
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -619,7 +597,7 @@ func TestPageLeavesUntrackedLinksBare(t *testing.T) {
 func TestPageAnchorsEveryEntityExactlyOnce(t *testing.T) {
 	db := renderedFixture(t)
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -645,7 +623,7 @@ func TestPageLinksAnActionToItsProject(t *testing.T) {
 	project := addProject(t, db, "the project")
 	addAction(t, db, "--title", "do it", "--verb", "decide", "--project", project)
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -670,7 +648,7 @@ func TestPageLinksReferencesInProse(t *testing.T) {
 	addAction(t, db, "--title", "do it", "--verb", "decide",
 		"--why", "waits for "+project+", and for SL999 which is nobody")
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -699,7 +677,7 @@ func TestATrackerIssueIsALink(t *testing.T) {
 		t.Fatalf("config set returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -722,7 +700,7 @@ func TestAGitHubIssueUsesTheShortName(t *testing.T) {
 	linkIssue(t, db, project, "github", "scottlaird/roz#101")
 	linkIssue(t, db, project, "github", "someone/else#7")
 
-	before, err := runCLI(t, "render", "--db", db)
+	before, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -734,7 +712,7 @@ func TestAGitHubIssueUsesTheShortName(t *testing.T) {
 		"--short-name", "roz"); err != nil {
 		t.Fatalf("repo track returned error: %v", err)
 	}
-	after, err := runCLI(t, "render", "--db", db)
+	after, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -771,7 +749,7 @@ func TestATrackerIssueCarriesItsSummary(t *testing.T) {
 		t.Fatalf("issue observe returned error: %v", err)
 	}
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -811,7 +789,7 @@ func TestAPullRequestChipUsesTheShortName(t *testing.T) {
 	}
 	addAction(t, db, "--title", "Review it", "--verb", "review", "--pr", "scottlaird/roz#39")
 
-	out, err := runCLI(t, "render", "--db", db)
+	out, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -837,7 +815,7 @@ func TestIssueCellKeepsAKeyWithItsState(t *testing.T) {
 	}
 	addAction(t, db, "--title", "Do it", "--verb", "write", "--project", project)
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
@@ -845,8 +823,13 @@ func TestIssueCellKeepsAKeyWithItsState(t *testing.T) {
 	if !strings.Contains(page, `class="issue"`) {
 		t.Errorf("the key and its state are not held together:\n%s", page)
 	}
-	// And the rule that keeps that run whole is present.
-	if !strings.Contains(page, ".issue{white-space:nowrap}") {
+	// And the rule that keeps that run whole is in the stylesheet, which the
+	// page links rather than carries.
+	css, err := static.Read("roz.css")
+	if err != nil {
+		t.Fatalf("reading the stylesheet: %v", err)
+	}
+	if !strings.Contains(css, ".issue{white-space:nowrap}") {
 		t.Error("the stylesheet does not keep an issue on one line")
 	}
 	// The pair is inside one element, rather than the state trailing outside
@@ -869,7 +852,7 @@ func TestIssueListHasNoStrayGapBeforeItsComma(t *testing.T) {
 	}
 	addAction(t, db, "--title", "Do it", "--verb", "write", "--project", project)
 
-	page, err := runCLI(t, "render", "--db", db)
+	page, err := renderIndex(t, db)
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}

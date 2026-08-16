@@ -180,6 +180,16 @@ func pageFixture(t *testing.T) (string, pageIDs) {
 	return db, ids
 }
 
+// renderIndex builds the index the way `roz serve` does.
+//
+// It replaces `runCLI(t, "render", …)`: the command is gone, and the tests
+// that used it were never about the command — they were about what the page
+// says. Same two-value shape, so the assertions around it are untouched.
+func renderIndex(t *testing.T, db string) (string, error) {
+	t.Helper()
+	return renderRouteFor(t, db, route{})
+}
+
 func routeHTML(t *testing.T, db string, at route) string {
 	t.Helper()
 	body, err := renderRouteFor(t, db, at)

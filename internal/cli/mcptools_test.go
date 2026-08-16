@@ -35,7 +35,7 @@ func TestToolsAreTheCommands(t *testing.T) {
 	for _, want := range []string{
 		"project_add", "project_close", "action_add", "action_close",
 		"action_add-blocker", "pr_track", "pr_announce", "repo_track",
-		"note", "exception", "sync", "render", "verb_list", "pipeline_list",
+		"note", "exception", "sync", "verb_list", "pipeline_list",
 		"watch",
 	} {
 		if !listed[want] {
@@ -45,7 +45,10 @@ func TestToolsAreTheCommands(t *testing.T) {
 
 	// The ones an agent has no business calling, and cobra's own. watch is
 	// not among them: it is exposed, bounded to its read-once form.
-	for _, unwanted := range []string{"init", "serve", "syncer", "mcp", "completion", "help"} {
+	// render is here now: it was a command and is not one any more. The page
+	// lives at a URL, and a tool that returned a wall of HTML was never the
+	// shape an agent wanted anyway.
+	for _, unwanted := range []string{"init", "serve", "syncer", "mcp", "completion", "help", "render"} {
 		if listed[unwanted] {
 			t.Errorf("%s is exposed as a tool", unwanted)
 		}

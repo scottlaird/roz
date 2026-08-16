@@ -82,7 +82,6 @@ directory.
 | **other** | |
 | `roz calendar add` / `show` / `list` / `set` | Oncall, PTO and holidays. |
 | `roz page set` / `show` / `list` / `clear` | Prose the page places, keyed by slot. |
-| `roz render` | Regenerate the status page: calendar, queue, what is merely waiting, and the projects table. Prose fields render as Markdown, and GitHub and Jira identifiers become links wherever they are written; Jira needs `roz config set`. |
 | `roz verify` | Record that a project or action was checked against reality. Feeds `--sort staleness`. |
 | `roz db backup` / `restore` | Copy the database out with `VACUUM INTO`, and put one back. |
 
@@ -939,7 +938,7 @@ NA7 why: "" → "unblocks the *split*, once `roz sync github` runs"
 ```
 
 The database keeps what you typed. `show -o json` returns the source, the
-event log records the source, and only `roz render` turns it into HTML — so
+event log records the source, and only the page turns it into HTML — so
 nothing is lost if you decide later that a field should have been plain.
 
 On the page, an action's `--why` sits under its title in the queue, and a
@@ -1257,8 +1256,10 @@ The tooltip survives either way, which took teaching the linker to read back
 the URLs it writes. What an identifier means does not depend on where the link
 goes.
 
-`roz render` still writes the index as one file, stylesheet inlined. It cannot
-write the entity pages: they live at URLs, and a URL is not a file.
+There is no longer a way to write the page to a file. `roz render` existed
+before there was a server and produced one document; entity pages live at URLs,
+and a URL is not a file, so it would have produced a shrinking fraction of the
+site. `roz serve` is the page.
 
 ## For an agent
 
@@ -1269,17 +1270,20 @@ and stdout, for an agent to call without shelling out.
 than written out again, so the two cannot drift: the name is the command path
 with an underscore (`action add` → `action_add`), the description is that
 command's own help, and the arguments are its flags and whatever its usage
-line names. Forty-six of them:
+line names. Sixty-seven of them:
 
 | | |
 |---|---|
 | settings | `config_show` `config_set` |
-| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_link-issue` `project_unlink-issue` |
-| actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_close` |
-| GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `pr_track` `pr_set` `pr_show` `pr_list` `pr_announce` `sync` |
+| projects | `project_add` `project_show` `project_list` `project_set` `project_snooze` `project_wake` `project_supersede` `project_close` `project_block` `project_unblock` `project_link-issue` `project_unlink-issue` |
+| actions | `action_add` `action_show` `action_list` `action_set` `action_snooze` `action_wake` `action_add-blocker` `action_hide-behind` `action_link-pr` `action_wait-ref` `action_wait-issue` `action_close` |
+| GitHub | `repo_track` `repo_show` `repo_list` `repo_set` `repo_prefer` `pr_track` `pr_set` `pr_show` `pr_list` `pr_announce` `sync` `codeowners` `ref_list` |
+| reviewers | `owner_set` `owner_list` |
+| views | `view_add` `view_list` `view_show` `view_drop` |
+| the page | `page_show` `page_list` `page_set` `page_clear` |
 | the log | `note` `exception` `watch` (bounded to one read) |
 | tracker issues | `issue_show` `issue_list` `issue_observe` |
-| other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `pipeline_list` `render` `verify` |
+| other | `calendar_add` `calendar_show` `calendar_list` `calendar_set` `verb_list` `verb_set` `pipeline_add` `pipeline_show` `pipeline_list` `pipeline_set` `pipeline_retire` `verify` |
 
 **Left out**, because they are not an agent's to call: `init`, which decides
 where the database lives, and `serve`, `syncer` and `mcp`, which never return.
@@ -2599,10 +2603,9 @@ because at 16px the beads are noise and a hairline frame smears into a grey
 band. Everything else in `assets/` is generated from those two.
 
 The page carries the 32px icon inline as a data URI rather than linking a
-file. The page is one file by design — `roz render` writes it to disk as
-readily as `roz serve` serves it — and an icon fetched over a second request
-is one more thing that can fail, or simply not be there when the file is
-opened from disk.
+file. It predates the static handler and has not been worth moving: under a
+kilobyte of base64 is cheaper than the request would be, and unlike the
+stylesheet it does not change.
 
 There is no rasteriser with an alpha channel on a stock macOS box, so
 `assets/unmatte.py` renders each size twice through Quick Look, once over

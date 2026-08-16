@@ -2333,6 +2333,38 @@ the predicate it names are checked against the build when the database opens,
 so a verb naming a predicate this binary lacks is refused at startup. Editing
 those from the CLI would turn that check into a failure at closing time.
 
+### Adding one
+
+`roz verb add` is where a verb's meaning is chosen, and the only place it can
+be. The vocabulary was a table with no command that wrote rows to it, so a verb
+could only be added by hand-written SQL — which also meant it never reached the
+log. That is the complaint #132 made about pipelines, answered the same way.
+
+```console
+$ roz verb add wait_merge --closes predicate --predicate pr_merged     --rank-class wait --requires-pr --label "wait for a merge"
+wait_merge: predicate, wait
+```
+
+The predicate is checked against the registry here, because a verb naming one
+this build lacks stops the database opening at all — loudly, at startup, for
+every command afterwards. Adding a verb is therefore a way to make roz stop
+working, and the one place a verb is written is the one place that can prevent
+it.
+
+`--active=false` withdraws a verb. Rows are never deleted: closed actions and
+log entries reference retired verbs, and dropping one would take their meaning
+with it. Re-adding a retired verb is refused, pointing at the flag that brings
+it back rather than at a constraint.
+
+**`wait_merge`** came out of this. `pr_merged` was named only by `merge`, which
+is `click` with a one-day allowance because it describes a button *you* press on
+a pull request *you* own; aimed at an upstream pull request it puts a click
+nobody can make in the queue and marks it overdue the next day. `wait_merge`
+names the same predicate and differs in the two settings that say whose pull
+request it is — and has no allowance, for `wait_ref`'s reason: somebody else's
+merge is not yours to influence, so an exception about it would be a durable
+item nothing can clear.
+
 The clock starts at the latest of four moments, so that it can only ever be
 pushed outwards: when the action was created, when it last became actionable,
 `waiting_since` — when reviewers could first have seen the pull request, which

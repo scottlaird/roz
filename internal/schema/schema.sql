@@ -863,6 +863,35 @@ INSERT INTO view (name, entity, filter, sort, description, created_at, updated_a
    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
+-- Three more, seeded because the listing pages have a view picker and a picker
+-- with two entries teaches nobody what a view is for. The rule they follow is
+-- that a seeded view is a question roz already answers some other way -- these
+-- are `action list --expired`, `project list --orphaned`, and `--sort
+-- staleness` over open actions -- so the seed set stays definitions rather
+-- than taste. See 0037, which says why unchecked_actions is not called
+-- stale_actions.
+INSERT INTO view (name, entity, filter, sort, description, created_at, updated_at) VALUES
+  ('expired_actions', 'action',
+   'state == "snoozed" && snooze_until != null && snooze_until < now',
+   'priority',
+   'Snoozed until a date that has passed. A snooze nobody is watching is how work goes quiet.',
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+  ('unchecked_actions', 'action',
+   'closed_at == null',
+   'staleness',
+   'Open work, longest un-checked first. The same rows as open_actions, asked in the other order: what nobody has looked at, rather than what matters most.',
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+  ('stalled_projects', 'project',
+   'status != "done" && status != "retired" && status != "superseded" && snooze_until == null && !actions.exists(a, a.closed_at == null)',
+   'priority',
+   'Live projects with no open action and no snooze: work that is on no surface anyone reads.',
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
 -- ── indexes for the queries that run every render ────────────────────
 CREATE INDEX action_open     ON action(state, verb) WHERE closed_at IS NULL;
 CREATE INDEX action_expired  ON action(snooze_until)

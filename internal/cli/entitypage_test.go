@@ -328,3 +328,53 @@ func TestActionsPageRejectsAViewItCannotShow(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectsPageShowsOneView. The same mechanism as the actions page, which
+// is the point: /projects and /actions should not come to disagree about what
+// naming a view means.
+func TestProjectsPageShowsOneView(t *testing.T) {
+	db, ids := pageFixture(t)
+	if _, err := runCLI(t, "view", "add", "finished", "--db", db,
+		"--entity", "project", "--filter", `status == "done"`); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	viewed := routeHTML(t, db, route{kind: pageProjects, view: "finished"})
+	if !strings.Contains(viewed, ids.closed) {
+		t.Errorf("the view dropped the project it selects:\n%s", viewed)
+	}
+	if strings.Contains(viewed, ">"+ids.project+"<") {
+		t.Errorf("the view kept a project it filters out:\n%s", viewed)
+	}
+	if !strings.Contains(viewed, `href="/projects"`) {
+		t.Errorf("the picker offers no way back to everything:\n%s", viewed)
+	}
+
+	// An action view is not this listing's, so it is a wrong address.
+	if _, err := renderRouteFor(t, db, route{kind: pageProjects, view: "open_actions"}); !errors.Is(err, errNoSuchPage) {
+		t.Errorf("an action view on /projects returned %v, want a no-such-page error", err)
+	}
+}
+
+// TestProjectsPageDrawsTheTreeOnlyWithoutAView: indenting a project under a
+// parent the view filtered out would draw a hierarchy that is not there.
+func TestProjectsPageDrawsTheTreeOnlyWithoutAView(t *testing.T) {
+	db, ids := pageFixture(t)
+	if _, err := runCLI(t, "view", "add", "everything", "--db", db,
+		"--entity", "project", "--filter", `id != ""`); err != nil {
+		t.Fatalf("view add returned error: %v", err)
+	}
+
+	all := routeHTML(t, db, route{kind: pageProjects})
+	if !strings.Contains(all, `class="depth1`) {
+		t.Fatalf("the default listing does not indent %s under its parent:\n%s", ids.child, all)
+	}
+	viewed := routeHTML(t, db, route{kind: pageProjects, view: "everything"})
+	if strings.Contains(viewed, `class="depth1`) {
+		t.Errorf("a view drew the tree:\n%s", viewed)
+	}
+	// Same rows either way — this is about the drawing, not the selection.
+	if !strings.Contains(viewed, ids.child) {
+		t.Errorf("the flat listing lost a child project:\n%s", viewed)
+	}
+}

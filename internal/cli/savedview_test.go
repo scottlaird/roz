@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -194,4 +195,65 @@ func TestDropForgetsTheViewAndNothingElse(t *testing.T) {
 	if !strings.Contains(out, project) {
 		t.Errorf("dropping a view took the listing with it:\n%s", out)
 	}
+}
+
+// TestSeededViewsAreQuestionsRozAlreadyAnswers is the rule 0037 wrote down: a
+// seeded view mirrors an existing flag, so the seed set stays definitions
+// rather than somebody's working style. It also checks each one still
+// compiles, which a hand-written SQL seed cannot check for itself.
+func TestSeededViewsAreQuestionsRozAlreadyAnswers(t *testing.T) {
+	db := initDB(t)
+
+	for _, tt := range []struct {
+		view string
+		flag []string
+	}{
+		{view: "expired_actions", flag: []string{"action", "list", "--expired"}},
+		{view: "open_actions", flag: []string{"action", "list", "--open"}},
+		{view: "stalled_projects", flag: []string{"project", "list", "--orphaned"}},
+		// open_projects is not here: it is seeded under 0036's rule rather
+		// than 0037's — the page reads it by name — and `project list` has no
+		// --open to compare it against.
+	} {
+		t.Run(tt.view, func(t *testing.T) {
+			entity := tt.flag[0]
+			byView, err := runCLI(t, entity, "list", "--db", db, "--view", tt.view, "--fields", "id")
+			if err != nil {
+				t.Fatalf("%s list --view %s returned error: %v", entity, tt.view, err)
+			}
+			byFlag, err := runCLI(t, append(append([]string{}, tt.flag...), "--db", db, "--fields", "id")...)
+			if err != nil {
+				t.Fatalf("%v returned error: %v", tt.flag, err)
+			}
+			if byView != byFlag {
+				t.Errorf("%s and %v select different rows:\n--view:\n%s\n--flag:\n%s",
+					tt.view, tt.flag, byView, byFlag)
+			}
+		})
+	}
+}
+
+// TestUncheckedActionsIsOpenActionsInAnotherOrder. The one seeded view that is
+// not a filter: same rows, sorted by what nobody has looked at. If it ever
+// selects a different set, one of the two is wrong.
+func TestUncheckedActionsIsOpenActionsInAnotherOrder(t *testing.T) {
+	db := initDB(t)
+
+	unchecked, err := runCLI(t, "action", "list", "--db", db, "--view", "unchecked_actions", "--fields", "id")
+	if err != nil {
+		t.Fatalf("action list --view unchecked_actions returned error: %v", err)
+	}
+	open, err := runCLI(t, "action", "list", "--db", db, "--view", "open_actions", "--fields", "id")
+	if err != nil {
+		t.Fatalf("action list --view open_actions returned error: %v", err)
+	}
+	if sortedLines(unchecked) != sortedLines(open) {
+		t.Errorf("unchecked_actions and open_actions select different rows:\n%s\n%s", unchecked, open)
+	}
+}
+
+func sortedLines(out string) string {
+	lines := nonEmptyLines(out)
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
 }

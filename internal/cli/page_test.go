@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/scottlaird/roz/internal/store"
 )
 
 func TestPageSetAndShow(t *testing.T) {
@@ -162,5 +165,135 @@ func TestPageNoteRefusesRawHTML(t *testing.T) {
 	if _, err := runCLI(t, "page", "set", "intro", "--db", db,
 		"--body", "<script>alert(1)</script>"); err == nil {
 		t.Error("raw HTML was accepted into a note")
+	}
+}
+
+// TestPageListAgreesWithItselfAcrossFormats is what #192 was really about: the
+// table listed every slot and -o json listed only the written ones, so the two
+// formats disagreed about what this listing contains.
+func TestPageListAgreesWithItselfAcrossFormats(t *testing.T) {
+	db := initDB(t)
+	if _, err := runCLI(t, "page", "set", "intro", "--db", db, "--body", "Something."); err != nil {
+		t.Fatalf("page set returned error: %v", err)
+	}
+
+	table, err := runCLI(t, "page", "list", "--db", db)
+	if err != nil {
+		t.Fatalf("page list returned error: %v", err)
+	}
+	shown, err := runCLI(t, "page", "list", "--db", db, "-o", "json")
+	if err != nil {
+		t.Fatalf("page list -o json returned error: %v", err)
+	}
+
+	var slots []struct {
+		Key       string `json:"key"`
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal([]byte(shown), &slots); err != nil {
+		t.Fatalf("page list -o json returned %q: %v", shown, err)
+	}
+	if len(slots) != len(store.Slots) {
+		t.Fatalf("-o json listed %d slots, want all %d", len(slots), len(store.Slots))
+	}
+	for i, slot := range store.Slots {
+		if slots[i].Key != slot {
+			t.Errorf("slot %d = %q, want %q: the order is where they sit on the page", i, slots[i].Key, slot)
+		}
+		if !strings.Contains(table, slot) {
+			t.Errorf("the table omits %s:\n%s", slot, table)
+		}
+	}
+
+	// A slot nobody has written to says so with empty columns rather than by
+	// being absent — created_at included, which is how the JSON says what the
+	// table says with a dash.
+	for _, slot := range slots[1:] {
+		if slot.Body != "" || slot.CreatedAt != "" {
+			t.Errorf("%s was never written but reads as %+v", slot.Key, slot)
+		}
+	}
+}
+
+// TestPageListTakesTheListingFlags. It was the last listing hand-building its
+// own table, which is why it had none of these.
+func TestPageListTakesTheListingFlags(t *testing.T) {
+	db := initDB(t)
+	if _, err := runCLI(t, "page", "set", "intro", "--db", db,
+		"--body", "The **queue** for this week.\n\nSecond paragraph."); err != nil {
+		t.Fatalf("page set returned error: %v", err)
+	}
+
+	t.Run("fields", func(t *testing.T) {
+		out, err := runCLI(t, "page", "list", "--db", db, "--fields", "key,body")
+		if err != nil {
+			t.Fatalf("page list --fields returned error: %v", err)
+		}
+		if strings.Contains(out, "FIRST LINE") {
+			t.Errorf("--fields did not narrow the columns:\n%s", out)
+		}
+		// A note is Markdown and can be paragraphs of it. A cell with a
+		// newline in it is not a cell.
+		if got := len(nonEmptyLines(out)); got != 5 {
+			t.Errorf("got %d lines, want a header and one per slot:\n%s", got, out)
+		}
+	})
+
+	t.Run("csv", func(t *testing.T) {
+		out, err := runCLI(t, "page", "list", "--db", db, "-o", "csv")
+		if err != nil {
+			t.Fatalf("page list -o csv returned error: %v", err)
+		}
+		if !strings.HasPrefix(out, "key,updated_at,first_line") {
+			t.Errorf("csv header = %q", strings.SplitN(out, "\n", 2)[0])
+		}
+	})
+
+	t.Run("filter", func(t *testing.T) {
+		out, err := runCLI(t, "page", "list", "--db", db, "--filter", `body != ""`, "--fields", "key")
+		if err != nil {
+			t.Fatalf("page list --filter returned error: %v", err)
+		}
+		if got := len(nonEmptyLines(out)); got != 2 {
+			t.Errorf("got %d lines, want the header and the one written slot:\n%s", got, out)
+		}
+		if !strings.Contains(out, "intro") {
+			t.Errorf("the filter kept the wrong slot:\n%s", out)
+		}
+	})
+
+	// No --sort, deliberately: the rows are the slots and the order is where
+	// they sit on the page, which is the only order that means anything.
+	t.Run("no sort", func(t *testing.T) {
+		_, err := runCLI(t, "page", "list", "--db", db, "--sort", "key")
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("page list --sort returned %v, want an unknown-flag error", err)
+		}
+	})
+}
+
+// TestPageListKeepsTheSourceInMachineFormats: the one-line body is a rendering
+// for the table. Anything reading json or csv wants what was written.
+func TestPageListKeepsTheSourceInMachineFormats(t *testing.T) {
+	db := initDB(t)
+	body := "The **queue** for this week.\n\nSecond paragraph."
+	if _, err := runCLI(t, "page", "set", "intro", "--db", db, "--body", body); err != nil {
+		t.Fatalf("page set returned error: %v", err)
+	}
+
+	shown, err := runCLI(t, "page", "list", "--db", db, "--fields", "key,body", "-o", "json")
+	if err != nil {
+		t.Fatalf("page list -o json returned error: %v", err)
+	}
+	var slots []struct {
+		Key  string `json:"key"`
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(shown), &slots); err != nil {
+		t.Fatalf("page list -o json returned %q: %v", shown, err)
+	}
+	if slots[0].Body != body {
+		t.Errorf("body = %q, want the source as written", slots[0].Body)
 	}
 }

@@ -1,13 +1,14 @@
 package cli
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/scottlaird/roz/internal/markdown"
 	"github.com/scottlaird/roz/internal/store"
 )
 
@@ -180,12 +181,48 @@ func newPageListCmd() *cobra.Command {
 		Short: "The slots, and what is in them",
 		Long: "Every slot, in the order it appears on the page, whether or not it\n" +
 			"holds anything. An empty one is not a gap: it is a place prose could\n" +
-			"go, and listing it is how anyone discovers that.",
+			"go, and listing it is how anyone discovers that.\n\n" +
+			"That is why this listing has no --sort. The rows are the slots and\n" +
+			"the order is where they sit on the page, which is the only order that\n" +
+			"means anything; sorting them by when they were written would be a\n" +
+			"list of the same four things in an order nobody reads them in.\n\n" +
+			"A slot nobody has written to has no row behind it, so its columns are\n" +
+			"empty rather than absent — including created_at, which is how -o json\n" +
+			"says the same thing the table says with a dash.",
 		Args: cobra.NoArgs,
 		RunE: runPageList,
 	}
-	addOutputFlag(cmd)
+	addListingFlags(cmd, pageColumns)
 	return cmd
+}
+
+// pageColumns is the slot listing.
+//
+// first_line is derived: a note is Markdown and can be a page of it, so what a
+// listing wants is enough to recognise it by. body is there under --fields for
+// anything that wants the whole thing.
+var pageColumns = columnSet[*store.PageNote]{
+	blank: &store.PageNote{},
+	declared: []column[*store.PageNote]{
+		{name: "key", header: "SLOT"},
+		{name: "updated_at", header: "SET",
+			render: func(n *store.PageNote, _ renderContext) string {
+				return dateCell(sql.NullString{String: n.UpdatedAt, Valid: n.UpdatedAt != ""})
+			}},
+		// A note is Markdown and can be paragraphs of it, so the table gets
+		// it on one line — a cell with a newline in it is not a cell. -o json
+		// and -o csv keep the source, which is what a consumer wants.
+		{name: "body",
+			render: func(n *store.PageNote, _ renderContext) string {
+				return markdown.Line(n.Body)
+			}},
+		{name: "first_line", header: "FIRST LINE",
+			render: func(n *store.PageNote, _ renderContext) string {
+				return firstLine(n.Body)
+			}},
+	},
+	defaults: []string{"key", "updated_at", "first_line"},
+	empty:    "no slots",
 }
 
 func runPageList(cmd *cobra.Command, _ []string) error {
@@ -200,36 +237,26 @@ func runPageList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	format, err := outputFrom(cmd)
-	if err != nil {
-		return err
-	}
-	if format == outputJSON {
-		ordered := make([]*store.PageNote, 0, len(store.Slots))
-		for _, slot := range store.Slots {
-			if note, ok := notes[slot]; ok {
-				ordered = append(ordered, note)
-			}
-		}
-		encoded, err := store.MarshalRecords(ordered)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(encoded))
-		return err
-	}
-
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SLOT\tSET\tFIRST LINE")
+	// The rows are the slots, so a slot with nothing in it gets a record with
+	// nothing in it. #192 asked whether to do this or to let a row carry an
+	// absent record, and this is the cleaner of the two: the alternative
+	// teaches the whole marshalling path about a nil record for one listing's
+	// sake, and what it would then emit into a JSON array is `null`, which is
+	// worse for a reader than a slot with an empty body.
+	//
+	// It also settles a disagreement. The table listed every slot and -o json
+	// listed only the written ones, so the two formats did not agree about
+	// what this listing contains. They do now.
+	rows := make([]*store.PageNote, 0, len(store.Slots))
 	for _, slot := range store.Slots {
-		note, ok := notes[slot]
-		if !ok || note.Body == "" {
-			fmt.Fprintf(w, "%s\t-\t-\n", slot)
+		if note, ok := notes[slot]; ok {
+			rows = append(rows, note)
 			continue
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", slot, shortDate(note.UpdatedAt), firstLine(note.Body))
+		rows = append(rows, &store.PageNote{Key: slot})
 	}
-	return w.Flush()
+
+	return runListing(cmd, pageColumns, rows, renderContext{})
 }
 
 // firstLine is enough of a note to recognise it in a listing.

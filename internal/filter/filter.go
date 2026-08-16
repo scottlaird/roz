@@ -37,7 +37,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/cel-go/cel"
 	celast "github.com/google/cel-go/common/ast"
@@ -110,6 +113,14 @@ func Compile(blank any, expr string) (*Filter, error) {
 	for _, c := range columns {
 		f.declared = append(f.declared, c.Name)
 	}
+	// One moment for the whole filter, before it is split: two terms that
+	// disagreed about the time could answer a question no instant would.
+	expr, err = withClock(env, expr, time.Now().UTC().Format(timeFormat))
+	if err != nil {
+		return nil, err
+	}
+	f.source = expr
+
 	terms, err := conjuncts(env, expr)
 	if err != nil {
 		return nil, err
@@ -354,6 +365,122 @@ func compileTerm(env *cel.Env, expr string) (*cel.Ast, error) {
 		return nil, fmt.Errorf("--filter %q: %w", expr, issues.Err())
 	}
 	return ast, nil
+}
+
+// withClock replaces `now` with the moment this filter was compiled.
+//
+// Substituted into the source rather than bound as a variable, because the
+// allow-list pushes down a comparison against a *literal* and a bound variable
+// is an identifier in the tree. `snooze_until < now` becomes
+// `snooze_until < "2026-08-15T20:00:00.000Z"`, which is a shape SQLite can be
+// trusted with — so a filter about time reaches the query rather than reading
+// every row.
+//
+// At the offsets the parser recorded, not by searching the text: `now` occurs
+// inside `nowhere` and inside a string literal, and only the parser knows
+// which occurrences are the identifier.
+//
+// cel-go's inlining optimizer would have been the obvious tool and is not: it
+// wraps a variable used more than once in a `cel.bind`, which is a macro the
+// converter cannot take, so `a < now && b < now` would have stopped pushing
+// down exactly when it started being useful.
+//
+// One moment for the whole filter, fixed when it is compiled. A clock that
+// moved between terms could answer a question no instant would.
+func withClock(env *cel.Env, expr string, at string) (string, error) {
+	ast, issues := env.Parse(expr)
+	if issues != nil && issues.Err() != nil {
+		return "", issues.Err()
+	}
+	info := ast.NativeRep().SourceInfo()
+
+	var spans []celast.OffsetRange
+	var walk func(celast.Expr)
+	walk = func(n celast.Expr) {
+		if n == nil {
+			return
+		}
+		if n.Kind() == celast.IdentKind && n.AsIdent() == nowVariable {
+			if span, ok := info.GetOffsetRange(n.ID()); ok {
+				spans = append(spans, span)
+			}
+		}
+		switch n.Kind() {
+		case celast.SelectKind:
+			walk(n.AsSelect().Operand())
+		case celast.CallKind:
+			call := n.AsCall()
+			walk(call.Target())
+			for _, arg := range call.Args() {
+				walk(arg)
+			}
+		case celast.ListKind:
+			for _, element := range n.AsList().Elements() {
+				walk(element)
+			}
+		case celast.ComprehensionKind:
+			c := n.AsComprehension()
+			walk(c.IterRange())
+			walk(c.LoopCondition())
+			walk(c.LoopStep())
+			walk(c.Result())
+		}
+	}
+	walk(ast.NativeRep().Expr())
+	if len(spans) == 0 {
+		return expr, nil
+	}
+
+	// Back to front, so replacing one does not move the next.
+	sort.Slice(spans, func(i, j int) bool { return spans[i].Start > spans[j].Start })
+	literal := strconv.Quote(at)
+	rewritten := expr
+	for _, span := range spans {
+		if int(span.Start) > len(rewritten) || int(span.Stop) > len(rewritten) {
+			return "", fmt.Errorf("the clock does not fit in --filter %q", expr)
+		}
+		rewritten = rewritten[:span.Start] + literal + rewritten[span.Stop:]
+	}
+	return rewritten, nil
+}
+
+// timeFormat is the store's, because a filter compares against stored
+// timestamps as text.
+const timeFormat = "2006-01-02T15:04:05.000Z"
+
+// mentionsIdent reports whether an expression names an identifier.
+func mentionsIdent(e celast.Expr, name string) bool {
+	found := false
+	var walk func(celast.Expr)
+	walk = func(n celast.Expr) {
+		if n == nil || found {
+			return
+		}
+		switch n.Kind() {
+		case celast.IdentKind:
+			found = found || n.AsIdent() == name
+		case celast.SelectKind:
+			walk(n.AsSelect().Operand())
+		case celast.CallKind:
+			call := n.AsCall()
+			walk(call.Target())
+			for _, arg := range call.Args() {
+				walk(arg)
+			}
+		case celast.ListKind:
+			for _, element := range n.AsList().Elements() {
+				walk(element)
+			}
+		case celast.ComprehensionKind:
+			c := n.AsComprehension()
+			walk(c.IterRange())
+			walk(c.LoopCondition())
+			walk(c.LoopStep())
+			walk(c.Result())
+		}
+	}
+	walk(e)
+	return found
 }
 
 // SQL is what the query should carry: a WHERE fragment and its arguments,

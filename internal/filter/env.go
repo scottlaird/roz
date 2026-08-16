@@ -22,6 +22,16 @@ import (
 // there is nothing to disambiguate and no reason to make anybody type it.
 const tableName = "row"
 
+// nowVariable is the clock, and the only name in the vocabulary that is not a
+// column or a relation.
+//
+// Filters about time are the ones people actually write — "snoozed past its
+// date", "waiting since before Friday" — and every one of them needs a value
+// the expression cannot supply. It is a string because roz's timestamps are
+// strings and compare as text: ISO-8601 in UTC, where lexical and
+// chronological order agree.
+const nowVariable = "now"
+
 // envFor declares one variable per column, so a filter can be written in the
 // same names --fields and --sort already accept.
 //
@@ -36,6 +46,7 @@ func envFor(columns []store.ColumnType, joins *joinEnv) (*cel.Env, error) {
 	for _, c := range columns {
 		opts = append(opts, cel.Variable(c.Name, cel.DynType))
 	}
+	opts = append(opts, cel.Variable(nowVariable, cel.StringType))
 	if joins != nil {
 		opts = append(opts, joins.declare()...)
 	}

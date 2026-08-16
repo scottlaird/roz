@@ -58,10 +58,7 @@ var actionFlagFilters = map[string]flagMeaning{
 			"is a column of the action",
 	},
 	"waiting": {note: "the same machinery as --unblocked, inverted"},
-	"expired": {
-		filter: `state == "snoozed" && snooze_until < now`,
-		note:   "once a filter has a clock; there is no `now` in the vocabulary yet",
-	},
+	"expired": {filter: `state == "snoozed" && snooze_until < now`, exact: true},
 }
 
 // projectFlagFilters is what `project list`'s flags mean.
@@ -72,10 +69,7 @@ var projectFlagFilters = map[string]flagMeaning{
 			`snooze_until == null && !actions.exists(a, a.closed_at == null)`,
 		exact: true,
 	},
-	"expired": {
-		filter: `status == "snoozed" && snooze_until < now`,
-		note:   "once a filter has a clock; there is no `now` in the vocabulary yet",
-	},
+	"expired": {filter: `status == "snoozed" && snooze_until < now`, exact: true},
 }
 
 // explainFlags prints what the flags somebody actually passed would be as a

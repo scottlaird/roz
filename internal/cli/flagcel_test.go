@@ -38,6 +38,8 @@ func TestFlagsAndFiltersAgree(t *testing.T) {
 		{listing: "action", flag: []string{"--status", "ready"}, known: actionFlagFilters, name: "status"},
 		{listing: "project", flag: []string{"--status", "active"}, known: projectFlagFilters, name: "status"},
 		{listing: "project", flag: []string{"--orphaned"}, known: projectFlagFilters, name: "orphaned"},
+		{listing: "project", flag: []string{"--expired"}, known: projectFlagFilters, name: "expired"},
+		{listing: "action", flag: []string{"--expired"}, known: actionFlagFilters, name: "expired"},
 	}
 
 	for _, tc := range tests {
@@ -118,8 +120,21 @@ func fixtureForFlags(t *testing.T) string {
 	// The open one is a `write`, which closes when a person says so. A merge
 	// step against the merged pull request would settle the moment it was
 	// created, leaving nothing for --open to find.
+	// Snoozed to a date that has passed, so --expired has something to find
+	// and something to leave out.
+	stale := addProject(t, db, "snoozed too long")
+	if _, err := runCLI(t, "project", "snooze", "--db", db, stale,
+		"--snooze-until", "2020-01-01"); err != nil {
+		t.Fatalf("project snooze returned error: %v", err)
+	}
+
 	live := addProject(t, db, "live work")
 	addAction(t, db, "--title", "write it", "--verb", "write", "--project", live)
+	overdue := addAction(t, db, "--title", "later", "--verb", "write", "--project", live)
+	if _, err := runCLI(t, "action", "snooze", "--db", db, overdue,
+		"--snooze-until", "2020-01-01"); err != nil {
+		t.Fatalf("action snooze returned error: %v", err)
+	}
 	addAction(t, db, "--title", "merge it", "--verb", "merge", "--project", live, "--pr", key)
 	addProject(t, db, "nobody is working on this")
 	done := addProject(t, db, "finished")

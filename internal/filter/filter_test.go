@@ -17,6 +17,7 @@ type row struct {
 	Title     string         `db:"title"`
 	Number    int64          `db:"number"`
 	MergedAt  sql.NullString `db:"merged_at" kind:"observed"`
+	CreatedAt string         `db:"created_at" kind:"created"`
 	Approvals string         `db:"approvals" kind:"observed" format:"json"`
 }
 
@@ -468,5 +469,60 @@ func TestStartsWithMatchesCaseInBothEngines(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("Keep(%q) = %v, want %v", tc.title, got, tc.want)
 		}
+	}
+}
+
+// TestTheClockBecomesALiteral is what lets a filter about time reach the
+// query.
+//
+// `now` is inlined rather than bound, because the allow-list pushes down a
+// comparison against a literal and a bound variable is an identifier in the
+// tree. Filters about time are the ones people write, so leaving them in Go
+// would have left the common case reading every row.
+func TestTheClockBecomesALiteral(t *testing.T) {
+	f := compile(t, `merged_at < now`)
+
+	where, args := f.SQL()
+	if want := "(merged_at < ?)"; where != want {
+		t.Fatalf("SQL = %q, want %q", where, want)
+	}
+	if len(args) != 1 {
+		t.Fatalf("args = %v, want the moment as a parameter", args)
+	}
+	stamp, ok := args[0].(string)
+	if !ok || !strings.HasSuffix(stamp, "Z") {
+		t.Errorf("args[0] = %#v, want an ISO-8601 UTC timestamp", args[0])
+	}
+}
+
+// TestOneFilterHasOneNow: a clock that moved between terms could answer a
+// question no instant would.
+func TestOneFilterHasOneNow(t *testing.T) {
+	f := compile(t, `merged_at < now && created_at < now`)
+
+	_, args := f.SQL()
+	if len(args) != 2 {
+		t.Fatalf("args = %v, want one per term", args)
+	}
+	if args[0] != args[1] {
+		t.Errorf("the two terms saw different moments: %v and %v", args[0], args[1])
+	}
+}
+
+// TestOnlyTheIdentifierIsAClock: `now` occurs inside other words and inside
+// strings, and only the parser knows which occurrences are the identifier.
+// Searching the text would have rewritten all of them.
+func TestOnlyTheIdentifierIsAClock(t *testing.T) {
+	f := compile(t, `title == "now or never" && merged_at < now`)
+
+	where, args := f.SQL()
+	if want := "(title = ?) AND (merged_at < ?)"; where != want {
+		t.Fatalf("SQL = %q, want %q", where, want)
+	}
+	if args[0] != "now or never" {
+		t.Errorf("the string literal was rewritten: %#v", args[0])
+	}
+	if stamp, _ := args[1].(string); !strings.HasSuffix(stamp, "Z") {
+		t.Errorf("the identifier was not: %#v", args[1])
 	}
 }

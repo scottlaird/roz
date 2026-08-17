@@ -262,3 +262,84 @@ func TestConfigSetWillNotChangeAPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestWeekSettingsShowTheWindowTheyMake. week_start and review_day are each
+// legible alone and say nothing together, and what a report is bounded by is
+// the window they produce between them.
+func TestWeekSettingsShowTheWindowTheyMake(t *testing.T) {
+	db := initDB(t)
+
+	out, err := runCLI(t, "config", "show", "--db", db)
+	if err != nil {
+		t.Fatalf("config show returned error: %v", err)
+	}
+	for _, want := range []string{"week_start", "review_day", "this_week", "Week of"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config show does not mention %q:\n%s", want, out)
+		}
+	}
+
+	// Moving the label leaves the window alone: they are independent, which is
+	// the whole reason there are two of them.
+	before := line(t, out, "this_week")
+	if _, err := runCLI(t, "config", "set", "--db", db, "--week-start", "sunday"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+	after := line(t, mustShow(t, db), "this_week")
+	if before == after {
+		t.Errorf("week_start did not change the label: %q", after)
+	}
+	if window(before) != window(after) {
+		t.Errorf("week_start moved the window: %q then %q", before, after)
+	}
+
+	// And moving the review day moves the window.
+	if _, err := runCLI(t, "config", "set", "--db", db, "--review-day", "tuesday"); err != nil {
+		t.Fatalf("config set returned error: %v", err)
+	}
+	if moved := line(t, mustShow(t, db), "this_week"); window(moved) == window(after) {
+		t.Errorf("review_day did not move the window: %q", moved)
+	}
+}
+
+// TestADayThatIsNotADayIsRefused, with the seven named rather than a CHECK
+// quoted back.
+func TestADayThatIsNotADayIsRefused(t *testing.T) {
+	db := initDB(t)
+	_, err := runCLI(t, "config", "set", "--db", db, "--review-day", "caturday")
+	if err == nil {
+		t.Fatal("config set accepted caturday")
+	}
+	for _, want := range []string{"caturday", "monday", "sunday"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
+func mustShow(t *testing.T, db string) string {
+	t.Helper()
+	out, err := runCLI(t, "config", "show", "--db", db)
+	if err != nil {
+		t.Fatalf("config show returned error: %v", err)
+	}
+	return out
+}
+
+func line(t *testing.T, out, key string) string {
+	t.Helper()
+	for _, l := range strings.Split(out, "\n") {
+		if name, value, ok := strings.Cut(l, " "); ok && name == key {
+			return strings.TrimSpace(value)
+		}
+	}
+	t.Fatalf("no %q in:\n%s", key, out)
+	return ""
+}
+
+// window is the parenthesised span, so a label change and a window change can
+// be told apart.
+func window(s string) string {
+	_, span, _ := strings.Cut(s, "(")
+	return span
+}

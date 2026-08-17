@@ -7,6 +7,7 @@
   --wait:#55606e; --wait-bg:#eff1f4;
   --bad:#963232; --bad-bg:#faecec;
   --link:#33507f;
+  --project:#5b3fa8; --project-bg:#f1edfb;
   /* One level of project hierarchy. A size rather than a colour, and here
    because it is the one number worth adjusting by eye. */
   --indent:1.125rem;
@@ -21,6 +22,7 @@
     --wait:#a6aeba; --wait-bg:#212529;
     --bad:#e08b8b; --bad-bg:#2c1919;
     --link:#a9c0e4;
+    --project:#b49ae8; --project-bg:#241d33;
   }
 }
 *{box-sizing:border-box}
@@ -185,7 +187,12 @@ nav.views a{color:var(--mid)}
        padding:14px;margin:10px 0;overflow-x:auto}
 .graph pre.mermaid{margin:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
                    color:var(--faint);white-space:pre}
-.graph svg{max-width:100%;height:auto}
+/* Natural size, scrolling inside the box, rather than scaled down to the
+   column. max-width:100% defeated the overflow-x above it: a diagram wider
+   than the column was shrunk to fit instead of scrolling, and a wide one
+   shrinks until the labels cannot be read -- which is the same as not drawing
+   it. */
+.graph svg{max-width:none;height:auto}
 .coverage{font-size:13px;color:var(--mid);margin:8px 0 0}
 .coverage p{margin:.35em 0}
 .coverage ul{margin:.35em 0;padding-left:1.2em}
@@ -218,6 +225,15 @@ h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
 .graph .flowchart-link,.graph .edgePath path.path{stroke:var(--faint)!important}
 .graph marker path{fill:var(--faint)!important;stroke:var(--faint)!important}
 
+/* A project is what the work is for, so it is drawn as the heavier box the
+   actions and pull requests hang off — an "active" project has no state worth
+   colouring and was taking the default fill, which on a dark page is the page.
+   Before the state rules deliberately: a blocked or snoozed project still says
+   so, and keeps the weight either way, since nothing below sets a width. */
+.graph .node.project rect{
+  fill:var(--project-bg)!important;stroke:var(--project)!important;
+  stroke-width:2px!important}
+
 .graph .node.blocked rect,.graph .node.blocked path,
 .graph .node.late rect,.graph .node.late path{
   fill:var(--bad-bg)!important;stroke:var(--bad)!important}
@@ -234,6 +250,14 @@ h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
   fill:var(--raise)!important;stroke:var(--session)!important}
 .graph .node.open rect,.graph .node.open path{
   fill:var(--raise)!important;stroke:var(--link)!important}
+/* Actionable now, which is the question the diagram is usually being asked
+   and the one the state colours cannot answer: a merge is coloured one-click
+   whether or not something is in front of it. So readiness is carried by
+   presence instead — what can be picked up is drawn at full strength, and
+   what is waiting on something recedes. Projects are exempt: a project is not
+   a thing you do, and fading them would fade the structure. */
+.graph .node.ready rect,.graph .node.ready path{stroke-width:2.5px!important}
+.graph .node.action:not(.ready),.graph .node.pr:not(.ready){opacity:.45}
 .graph .node.clickable{cursor:pointer}
 
 /* The diagram's legend. The swatch classes are the diagram's own, so a legend
@@ -255,6 +279,10 @@ h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
 /* Outlines, matching shapeFor: a project is a box, an action is rounded, a
    pull request is a stadium. */
 .legend .sh{width:18px;height:11px;border:1px solid var(--faint);background:none}
+/* The project swatch carries the diagram's weight and colour, for the reason
+   the state swatches carry theirs: a legend drawn differently from the picture
+   is a second thing to learn. */
+.legend .sh.project{border:2px solid var(--project);background:var(--project-bg)}
 .legend .sh.action{border-radius:4px}
 .legend .sh.pr{border-radius:6px}
 /* Lines, matching arrowFor. */

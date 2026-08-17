@@ -85,3 +85,20 @@ func edges(ctx context.Context, s *Store, what, query string) ([]Edge, error) {
 	}
 	return found, nil
 }
+
+// SubjectPREdges is every action and the pull request it is about.
+//
+// From the action rather than to it, because an edge here runs from the thing
+// that comes first and the pull request is what the work produces. It is not a
+// dependency in the blocking sense and is drawn differently for that reason:
+// an action is *about* a pull request, and neither one waits for the other.
+//
+// The subject role only. A context pull request is background on an action —
+// what it is being compared against, what it follows — and drawing it would
+// say the work is about something it merely mentions.
+func (s *Store) SubjectPREdges(ctx context.Context) ([]Edge, error) {
+	return edges(ctx, s, "action_pr", `
+		SELECT action_id, pr_id FROM action_pr
+		 WHERE role = '`+RoleSubject+`'
+		 ORDER BY action_id`)
+}

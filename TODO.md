@@ -585,9 +585,6 @@ predicate GitHub cannot satisfy.
 `/dependencygraph` and the block under the index's projects table draw what is
 recorded. Open, in rough order of how much they matter:
 
-- **An action's subject pull request is not an edge.** So a stack of pull
-  requests and the work that produced them are two disconnected pictures. This
-  is the obvious next edge and was left out only to keep the first cut small.
 - **Pull-request stacking is unexercised.** `stacked_on` is populated and the
   code draws it, but nothing open is stacked, so that path has never been seen
   on real data.

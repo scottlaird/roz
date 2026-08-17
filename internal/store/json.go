@@ -45,6 +45,10 @@ func ApplyJSON(r Record, data []byte) error {
 			return fmt.Errorf("%s.%s is %s, not authored, so it cannot be set here",
 				r.table(), column, f.kind)
 		}
+		if verb, guarded := guardedColumns[r.table()+"."+column]; guarded {
+			return fmt.Errorf("%s.%s is what `%s` is for, and that checks things this cannot; "+
+				"set it there instead", r.table(), column, verb)
+		}
 		if err := setField(r, f, raw[column]); err != nil {
 			return fmt.Errorf("%s.%s: %w", r.table(), column, err)
 		}
@@ -266,4 +270,42 @@ func sortedKeys(m map[string]json.RawMessage) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// guardedColumns are the columns a purpose-built command exists to write,
+// keyed table.column, valued with the command to use instead.
+//
+// #107 asked whether --json should refuse these or leave them, and refusing is
+// what was chosen. The damage from leaving them was bounded — the foreign key
+// still catches a target that does not exist, so the cost was a rawer error
+// rather than a bad row — but the two paths did not agree about what checking
+// means, and the quiet half is the problem: `project set --json
+// '{"superseded_by":"ROZ94"}'` skipped the target-existence check that
+// `project supersede` performs, and also skipped writing the other end.
+//
+// A list rather than a rule, because there is no property of a column that
+// says a command guards it. That means it is a second place to keep in step
+// with the verbs, which was the argument for leaving it alone; the answer is
+// TestEveryGuardedColumnExists, which fails if a name here stops being a
+// column, and a test naming each command beside the column it guards.
+//
+// It is deliberately not every column a command can touch. `project set
+// --status` writes status too, and so does this; what belongs here is the
+// column whose dedicated command does something *besides* the write —
+// checking a target exists, recording the other end of a pair, or coupling two
+// columns that must move together.
+var guardedColumns = map[string]string{
+	// Checks the target exists, and records both ends of the pair.
+	"project.superseded_by": "roz project supersede",
+	// Coupled to status, and the pair must move together: a date with no
+	// snooze is invisible, and a snooze with no date never wakes.
+	"project.snooze_until": "roz project snooze",
+	// Coupled to state, and closing cascades — it frees dependents, unhides
+	// what was folded behind, and stands down chases.
+	"action.closed_at":     "roz action close",
+	"action.closed_reason": "roz action close",
+	"action.snooze_until":  "roz action snooze",
+	// Checks the two are different actions and that the target exists, and
+	// then decides whether the action is still in the queue.
+	"action.hidden_behind": "roz action hide-behind",
 }

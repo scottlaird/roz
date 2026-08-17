@@ -891,6 +891,23 @@ pipeline  -
 `none` there means no pipeline reaches it at all, which is a legitimate state
 and not the same failure.
 
+**A pipeline is only ever run on your own work.** `repo track` fills in a
+default for any repository, which is right for one whose pull requests you
+write and wrong for one you are watching from outside — nobody is going to
+undraft or announce somebody else's change. So `tracked_because` of `watching`
+or `reviewing` stops the chain, and says so with the pipeline still named:
+
+```console
+$ roz pr show SPANDigital/cel2sql#169
+chain            none, tracked as watching (review would apply)
+tracked_because  watching
+```
+
+`roz pr chain` refuses the same case rather than building the steps. Only the
+reasons that say the work is somebody else's count: unstated is the common case
+by far, and reading it as not-yours would be the same mistake in the other
+direction.
+
 ```console
 $ roz pr chain example/server#812
 example/server#812 review from example/server; missing wait_review and merge

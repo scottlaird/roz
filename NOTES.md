@@ -891,6 +891,23 @@ pipeline  -
 `none` there means no pipeline reaches it at all, which is a legitimate state
 and not the same failure.
 
+**A pipeline is only ever run on your own work.** `repo track` fills in a
+default for any repository, which is right for one whose pull requests you
+write and wrong for one you are watching from outside — nobody is going to
+undraft or announce somebody else's change. So `tracked_because` of `watching`
+or `reviewing` stops the chain, and says so with the pipeline still named:
+
+```console
+$ roz pr show SPANDigital/cel2sql#169
+chain            none, tracked as watching (review would apply)
+tracked_because  watching
+```
+
+`roz pr chain` refuses the same case rather than building the steps. Only the
+reasons that say the work is somebody else's count: unstated is the common case
+by far, and reading it as not-yours would be the same mistake in the other
+direction.
+
 ```console
 $ roz pr chain example/server#812
 example/server#812 review from example/server; missing wait_review and merge
@@ -997,8 +1014,110 @@ be: the column was added by 0002 and set by nothing until `head_ref` arrived in
 0030 and gave `ResolveStacking` something to match on. Nothing is open and
 stacked at the moment, so that path is unexercised on real data.
 
-An action's subject pull request is not an edge yet, so a stack and the work
-that produced it are two disconnected pictures.
+An action's subject pull request **is** an edge, drawn dotted: an action is
+*about* a pull request and neither waits for the other, so drawing it as a
+dependency would say something false. It seeds nothing — a pull request reaches
+the diagram by being stacked, or by an action already in it being about one —
+because starting from every subject link would draw a box for each of a hundred
+and twenty tracked pull requests. Open ones only, for the reason a satisfied
+blocker is left out.
+
+## --json is an escape hatch, not a way round the verbs
+
+`--json` writes authored columns directly, which is what makes it a good base
+for an agent to generate. It also let it write columns a purpose-built command
+exists to guard:
+
+```console
+$ roz project set SL7 --json '{"superseded_by":"SL94"}'
+Error: project.superseded_by is what `roz project supersede` is for, and that
+checks things this cannot; set it there instead
+```
+
+The damage was bounded — the foreign key still caught a target that did not
+exist, so the cost was a rawer error rather than a bad row. The quiet half is
+what settled it: `supersede` also writes the *other end* of the pair, and the
+raw path skipped that silently.
+
+What is on the list is not every column a command can touch. `project set
+--status` writes status and so does `--json`, and that is fine. What belongs
+there is a column whose command does something **besides** the write: checking a
+target exists, recording both ends, or coupling two columns that have to move
+together — a snooze date with no snooze is invisible, and a snooze with no date
+never wakes.
+
+Keeping a list is a second place to stay in step with the verbs, which was the
+argument for leaving this alone. The answer is a test that fails if an entry
+stops being an authored column, which turns drift into a build failure rather
+than a hole nobody notices.
+
+## Where a week begins
+
+The weekly wrap-up needs to know what "this week" covers, and that is two
+settings rather than one. `week_start` decides what "Week of ..." means in a
+heading. `review_day` decides the window: the seven days ending at the review.
+They are independent, and the interesting case is when they disagree, which is
+the normal case for anybody who reviews on a Friday and thinks of weeks as
+starting on Monday.
+
+```console
+$ roz config show
+review_day  friday
+this_week   Week of August 10 (Sat 8 Aug to Fri 14 Aug)
+week_start  monday
+```
+
+`this_week` is derived rather than stored, and it is there because the two
+settings are each legible alone and say nothing together.
+
+**The window is seven days ending at the review, that day included.** A review
+run at five on a Friday afternoon has to cover that Friday's merges — "since
+Friday" read as midnight silently drops the day being reviewed. Every day then
+belongs to exactly one window, which is the property worth having and is
+tested by walking a year of reviews and checking each window abuts the last.
+
+**The label is the `week_start` of whichever week most of the window is in.**
+One rule, and it settles the case the issue said had to be chosen. Monday weeks
+with a Friday review give a Sat–Fri window whose five weekdays are in the week
+beginning that Monday, so it is headed with it — and the window therefore opens
+two days *before* the date in its own heading, which is right rather than a
+bug: the previous review was the Friday before, so the weekend after it has not
+been reported yet.
+
+Where the two coincide — reviewing on a Monday, weeks starting Monday — the
+window is Tue–Mon and six of its seven days fall in the *earlier* week, so that
+is the label. The other reading would head a report with a week it contains one
+day of.
+
+`review_day` is a window definition and **not a schedule**. Nothing fires on
+it; the report is run when somebody runs it. Making it a schedule is a larger
+feature.
+
+## The queue is scanned, not read
+
+Each rank class is a band: a tinted background, a wide left edge in its own
+colour, and the counter and identifier in it. Three signals rather than one,
+because the class is what a scan is looking for and a border alone does not
+survive peripheral vision. Beneath the list is a key naming the bands the queue
+actually used — six of them beside a queue using two is a second thing to read
+before the first one makes sense.
+
+**None of it applied before.** The colours were written as `li.decide` — one
+class, one element — and the rule they had to beat is `ol.queue li`, one class
+and two. The base rule won every time, so every row drew as `--raise` with a
+`--rule` edge whatever its verb. That reads exactly like colours that are too
+similar, which is how it survived being looked at and reported as "three of
+them are close enough in weight". A text rule in the stylesheet's own test
+keeps the selectors qualified, since nothing else would notice them silently
+losing again.
+
+`session` also had no tint at all, though `--session-bg` had been sitting in the
+palette unused from the beginning.
+
+Late and expired take the edge and leave the band's tint alone. They are
+conditions on top of a rank class rather than classes of their own, and an
+overdue `decide` that stopped looking like a judgement would be hiding what it
+is at exactly the moment somebody needs to notice it.
 
 ## MCP over HTTP, so the server can be restarted
 
@@ -2377,6 +2496,38 @@ it fires.
 the predicate it names are checked against the build when the database opens,
 so a verb naming a predicate this binary lacks is refused at startup. Editing
 those from the CLI would turn that check into a failure at closing time.
+
+### Adding one
+
+`roz verb add` is where a verb's meaning is chosen, and the only place it can
+be. The vocabulary was a table with no command that wrote rows to it, so a verb
+could only be added by hand-written SQL — which also meant it never reached the
+log. That is the complaint #132 made about pipelines, answered the same way.
+
+```console
+$ roz verb add wait_merge --closes predicate --predicate pr_merged     --rank-class wait --requires-pr --label "wait for a merge"
+wait_merge: predicate, wait
+```
+
+The predicate is checked against the registry here, because a verb naming one
+this build lacks stops the database opening at all — loudly, at startup, for
+every command afterwards. Adding a verb is therefore a way to make roz stop
+working, and the one place a verb is written is the one place that can prevent
+it.
+
+`--active=false` withdraws a verb. Rows are never deleted: closed actions and
+log entries reference retired verbs, and dropping one would take their meaning
+with it. Re-adding a retired verb is refused, pointing at the flag that brings
+it back rather than at a constraint.
+
+**`wait_merge`** came out of this. `pr_merged` was named only by `merge`, which
+is `click` with a one-day allowance because it describes a button *you* press on
+a pull request *you* own; aimed at an upstream pull request it puts a click
+nobody can make in the queue and marks it overdue the next day. `wait_merge`
+names the same predicate and differs in the two settings that say whose pull
+request it is — and has no allowance, for `wait_ref`'s reason: somebody else's
+merge is not yours to influence, so an exception about it would be a durable
+item nothing can clear.
 
 The clock starts at the latest of four moments, so that it can only ever be
 pushed outwards: when the action was created, when it last became actionable,

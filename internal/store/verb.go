@@ -194,3 +194,56 @@ func checkPredicates(ctx context.Context, db *sql.DB) error {
 	}
 	return rows.Err()
 }
+
+// ValidateVerbDefinition checks a verb before it is written, so the errors
+// name what is wrong rather than quoting a CHECK constraint.
+//
+// The predicate check is the one that matters. A verb naming a predicate this
+// build does not register makes OpenStore refuse the database — deliberately,
+// loudly, and for every command afterwards. Adding one is therefore a way to
+// make roz stop working entirely, so the registry is consulted here, at the
+// only place a verb is written.
+//
+// It is checked against the code rather than against the other rows for the
+// same reason the schema keeps `closes` and `predicate_key` coupled: what a
+// verb means is a claim about a function that has to exist.
+func ValidateVerbDefinition(v *ActionVerb) error {
+	if strings.TrimSpace(v.Verb) == "" {
+		return fmt.Errorf("a verb needs a name")
+	}
+	if err := ValidateRankClass(v.RankClass); err != nil {
+		return err
+	}
+
+	key := v.PredicateKey.String
+	switch v.Closes {
+	case ClosesHuman:
+		if key != "" {
+			return fmt.Errorf(
+				"%s closes %s, so it may not name a predicate: a human verb closes when somebody says so",
+				v.Verb, ClosesHuman)
+		}
+	case ClosesPredicate:
+		if key == "" {
+			return fmt.Errorf("%s closes %s, so it needs a predicate to close on: use one of %s",
+				v.Verb, ClosesPredicate, strings.Join(PredicateKeys(), ", "))
+		}
+		if _, ok := LookupPredicate(key); !ok {
+			return fmt.Errorf(
+				"predicate %q is not registered in this build, and a verb naming one that is not "+
+					"would stop the database opening at all; use one of %s",
+				key, strings.Join(PredicateKeys(), ", "))
+		}
+	default:
+		return fmt.Errorf("%s closes %q, which is not %s or %s",
+			v.Verb, v.Closes, ClosesHuman, ClosesPredicate)
+	}
+
+	// A wait that cannot be closed by anything is a row that sits in the queue
+	// for ever. Only predicate verbs are subject to it: a human verb in the
+	// wait class is somebody else's problem that you are tracking by hand.
+	if v.WaitDays.Valid && v.WaitDays.Int64 < 0 {
+		return fmt.Errorf("%s cannot have a negative allowance", v.Verb)
+	}
+	return nil
+}

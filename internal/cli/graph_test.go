@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -378,5 +379,144 @@ func TestAnEmptyGraphHasNoLegend(t *testing.T) {
 
 	if g := graphFor(t, db); !g.Legend.Empty() {
 		t.Errorf("an empty diagram has a legend: %+v", g.Legend)
+	}
+}
+
+// TestAnActionIsJoinedToItsPullRequest is #88's largest follow-up: without it
+// a stack of pull requests and the work that produced them were two
+// disconnected pictures on the same page.
+func TestAnActionIsJoinedToItsPullRequest(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/repo")
+	for _, n := range []string{"1", "2"} {
+		if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#"+n); err != nil {
+			t.Fatalf("pr track returned error: %v", err)
+		}
+		if _, err := runCLI(t, "pr", "set", "--db", db, "owner/repo#"+n, "--pipeline", ""); err != nil {
+			t.Fatalf("pr set returned error: %v", err)
+		}
+	}
+	observePR(t, db, "owner/repo#1", "OPEN")
+
+	first := addAction(t, db, "--title", "write it", "--verb", "write",
+		"--pr", "owner/repo#1")
+	second := addAction(t, db, "--title", "then this", "--verb", "write")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", second, "--to", first); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	g := graphFor(t, db)
+	if !hasNode(g, "owner/repo#1") {
+		t.Fatalf("the pull request the work is about is missing: %v", nodeIDs(g))
+	}
+	if !hasEdge(g, first, "owner/repo#1", edgeAbout) {
+		t.Errorf("no about edge %s -> owner/repo#1 in %v", first, g.Edges)
+	}
+	// It is not a dependency, and must not be drawn as one: an action is
+	// about a pull request and neither waits for the other.
+	if arrowFor(edgeAbout) == arrowFor(edgeBlocks) {
+		t.Error("being about a pull request draws the same line as blocking")
+	}
+	// And it seeds nothing: a pull request nothing in the graph is about
+	// stays out, or the diagram grows a box per tracked pull request.
+	if hasNode(g, "owner/repo#2") {
+		t.Errorf("drew a pull request no action in the graph is about: %v", nodeIDs(g))
+	}
+}
+
+// TestAMergedPullRequestIsNotDrawn. It is history in the way a satisfied
+// blocker is: the action is still about it, and nothing is waiting on it.
+func TestAMergedPullRequestIsNotDrawn(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/repo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#1"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	observePR(t, db, "owner/repo#1", "MERGED")
+
+	first := addAction(t, db, "--title", "write it", "--verb", "write", "--pr", "owner/repo#1")
+	second := addAction(t, db, "--title", "then this", "--verb", "write")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", second, "--to", first); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	if g := graphFor(t, db); hasNode(g, "owner/repo#1") {
+		t.Errorf("drew a merged pull request: %v", nodeIDs(g))
+	}
+}
+
+// observePR writes what GitHub would say, since state is observed and there is
+// no command that sets it — which is the point of the actor rule.
+func observePR(t *testing.T, db, key, state string) {
+	t.Helper()
+	ctx := context.Background()
+
+	st, err := store.OpenStore(db)
+	if err != nil {
+		t.Fatalf("OpenStore() returned error: %v", err)
+	}
+	defer st.Close()
+
+	tx, err := st.Begin(ctx, store.ActorSyncGitHub)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadPR(ctx, key)
+	if err != nil {
+		t.Fatalf("LoadPR(%s) returned error: %v", key, err)
+	}
+	after := before.Clone()
+	after.State = sql.NullString{String: state, Valid: true}
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+// TestTheQueueKeySaysOnlyWhatIsThere. The colours mean something specific and
+// nothing on the page said what — but a key naming six bands beside a queue
+// using two is a second thing to read before the first one makes sense.
+func TestTheQueueKeySaysOnlyWhatIsThere(t *testing.T) {
+	rows := []actionView{
+		{ID: "NA1", RankClass: "session"},
+		{ID: "NA2", RankClass: "decide"},
+		{ID: "NA3", RankClass: "session"},
+	}
+	key := queueKey(rows)
+	if len(key) != 2 {
+		t.Fatalf("key = %v, want the two bands the rows use", key)
+	}
+	// In the order the ranking reads, not the order the rows happen to arrive.
+	if key[0].Key != "decide" || key[1].Key != "session" {
+		t.Errorf("key = %v, want decide before session", key)
+	}
+
+	// Late and expired are conditions rather than bands, so they appear only
+	// when something is in them.
+	for _, band := range key {
+		if band.Key == "late" || band.Key == "expired" {
+			t.Errorf("key explains %q with nothing in it", band.Key)
+		}
+	}
+	withLate := queueKey([]actionView{{RankClass: "session", Late: "3 days"}})
+	var sawLate bool
+	for _, band := range withLate {
+		sawLate = sawLate || band.Key == "late"
+	}
+	if !sawLate {
+		t.Errorf("key = %v, want it to explain late when something is", withLate)
+	}
+}
+
+// TestAnEmptyQueueHasNoKey: a key for a queue with nothing in it is furniture.
+func TestAnEmptyQueueHasNoKey(t *testing.T) {
+	if key := queueKey(nil); len(key) != 0 {
+		t.Errorf("key = %v for an empty queue", key)
 	}
 }

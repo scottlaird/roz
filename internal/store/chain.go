@@ -30,6 +30,16 @@ type ChainState struct {
 	// seeing a repository-level pipeline configured reasonably concludes the
 	// chain will happen, and it is exactly that conclusion that is wrong.
 	Source string
+	// Because is the tracked_because that stops the pipeline reaching this
+	// pull request, empty where nothing does.
+	//
+	// A pipeline says how *your* pull requests get from written to merged.
+	// `repo track` fills in a default for any repository, which is right for
+	// one whose pull requests you write and wrong for one you are watching
+	// from outside — and nobody is going to undraft or announce somebody
+	// else's work. So the pipeline is named, and reported as not applying,
+	// which is a different answer from there being none.
+	Because string
 	// Steps are the pipeline's, in order, each with what fulfils it.
 	Steps []ChainStep
 }
@@ -65,15 +75,39 @@ func (c *ChainState) Missing() []ChainStep {
 }
 
 // Applies reports whether any pipeline reaches this pull request. False is a
-// legitimate state — a repository whose pull requests are not chained — and
-// is why the gap cannot simply be reported as an exception.
-func (c *ChainState) Applies() bool { return c.Pipeline != "" }
+// legitimate state — a repository whose pull requests are not chained, or one
+// of theirs you are only watching — and is why the gap cannot simply be
+// reported as an exception.
+func (c *ChainState) Applies() bool { return c.Pipeline != "" && c.Because == "" }
+
+// suppressedBy reports whether a reason for tracking says the work is somebody
+// else's.
+//
+// Only the reasons that say so. Unstated is the common case and by far the
+// most rows: `pr track` has no default because assuming you wrote it would be
+// right most of the time and still be the tool inventing a fact — so this asks
+// "is it explicitly not yours", never "is it yours".
+func suppressedBy(pr *PR) string {
+	switch pr.TrackedBecause.String {
+	case TrackedWatching, TrackedReviewing:
+		return pr.TrackedBecause.String
+	}
+	return ""
+}
 
 // Summary is the one-line answer to "will this pull request be carried to
 // merge", which is what `pr show` needs and what its pipeline column could
 // never say: that column holds the override, so it reads "-" both for a pull
 // request following its repository's chain and for one following nothing.
 func (c *ChainState) Summary() string {
+	if c.Because != "" {
+		// The pipeline is named rather than hidden. "none" here would be a
+		// second thing to work out when the repository plainly has one.
+		if c.Pipeline == "" {
+			return "none, tracked as " + c.Because
+		}
+		return fmt.Sprintf("none, tracked as %s (%s would apply)", c.Because, c.Pipeline)
+	}
 	if !c.Applies() {
 		return "none"
 	}
@@ -118,8 +152,11 @@ func (t *Tx) ChainOf(ctx context.Context, prID string) (*ChainState, error) {
 	}
 
 	name, source := effectivePipeline(pr, r, repo)
-	state := &ChainState{Pipeline: name, Source: source}
-	if name == "" {
+	state := &ChainState{Pipeline: name, Source: source, Because: suppressedBy(pr)}
+	if name == "" || state.Because != "" {
+		// No steps are worked out for a pull request that is not yours. They
+		// would all read as missing, which is true and useless: the answer is
+		// that none of them were ever wanted.
 		return state, nil
 	}
 
@@ -287,6 +324,12 @@ func (s *Store) planChain(ctx context.Context, actor Actor, prID string) (*Chain
 	state, err := tx.ChainOf(ctx, prID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if state.Because != "" {
+		return nil, nil, fmt.Errorf(
+			"%s is tracked as %s, so its pipeline is not yours to run; "+
+				"`roz pr set %s --because authored` if that is wrong",
+			prID, state.Because, prID)
 	}
 	if !state.Applies() {
 		return nil, nil, fmt.Errorf(

@@ -76,7 +76,19 @@ CREATE TABLE config (
   -- how many days after a pull request ends to keep polling it. Days rather
   -- than hours: what it covers is review comments landing after a merge.
   -- Last because ADD COLUMN put it there. See 0029.
-  poll_window_days INTEGER NOT NULL DEFAULT 14 CHECK (poll_window_days >= 0)
+  poll_window_days INTEGER NOT NULL DEFAULT 14 CHECK (poll_window_days >= 0),
+  -- Where a week begins, which is two settings rather than one: the day a week
+  -- is labelled from, and the day the review is actually done. They disagree
+  -- for anybody who reviews on a Friday and thinks of weeks as starting on
+  -- Monday, which is ordinary rather than an edge case. Names rather than
+  -- numbers, so the log reads. See 0041.
+  week_start    TEXT NOT NULL DEFAULT 'monday'
+                  CHECK (week_start IN ('monday','tuesday','wednesday','thursday','friday','saturday','sunday')),
+  -- The window is the seven days ending at the review, so everything since the
+  -- last one is covered exactly once. A window definition, not a schedule:
+  -- nothing fires on it. See 0041.
+  review_day    TEXT NOT NULL DEFAULT 'friday'
+                  CHECK (review_day IN ('monday','tuesday','wednesday','thursday','friday','saturday','sunday'))
 ) STRICT;
 
 INSERT INTO config (id, created_at, updated_at)
@@ -155,6 +167,11 @@ INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires
   -- the noise would be durable rather than passing. See 0020.
   ('wait_ref',         'wait for a ref',    'predicate', 'ref_exists',        'wait',    0, 1, 0, 0, 0, NULL,
    'Wait for a branch or tag to appear. Closes when one matching the expression exists.'),
+  -- Somebody else's merge, which is not yours to influence: wait_days is NULL
+  -- for wait_ref's reason. It names the predicate `merge` names, and differs
+  -- only in the two settings that say whose pull request it is about. See 0040.
+  ('wait_merge',       'wait for a merge',  'predicate', 'pr_merged',         'wait',    1, 0, 0, 0, 0, NULL,
+   'Wait for somebody else''s pull request to merge. Closes when it has. Unlike `merge`, which is your click on your own pull request, this has no allowance: their merge is not yours to influence.'),
 
   -- Human-closed. These are the items worth spending attention on, and the
   -- only ones that reach the queue as thinking work.

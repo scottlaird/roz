@@ -26,6 +26,7 @@ const (
 	edgeAdvances = "advances" // this action moves that project
 	edgeHides    = "hides"    // folded out of the queue behind
 	edgeStacks   = "stacks"   // this pull request is based on that one
+	edgeAbout    = "about"    // this action is about that pull request
 )
 
 // dependencyGraph is what the diagram draws, after pruning.
@@ -113,6 +114,10 @@ func buildGraph(ctx context.Context, st *store.Store,
 	if err != nil {
 		return nil, err
 	}
+	subjects, err := st.SubjectPREdges(ctx)
+	if err != nil {
+		return nil, err
+	}
 	prs, err := st.ListPRs(ctx, store.PRFilter{})
 	if err != nil {
 		return nil, err
@@ -127,7 +132,7 @@ func buildGraph(ctx context.Context, st *store.Store,
 		seen:     map[string]bool{},
 		drawn:    map[graphEdge]bool{},
 	}
-	return g.build(projectBlocks, actionBlocks, hidden, stacked), nil
+	return g.build(projectBlocks, actionBlocks, hidden, stacked, subjects), nil
 }
 
 func byID[T any](rows []T, id func(T) string) map[string]T {
@@ -151,7 +156,7 @@ type graphBuilder struct {
 	edges []graphEdge
 }
 
-func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked []store.Edge) *dependencyGraph {
+func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked, subjects []store.Edge) *dependencyGraph {
 	// Seeding. Only edges with both ends open, which is what makes the
 	// diagram about now rather than about everything that ever blocked
 	// anything.
@@ -203,6 +208,25 @@ func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked []stor
 			g.addAction(a.ID)
 			g.addEdge(a.ID, id, edgeAdvances)
 		}
+	}
+
+	// The pull request an action is about, which is what joins the two halves
+	// of the diagram. Without it a stack of pull requests and the work that
+	// produced them are two disconnected pictures on the same page.
+	//
+	// It seeds nothing: a PR reaches the graph by being stacked, or by an
+	// action already in it being about one. Starting from every subject link
+	// would draw a box for every tracked pull request, which is a hundred and
+	// twenty of them.
+	//
+	// Open only. A merged pull request is history in the way a closed blocker
+	// is: the action is still about it, and nothing is waiting on it.
+	for _, e := range subjects {
+		if !g.seen[e.From] || !g.prOpen(e.To) {
+			continue
+		}
+		g.addPR(e.To)
+		g.addEdge(e.From, e.To, edgeAbout)
 	}
 
 	// Containment, one level up. It seeds nothing on its own: a parent is
@@ -383,6 +407,7 @@ func coverage(g *dependencyGraph) []string {
 	} else {
 		said = append(said, "pull-request stacking, where any is open (none is now)")
 	}
+	said = append(said, "the open pull request an action is about, which joins the two")
 	said = append(said,
 		"nothing closed: a satisfied blocker is history, and it is left out")
 	return said
@@ -451,6 +476,7 @@ var (
 		{edgeContains, "is part of"},
 		{edgeHides, "folded behind"},
 		{edgeStacks, "stacked on"},
+		{edgeAbout, "is about"},
 	}
 )
 
@@ -479,4 +505,39 @@ func used(all []legendEntry, present map[string]bool) []legendEntry {
 		}
 	}
 	return kept
+}
+
+// The bands a queue is read in. Order is the one the ranking uses, so the key
+// reads down in the same direction the list does.
+var queueBands = []legendEntry{
+	{"click", "one click"},
+	{"decide", "a judgement"},
+	{"session", "real work"},
+	{"wait", "waiting on somebody"},
+	{"late", "past its allowance"},
+	{"expired", "snoozed past its date"},
+}
+
+// queueKey is the legend the queue never had. The colours mean something
+// specific and nothing on the page said what.
+//
+// Built from the rows actually drawn, for the reason the diagram's legend is:
+// a key naming six bands beside a queue using two is a second thing to read
+// before the first one makes sense. Late and expired are conditions rather
+// than bands — an overdue `decide` is still a judgement — so they appear only
+// when something is in them.
+func queueKey(rows ...[]actionView) []legendEntry {
+	present := map[string]bool{}
+	for _, group := range rows {
+		for _, a := range group {
+			present[a.RankClass] = true
+			if a.Late != "" {
+				present["late"] = true
+			}
+			if a.Expired {
+				present["expired"] = true
+			}
+		}
+	}
+	return used(queueBands, present)
 }

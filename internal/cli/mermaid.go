@@ -86,7 +86,7 @@ func shapeFor(kind, label string) string {
 // would say it does.
 func arrowFor(kind string) string {
 	switch kind {
-	case edgeContains:
+	case edgeContains, edgeAbout:
 		return "-.-"
 	case edgeAdvances:
 		return "-->"

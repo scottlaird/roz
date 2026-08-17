@@ -392,3 +392,111 @@ func TestTheNewStepsJoinTheProjectTheChainIsIn(t *testing.T) {
 		}
 	}
 }
+
+// setBecause records why a pull request is tracked, the way `pr track
+// --because` does.
+func setBecause(t *testing.T, st *Store, pr *PR, reason string) {
+	t.Helper()
+	ctx := context.Background()
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	defer tx.Rollback()
+
+	before, err := tx.LoadPR(ctx, pr.ID)
+	if err != nil {
+		t.Fatalf("LoadPR() returned error: %v", err)
+	}
+	after := before.Clone()
+	after.TrackedBecause = sql.NullString{String: reason, Valid: true}
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+}
+
+// TestAPipelineIsNotRunOnSomebodyElsesWork is #242. `repo track` fills in the
+// default pipeline for any repository, which is right for one whose pull
+// requests you write and wrong for one you are watching from outside — and the
+// chain summary then reported three missing steps two lines above
+// tracked_because saying the work was not yours.
+func TestAPipelineIsNotRunOnSomebodyElsesWork(t *testing.T) {
+	for _, reason := range []string{TrackedWatching, TrackedReviewing} {
+		t.Run(reason, func(t *testing.T) {
+			st := newStore(t)
+			trackRepo(t, st, "spandigital/cel2sql")
+			setPipeline(t, st, "spandigital/cel2sql", PipelineReview)
+			pr := trackPR(t, st, "spandigital/cel2sql", 169)
+			setBecause(t, st, pr, reason)
+
+			state := chainOf(t, st, pr.ID)
+			if state.Applies() {
+				t.Errorf("a %s pull request runs a pipeline", reason)
+			}
+			if len(state.Missing()) != 0 {
+				t.Errorf("missing = %v; none of them were ever wanted", missingVerbs(state))
+			}
+			// The pipeline is named rather than hidden: "none" alone would be
+			// a second thing to work out when the repository plainly has one.
+			summary := state.Summary()
+			if !strings.Contains(summary, reason) || !strings.Contains(summary, PipelineReview) {
+				t.Errorf("summary = %q, want it to name both %q and %q",
+					summary, reason, PipelineReview)
+			}
+		})
+	}
+}
+
+// TestInstantiatingSomebodyElsesChainIsRefused, rather than quietly building
+// an undraft and a send_for_review against a pull request nobody here will
+// ever undraft or announce.
+func TestInstantiatingSomebodyElsesChainIsRefused(t *testing.T) {
+	st := newStore(t)
+	trackRepo(t, st, "spandigital/cel2sql")
+	setPipeline(t, st, "spandigital/cel2sql", PipelineReview)
+	pr := trackPR(t, st, "spandigital/cel2sql", 169)
+	setBecause(t, st, pr, TrackedWatching)
+
+	_, err := st.InstantiateChain(context.Background(), ActorHuman, pr.ID)
+	if err == nil {
+		t.Fatal("InstantiateChain() built a chain on a watched pull request")
+	}
+	for _, want := range []string{TrackedWatching, "--because"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
+// TestYourOwnWorkIsUnaffected, in both the stated and the unstated case.
+// Unstated is by far the most rows, and reading it as somebody else's would be
+// the same mistake in the other direction.
+func TestYourOwnWorkIsUnaffected(t *testing.T) {
+	for _, reason := range []string{TrackedAuthored, ""} {
+		name := reason
+		if name == "" {
+			name = "unstated"
+		}
+		t.Run(name, func(t *testing.T) {
+			st := newStore(t)
+			trackRepo(t, st, "scottlaird/roz")
+			setPipeline(t, st, "scottlaird/roz", PipelineReview)
+			pr := trackPR(t, st, "scottlaird/roz", 1)
+			if reason != "" {
+				setBecause(t, st, pr, reason)
+			}
+
+			state := chainOf(t, st, pr.ID)
+			if !state.Applies() {
+				t.Fatalf("no pipeline applies to %s work", name)
+			}
+			if len(state.Missing()) == 0 {
+				t.Errorf("nothing is missing on an untouched pull request")
+			}
+		})
+	}
+}

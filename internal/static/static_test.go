@@ -129,3 +129,66 @@ func TestRevalidationIsAskedFor(t *testing.T) {
 		t.Errorf("Content-Type = %q, want text/css", kind)
 	}
 }
+
+// TestQueueBandsOutrankTheBaseRule is a regression guard for the bug behind
+// #92, which was not the one the issue described.
+//
+// The queue's rank-class colours are written as `li.decide` — one class and
+// one element — while the rule they have to beat is `ol.queue li`, one class
+// and two. The base rule won every time, so no rank colour ever reached the
+// page and the whole list drew as --raise with a --rule edge whatever its
+// verb. It reads exactly like colours that are too similar, which is how it
+// survived being looked at.
+//
+// A stylesheet is not parsed here, so this is a text rule rather than a
+// specificity calculation: every selector naming a band must carry the ol.queue
+// prefix that outranks the base.
+func TestQueueBandsOutrankTheBaseRule(t *testing.T) {
+	css, err := Read("roz.css")
+	if err != nil {
+		t.Fatalf("Read() returned error: %v", err)
+	}
+
+	bands := []string{"click", "decide", "session", "wait", "late", "expired"}
+	for _, line := range strings.Split(css, "\n") {
+		selector, _, isRule := strings.Cut(line, "{")
+		if !isRule || strings.HasPrefix(strings.TrimSpace(line), "/*") {
+			continue
+		}
+		for _, part := range strings.Split(selector, ",") {
+			part = strings.TrimSpace(part)
+			for _, band := range bands {
+				if !strings.HasPrefix(part, "li."+band) {
+					continue
+				}
+				t.Errorf("%q styles a queue band without outranking `ol.queue li`, "+
+					"so it will not apply; qualify it as `ol.queue %s`", part, part)
+			}
+		}
+	}
+}
+
+// TestEveryQueueBandIsColoured: a band with no tint is the other half of #92 —
+// session had none, although --session-bg had been in the palette from the
+// start, so `write` items were indistinguishable from the page.
+func TestEveryQueueBandIsColoured(t *testing.T) {
+	css, err := Read("roz.css")
+	if err != nil {
+		t.Fatalf("Read() returned error: %v", err)
+	}
+	for _, band := range []string{"click", "decide", "session", "wait"} {
+		rule := "ol.queue li." + band + "{"
+		at := strings.Index(css, rule)
+		if at < 0 {
+			t.Errorf("no rule for the %s band", band)
+			continue
+		}
+		body := css[at+len(rule):]
+		body = body[:strings.Index(body, "}")]
+		for _, want := range []string{"background:", "border-left-color:"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("the %s band sets no %s, so it reads as an uncoloured row", band, want)
+			}
+		}
+	}
+}

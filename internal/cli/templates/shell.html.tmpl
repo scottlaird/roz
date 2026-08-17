@@ -157,3 +157,14 @@
 </div>
 {{end}}
 {{end}}
+
+{{/* The queue's key, beneath the list. Only the bands the queue actually used:
+     six of them beside a queue using two is a second thing to read before the
+     first one makes sense. */}}
+{{define "key"}}
+{{if .}}
+<div class="key"><div class="lg">
+  {{range .}}<span><i class="{{.Key}}"></i>{{.Label}}</span>{{end}}
+</div></div>
+{{end}}
+{{end}}

@@ -478,3 +478,45 @@ func observePR(t *testing.T, db, key, state string) {
 		t.Fatalf("Commit() returned error: %v", err)
 	}
 }
+
+// TestTheQueueKeySaysOnlyWhatIsThere. The colours mean something specific and
+// nothing on the page said what — but a key naming six bands beside a queue
+// using two is a second thing to read before the first one makes sense.
+func TestTheQueueKeySaysOnlyWhatIsThere(t *testing.T) {
+	rows := []actionView{
+		{ID: "NA1", RankClass: "session"},
+		{ID: "NA2", RankClass: "decide"},
+		{ID: "NA3", RankClass: "session"},
+	}
+	key := queueKey(rows)
+	if len(key) != 2 {
+		t.Fatalf("key = %v, want the two bands the rows use", key)
+	}
+	// In the order the ranking reads, not the order the rows happen to arrive.
+	if key[0].Key != "decide" || key[1].Key != "session" {
+		t.Errorf("key = %v, want decide before session", key)
+	}
+
+	// Late and expired are conditions rather than bands, so they appear only
+	// when something is in them.
+	for _, band := range key {
+		if band.Key == "late" || band.Key == "expired" {
+			t.Errorf("key explains %q with nothing in it", band.Key)
+		}
+	}
+	withLate := queueKey([]actionView{{RankClass: "session", Late: "3 days"}})
+	var sawLate bool
+	for _, band := range withLate {
+		sawLate = sawLate || band.Key == "late"
+	}
+	if !sawLate {
+		t.Errorf("key = %v, want it to explain late when something is", withLate)
+	}
+}
+
+// TestAnEmptyQueueHasNoKey: a key for a queue with nothing in it is furniture.
+func TestAnEmptyQueueHasNoKey(t *testing.T) {
+	if key := queueKey(nil); len(key) != 0 {
+		t.Errorf("key = %v for an empty queue", key)
+	}
+}

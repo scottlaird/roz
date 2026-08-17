@@ -226,6 +226,8 @@ type pageContent struct {
 	// Favicon is the icon inline, as a data URI. See favicon in render.go for
 	// why it is not a file the page asks for, and why it is a template.URL.
 	Favicon template.URL
+	// QueueKey says what the queue's colours mean, for the bands it used.
+	QueueKey []legendEntry
 	// Graph is what is blocked on what, drawn from the edges that exist. Set
 	// on the index and on its own page, and nil everywhere else: it costs four
 	// queries, and a page about one action has no use for it.
@@ -605,6 +607,8 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			Set:  shortDate(note.UpdatedAt),
 		}
 	}
+
+	content.QueueKey = queueKey(content.Queue, content.Waiting)
 
 	// The index and the graph page draw it; nothing else needs the queries.
 	// Built from everyProject and everyAction rather than from the filtered

@@ -506,3 +506,38 @@ func used(all []legendEntry, present map[string]bool) []legendEntry {
 	}
 	return kept
 }
+
+// The bands a queue is read in. Order is the one the ranking uses, so the key
+// reads down in the same direction the list does.
+var queueBands = []legendEntry{
+	{"click", "one click"},
+	{"decide", "a judgement"},
+	{"session", "real work"},
+	{"wait", "waiting on somebody"},
+	{"late", "past its allowance"},
+	{"expired", "snoozed past its date"},
+}
+
+// queueKey is the legend the queue never had. The colours mean something
+// specific and nothing on the page said what.
+//
+// Built from the rows actually drawn, for the reason the diagram's legend is:
+// a key naming six bands beside a queue using two is a second thing to read
+// before the first one makes sense. Late and expired are conditions rather
+// than bands — an overdue `decide` is still a judgement — so they appear only
+// when something is in them.
+func queueKey(rows ...[]actionView) []legendEntry {
+	present := map[string]bool{}
+	for _, group := range rows {
+		for _, a := range group {
+			present[a.RankClass] = true
+			if a.Late != "" {
+				present["late"] = true
+			}
+			if a.Expired {
+				present["expired"] = true
+			}
+		}
+	}
+	return used(queueBands, present)
+}

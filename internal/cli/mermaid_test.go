@@ -115,6 +115,30 @@ func TestAnUnknownStateDrawsAsPlain(t *testing.T) {
 	}
 }
 
+// TestNoClassCollidesWithMermaidsGrammar. `click` is how the navigation at the
+// bottom of the source is written, so a node carrying `:::click` fails to parse
+// and takes the rest of the diagram with it — the browser draws "Syntax error
+// in text" and nothing else. Every other class parses, so this asserts the one
+// rename rather than a general escape.
+func TestNoClassCollidesWithMermaidsGrammar(t *testing.T) {
+	g := &dependencyGraph{
+		Nodes: []graphNode{
+			{ID: "NA1", Kind: nodeAction, Label: "merge it", Class: "click", Href: "/action/NA1"},
+			{ID: "NA2", Kind: nodeAction, Label: "decide it", Class: "decide"},
+		},
+	}
+	src := mermaid(g)
+	if strings.Contains(src, ":::click") {
+		t.Errorf("a node still carries :::click, which mermaid cannot parse:\n%s", src)
+	}
+	if !strings.Contains(src, ":::oneclick") {
+		t.Errorf("the one-click band lost its class entirely:\n%s", src)
+	}
+	if !strings.Contains(src, ":::decide") {
+		t.Errorf("a class that does not collide was renamed anyway:\n%s", src)
+	}
+}
+
 // TestEachKindOfEdgeDrawsDifferently, because they mean different things: a
 // parent does not block a child, and drawing containment as a dependency
 // arrow would say that it does.

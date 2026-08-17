@@ -31,7 +31,7 @@ func mermaid(g *dependencyGraph) string {
 	// reaches the SVG either way, so roz.css styles it like anything else.
 	for _, n := range g.Nodes {
 		fmt.Fprintf(&b, "  %s%s:::%s\n",
-			ids[n.ID], shapeFor(n.Kind, mermaidLabel(n.Label)), className(n.Class))
+			ids[n.ID], shapeFor(n.Kind, mermaidLabel(n.Label)), mermaidClass(n.Class))
 	}
 	for _, e := range g.Edges {
 		from, to := ids[e.From], ids[e.To]
@@ -65,6 +65,32 @@ func className(class string) string {
 		return class
 	}
 	return "plain"
+}
+
+// mermaidRenames are the classes that cannot reach the diagram under the name
+// the rest of the page uses them by.
+//
+// "click" is a keyword in mermaid's own flowchart grammar -- it is how the
+// navigation at the bottom of this file is written -- so `:::click` lexes as
+// the keyword and the parse fails at the first node in that band, taking the
+// whole diagram with it rather than the one node. Every other class here
+// parses; this is the only collision.
+//
+// Renamed here rather than in the store, because the name is a rank class
+// under a CHECK constraint and is shared with `ol.queue li.click` and the
+// legend swatch. A migration to work around another parser's keyword list
+// would be the wrong thing renaming. roz.css carries the graph-only selector
+// under this name; the queue and the legend keep theirs.
+var mermaidRenames = map[string]string{
+	"click": "oneclick",
+}
+
+func mermaidClass(class string) string {
+	name := className(class)
+	if renamed, ok := mermaidRenames[name]; ok {
+		return renamed
+	}
+	return name
 }
 
 // shapeFor distinguishes the layers without a legend: a project is a box, an

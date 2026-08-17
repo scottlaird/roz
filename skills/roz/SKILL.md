@@ -1,6 +1,6 @@
 ---
 name: roz
-description: Use when working with a roz work queue — reading what to do next, recording pull requests and decisions, or reacting to roz's event log. Covers the two-process arrangement an agent needs, the actor rule, and which closes belong to roz rather than to you.
+description: Use when working with a roz work queue — reading what to do next, recording pull requests and decisions, or reacting to roz's event log. Covers the arrangement an agent needs, the actor rule, which closes belong to roz rather than to you, and why a hand-made action does not start a pipeline.
 ---
 
 # Working with roz
@@ -45,34 +45,53 @@ ambiguity if both ends agree what `API` is.
 
 ## The arrangement
 
-Two processes, and you want both:
+Two things, and you want both: a way to read the queue and write to it, and a
+way to find out something changed.
 
-- **`roz mcp`** serves every command over MCP on stdin and stdout. This is how
-  you read the queue and record decisions.
-- **`roz watch -o json`** is a long-running monitor. This is how you find out
-  something changed.
+**Reading and writing is MCP, served one of two ways.**
 
-The monitor has to be a real process. Over MCP, `watch` is forced to `--once`,
-which is a bounded read and not a stream — an agent that only has the MCP
-surface has to remember to ask again, which is polling with extra steps. If
-nobody has set a monitor up for you, say so rather than looping on
-`watch --once`.
+- **`roz mcp`** serves every command over stdin and stdout.
+- **`roz serve --mcp`** serves the same tools over HTTP at `/mcp`, alongside the
+  status page and the syncer.
+
+What separates them is what happens when roz is rebuilt. The store checks the
+migration version at runtime, so every long-running process exits by design when
+the schema moves — and a stdio server is spawned by its client and never
+reconnected, so that costs the whole session. An HTTP client re-initialises and
+carries on. Worth asking for *before* a migration rather than after one.
+
+`--mcp` is opt-in for exposure rather than cost: stdio is reachable only by the
+process that spawned it, while `/mcp` is reachable by anything running locally,
+and these are write tools. So do not turn it on for somebody — say it would help
+and let them decide.
+
+**Finding out something changed is `roz watch`, and it has to be a real
+process.** Over MCP, `watch` is forced to `--once`, which is a bounded read and
+not a stream — an agent that only has the MCP surface has to remember to ask
+again, which is polling with extra steps. If nobody has set a monitor up for
+you, say so rather than looping on `watch --once`.
 
 ## Every write records who made it
 
 **Over MCP this is already handled.** The server sets the actor itself, from
-what the client calls itself at startup (falling back to `roz mcp --agent
-<name>`, default `mcp`), and it is always an `agent:` prefix — there is no way
+what the client calls itself at startup (falling back to `--agent <name>` on
+whichever process serves it, default `mcp`), and under HTTP it is per session
+rather than per server, so two agents are not each other. It is always an
+`agent:` prefix — there is no way
 to write as a person from there, which is the point. `actor` is not an argument
 the tools accept: passing one is an error, not an override. The same goes for
 `db` and `output`, which the server has already decided.
 
 **The flag is for the CLI.** When you shell out instead — because you want to
 follow the log, or because you have no MCP server — pass `--actor agent:<name>`
-on every command that changes anything: `project
-add|set|close|supersede|snooze|wake|link-issue`, `action
-add|set|close|snooze|wake|add-blocker|hide-behind|link-pr`, `repo track|set`,
-`pr track`, `note`, `exception`.
+on **every command that changes anything**.
+
+That is the whole rule, and it is deliberately not a list. The write surface
+grows: `project` alone has twelve subcommands, and `view add`, `owner set`,
+`pr chain`, `pr link-issue`, `action wait-issue`, `project block`, `verify`,
+`pipeline add` and `config set` all take the flag too. A list would go stale in
+the direction that hurts — a missing entry is a write recorded as `human`.
+`roz <command> --help` names the flag wherever it applies.
 
 Nothing enforces it there. The default is `human`, so a write that forgets the
 flag makes the log claim the person did it, and the log is append-only — it
@@ -109,10 +128,11 @@ says which is which:
 
 - **`closes: human`** — `write`, `review`, `decide`, `file`, `investigate`,
   `run`, `announce`. Somebody did the thing and says so. Fair game.
-- **`closes: predicate`** — `merge` (`pr_merged`), `wait_review`
-  (`pr_approved`), `address_comments` (`pr_threads_clear`), `rebase`,
-  `undraft`, `send_for_review`, `wait_ref`, `wait_issue`, and the rest. These
-  close themselves when the fact becomes true, with `predicate` as the actor.
+- **`closes: predicate`** — `merge` and `wait_merge` (`pr_merged`),
+  `wait_review` (`pr_approved`), `wait_review_from` (`pr_approved_by`, a named
+  owner rather than anyone), `address_comments` (`pr_threads_clear`), `rebase`,
+  `undraft`, `send_for_review`, `wait_ref`, `wait_issue`. These close themselves
+  when the fact becomes true, with `predicate` as the actor.
 
 **Do not hand-close a predicate action.** `roz action close NA7` will not stop
 you — no check refuses it — and the result is a judgement recorded where there
@@ -124,6 +144,30 @@ The same rule read from the schema: columns are **authored** (a person or an
 agent wrote them) or **observed** (sync wrote them). A sync can never overwrite
 a judgement and a judgement can never invent a fact. The store enforces that
 half; the verb half is on you.
+
+## A chain starts by closing a step that is already in one
+
+A repository has a pipeline — `roz pipeline list` — and tracking a pull request
+instantiates it: `undraft` → `send_for_review` → `wait_review` → `merge`, each
+step created as the one before it closes.
+
+**An action you make yourself is not part of that chain.** `roz action add
+--verb undraft` closes on the same predicate as the pipeline's own `undraft`
+step and starts nothing, so the pull request drops out of the queue at the
+moment it stops being your problem and becomes a thing to watch. Nothing errors.
+The symptom arrives later: a merge nobody was waiting on, or a `pr announce`
+that closes no `send_for_review` because none was ever created.
+
+The repair is explicit, and deliberately so — a pull request you are only
+lightly tracking should not quietly acquire three more actions:
+
+```console
+$ roz pr chain owner/repo#812
+```
+
+It creates only what is missing, appends rather than interleaving, and does
+nothing the second time. `roz pr show` names the pipeline that applies and the
+steps nothing covers, which is how to see what it would do before doing it.
 
 ## The queue is a query that already exists
 
@@ -150,9 +194,26 @@ in a table rather than a code change.
 `--filter` takes a CEL expression over the listing's columns. `--explain-filter`
 says how much of it ran in SQL.
 
+## Four commands that answer questions agents usually guess at
+
+- **`roz codeowners --pr owner/repo#812`** — who has to approve, and whether one
+  approval can cover the whole change. GitHub requests every team that matches
+  any path, most of them redundantly, so its reviewer list is not the answer to
+  either question.
+- **`roz pr track --because reviewing`** — why a pull request is tracked.
+  Authored and reviewing are different work, and any "what did I ship" question
+  is wrong if it counts both.
+- **`roz project list --tree`** — projects nest. The hierarchy is display only:
+  a parent does not block a child, and closing one does not close the other.
+- **`roz calendar list`** — oncall, PTO and holidays. What fits in a week is not
+  a property of the queue, and proposing a week's work without reading this is
+  how you propose a week that does not exist.
+
 ## Reacting to the stream
 
-Each line of `roz watch -o json` is one event:
+The plain output is already one line per event, so a monitor does not need
+`-o json` unless something downstream is parsing it. With `-o json` each line is
+one event as an object:
 
 ```json
 {"seq":2,"at":"2026-08-16T03:10:35.891Z","actor":"agent:claude","kind":"created",

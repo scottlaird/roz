@@ -2,10 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
-// mermaid renders the graph as mermaid flowchart source.
+// mermaid renders the graph as mermaid flowchart source: one diagram per
+// disjoint pile of work, in the order the page should stack them.
 //
 // Text, produced on the server and drawn by the client. The layout is the part
 // worth having and the part nothing here wants to write: a dependency diagram
@@ -16,12 +18,32 @@ import (
 // way: a blocker is above what it blocks. Left to right lays a wide graph out
 // along its longest axis and needs horizontal scrolling to follow one chain,
 // which is the direction a page has least of.
-func mermaid(g *dependencyGraph) string {
+//
+// Split because one diagram is the wrong picture of unrelated work. Every
+// layered engine puts each component's roots on the top rank and lays the
+// components out side by side, so a graph of n piles is n times as wide as the
+// widest thing in it and every pile starts level with the others -- 2190x629
+// measured, against a 960px column. The same nodes as three diagrams came to
+// 759, 664 and 848 wide, all of which fit, because stacking them spends the
+// axis the page has rather than the one it does not.
+func mermaid(g *dependencyGraph) []string {
 	if g.Empty() {
-		return ""
+		return nil
 	}
-
+	// One id map for the whole graph, not one per diagram. The client binds
+	// navigation by the drawn node's id, from a single map keyed the same way,
+	// and per-diagram numbering would collide across panels.
 	ids := mermaidIDs(g.Nodes)
+	var out []string
+	for _, panel := range mermaidPanels(g) {
+		out = append(out, mermaidDiagram(g, panel, ids))
+	}
+	return out
+}
+
+// mermaidDiagram renders one diagram, holding the nodes in panel and whatever
+// edges run between them.
+func mermaidDiagram(g *dependencyGraph, panel map[string]bool, ids map[string]string) string {
 	var b strings.Builder
 	b.WriteString("graph TD\n")
 
@@ -31,10 +53,16 @@ func mermaid(g *dependencyGraph) string {
 	// stylesheet that does not follow the page into dark mode. The class name
 	// reaches the SVG either way, so roz.css styles it like anything else.
 	for _, n := range g.Nodes {
+		if !panel[n.ID] {
+			continue
+		}
 		fmt.Fprintf(&b, "  %s%s:::%s\n",
 			ids[n.ID], shapeFor(n.Kind, mermaidLabel(n.Label)), mermaidClass(n.Class))
 	}
 	for _, e := range g.Edges {
+		if !panel[e.From] || !panel[e.To] {
+			continue
+		}
 		from, to := ids[e.From], ids[e.To]
 		if from == "" || to == "" {
 			continue // an edge to something pruning dropped; the node is the record
@@ -50,7 +78,7 @@ func mermaid(g *dependencyGraph) string {
 	for _, kind := range []string{nodeProject, nodeAction, nodePR} {
 		var of []string
 		for _, n := range g.Nodes {
-			if n.Kind == kind {
+			if panel[n.ID] && n.Kind == kind {
 				of = append(of, ids[n.ID])
 			}
 		}
@@ -65,7 +93,7 @@ func mermaid(g *dependencyGraph) string {
 	// this cuts across all of them.
 	var ready []string
 	for _, n := range g.Nodes {
-		if n.Ready {
+		if panel[n.ID] && n.Ready {
 			ready = append(ready, ids[n.ID])
 		}
 	}
@@ -74,6 +102,91 @@ func mermaid(g *dependencyGraph) string {
 	}
 
 	return b.String()
+}
+
+// ownPanel is how many nodes a pile needs before it is drawn on its own. Below
+// it a component is a stub -- a project and the pull request advancing it --
+// and a diagram of two boxes costs a bordered box, a scroll container and a
+// screenful of page to say what one line of the queue already says. Stubs go
+// into one shared panel, where they lay out in a row and cost a strip.
+const ownPanel = 5
+
+// mermaidPanels groups the graph into the diagrams to draw, largest first, with
+// everything too small for its own diagram gathered into a last one.
+//
+// Size order rather than the node order, because the big piles are the reason
+// the page has a diagram and should be the first thing under the heading. Ties
+// keep the order the nodes came in, so the same data draws the same way.
+func mermaidPanels(g *dependencyGraph) []map[string]bool {
+	groups := mermaidComponents(g)
+	var panels []map[string]bool
+	stubs := map[string]bool{}
+	for _, group := range groups {
+		if len(group) >= ownPanel {
+			panel := make(map[string]bool, len(group))
+			for _, id := range group {
+				panel[id] = true
+			}
+			panels = append(panels, panel)
+			continue
+		}
+		for _, id := range group {
+			stubs[id] = true
+		}
+	}
+	if len(stubs) > 0 {
+		panels = append(panels, stubs)
+	}
+	return panels
+}
+
+// mermaidComponents finds the connected components of the graph, ignoring which
+// way the edges point: two nodes belong in the same picture if anything joins
+// them at all.
+//
+// Returned largest first, each component in node order, and stable -- the
+// diagram is rebuilt on every request, so an ordering that depended on map
+// iteration would reshuffle the page under a reload that changed nothing.
+func mermaidComponents(g *dependencyGraph) [][]string {
+	parent := make(map[string]string, len(g.Nodes))
+	for _, n := range g.Nodes {
+		parent[n.ID] = n.ID
+	}
+	var root func(string) string
+	root = func(id string) string {
+		if parent[id] != id {
+			parent[id] = root(parent[id])
+		}
+		return parent[id]
+	}
+	for _, e := range g.Edges {
+		// An edge can outlive one of its ends, since pruning works on nodes.
+		if _, ok := parent[e.From]; !ok {
+			continue
+		}
+		if _, ok := parent[e.To]; !ok {
+			continue
+		}
+		parent[root(e.From)] = root(e.To)
+	}
+
+	var order []string
+	members := map[string][]string{}
+	for _, n := range g.Nodes {
+		r := root(n.ID)
+		if _, seen := members[r]; !seen {
+			order = append(order, r)
+		}
+		members[r] = append(members[r], n.ID)
+	}
+	groups := make([][]string, 0, len(order))
+	for _, r := range order {
+		groups = append(groups, members[r])
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return len(groups[i]) > len(groups[j])
+	})
+	return groups
 }
 
 // mermaidLinks is where each node goes when it is clicked, keyed by the

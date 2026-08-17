@@ -40,8 +40,9 @@ const (
 type dependencyGraph struct {
 	Nodes []graphNode
 	Edges []graphEdge
-	// Mermaid is the diagram source, rendered by the client.
-	Mermaid string
+	// Diagrams are the diagram sources, rendered by the client, one per disjoint
+	// pile of work and in the order to stack them down the page.
+	Diagrams []string
 	// Links is where each node goes when clicked, keyed by the identifier the
 	// diagram source uses, for the client to bind after it draws.
 	Links template.JS
@@ -391,9 +392,10 @@ func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked, subje
 	graph.OmittedActions = countOpen(g.actions, func(a *store.Action) bool {
 		return a.IsOpen() && !g.seen[a.ID]
 	})
+	// Diagrams before coverage, which says how many of them there are and why.
+	graph.Diagrams = mermaid(graph)
 	graph.Coverage = coverage(graph)
 	graph.Legend = legendFor(graph)
-	graph.Mermaid = mermaid(graph)
 	// Marshalling cannot fail on a map of strings, and a diagram that drew is
 	// worth more than one that refused over its navigation, so an error here
 	// costs the links and nothing else.
@@ -596,6 +598,23 @@ func coverage(g *dependencyGraph) []string {
 			"the step it is on, rather than as a box each")
 	said = append(said,
 		"nothing closed: a satisfied blocker is history, and it is left out")
+	// Said explicitly, because several pictures under one heading otherwise
+	// read as one picture that failed to join up. Nothing crosses between them
+	// by construction: they are the graph's connected components.
+	if len(g.Diagrams) > 1 {
+		line := fmt.Sprintf(
+			"%d diagrams, one per pile of work with nothing joining it to the others",
+			len(g.Diagrams))
+		// The last one is the exception and holds several piles, so it would
+		// contradict the sentence above if left unsaid.
+		for _, group := range mermaidComponents(g) {
+			if len(group) < ownPanel {
+				line += "; the last gathers the piles too small to draw alone"
+				break
+			}
+		}
+		said = append(said, line)
+	}
 	return said
 }
 

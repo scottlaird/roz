@@ -192,7 +192,10 @@ $ roz mcp
 ```
 
 That serves every command over MCP on stdin and stdout, so an agent can read
-the queue and record decisions without shelling out. Alongside it, a `roz
+the queue and record decisions without shelling out. `roz serve --mcp` offers
+the same tools over HTTP instead, which survives roz being restarted under it —
+a stdio server is spawned by its client and cannot be reconnected, so upgrading
+costs the whole session. Alongside it, a `roz
 watch` process gives the agent the change log as a stream — a real monitor, not
 an MCP call, because over MCP `watch` is bounded to `--once` and a bounded read
 is not a stream.

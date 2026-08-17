@@ -77,6 +77,12 @@ type Server struct {
 	changes Changes
 	log     io.Writer
 
+	// mcp is the MCP endpoint, mounted only when `roz serve` was asked for
+	// one. nil is the ordinary case and mounts nothing at all — an endpoint
+	// that 404s and an endpoint that is not there are the same to a client,
+	// and the second cannot be reached by accident.
+	mcp http.Handler
+
 	// ready is closed once the listener is up, which is how a caller that
 	// asked for port 0 finds out what it got.
 	ready    chan struct{}
@@ -108,6 +114,21 @@ func New(addr string, page Page, changes Changes, log io.Writer) *Server {
 		addr: addr, page: page, changes: changes, log: log,
 		ready: make(chan struct{}),
 	}
+}
+
+// MCPPath is where the MCP endpoint is mounted when there is one.
+const MCPPath = "/mcp"
+
+// WithMCP mounts an MCP endpoint on the same listener.
+//
+// Deliberately a separate call rather than another parameter to New: every
+// caller but one passes nothing, and what this does is change what the port is
+// for. The page is a read-only view of a personal queue; this is the write
+// surface of the whole tool on an unauthenticated loopback port, which is why
+// `roz serve` asks for it explicitly.
+func (s *Server) WithMCP(h http.Handler) *Server {
+	s.mcp = h
+	return s
 }
 
 func (s *Server) Name() string { return "server" }
@@ -146,6 +167,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// is less sensitive than the page beside it, so nothing is gained by
 	// making it harder to reach than the thing it describes.
 	mux.Handle("/metrics", metrics.Handler())
+	if s.mcp != nil {
+		mux.Handle(MCPPath, s.mcp)
+		s.logf("serving MCP at http://%s%s\n", s.listenOn, MCPPath)
+	}
 	// Compiled in, and answered with an ETag, so a browser fetches the
 	// stylesheet once and is told 304 for the rest of the process's life —
 	// and for the next one too, since the tag is the content's hash rather

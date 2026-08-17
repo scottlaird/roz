@@ -1119,6 +1119,51 @@ conditions on top of a rank class rather than classes of their own, and an
 overdue `decide` that stopped looking like a judgement would be hiding what it
 is at exactly the moment somebody needs to notice it.
 
+## MCP over HTTP, so the server can be restarted
+
+`roz mcp` speaks over stdio, and a stdio server cannot be restarted
+independently of its client: the client spawns the process and never
+reconnects it. So a schema change costs a whole session — `roz mcp` exits when
+the database migrates under it, which is right, and nothing brings it back.
+
+```console
+$ roz serve --mcp
+serving http://127.0.0.1:8737/
+serving MCP at http://127.0.0.1:8737/mcp
+```
+
+An HTTP client reconnects on its own, so the same event costs a `roz serve`
+restart instead. POST only: 405 to `GET` is how a server declares it offers no
+server-initiated stream, which is all roz needs — every exchange here is a
+request and its answer.
+
+**Off by default, and the reason is exposure rather than cost.** Stdio is
+reachable only by the process that spawned it. This is reachable by anything
+running locally, and these are write tools. Origin validation stops a browser
+page being turned into a client; it does nothing about another local process,
+and that asymmetry is why it is asked for explicitly.
+
+### Sessions, because the actor column has to be right
+
+The client's name used to live on the server, set at `initialize`. Over stdio
+that is the same thing as per-connection — the process has exactly one client —
+and over HTTP it is not: one server answers many, and the stored name is
+whoever initialised most recently.
+
+That is not a race about a string. Every write is recorded as `agent:<name>`,
+so the wrong one misattributes it in the log, and the actor column exists
+precisely to be trusted about who did what. `Mcp-Session-Id` carries the
+session; the name lives on it.
+
+An unknown session is a 404, and that is what buys the clean restart: the
+client sees it, re-initializes, and carries on. Accepting the call instead
+would attribute it to an empty client name, which is the failure this is
+about.
+
+One tool call at a time. #73 took the database off a package variable, but
+cobra still holds flag state per command, so two in flight would share it.
+Stdio gets that for free by reading a line at a time; here it is a mutex.
+
 ## The page links to itself
 
 Every action and project has an anchor, which is its identifier verbatim:

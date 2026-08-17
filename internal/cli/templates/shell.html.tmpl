@@ -124,13 +124,27 @@
 
            themeVariables, not the top-level fontSize -- that one is accepted,
            changes nothing, and leaves the injected stylesheet saying 16px. */}}
-      themeVariables: {fontSize: "11px"},
-      {{/* useMaxWidth false so the diagram is drawn at the size it needs and
+      themeVariables: {fontSize: "9px"},
+      {{/* wrappingWidth is in pixels and mermaid's default is 200, which at
+           this font size is a very long line: labels stayed on one row and the
+           graph grew sideways instead of wrapping. 100 breaks them into two or
+           three short rows, which is what makes the whole thing narrow enough
+           to mostly fit. padding is the box's own inset, 8 by default -- at 9px
+           text that reads as a lot of empty border per node.
+
+           useMaxWidth false so the diagram is drawn at the size it needs and
            scrolls inside its box. The default writes width="100%" onto the
            svg, which scales a wide graph down to the column until the labels
            are unreadable -- and a diagram nobody can read is a diagram nobody
-           drew. */}}
-      flowchart: {htmlLabels: false, curve: "basis", useMaxWidth: false},
+           drew. Still needed: the 9px/100/5 combination gets close to fitting
+           the column unaided, but not close enough to hand the scaling back. */}}
+      flowchart: {
+        htmlLabels: false,
+        curve: "basis",
+        useMaxWidth: false,
+        wrappingWidth: 100,
+        padding: 5,
+      },
     });
     await mermaid.run({querySelector: "pre.mermaid"});
 
@@ -198,8 +212,11 @@
 {{if .Empty}}
 <p class="empty">nothing open is blocked on anything open</p>
 {{else}}
-<div class="graph"><pre class="mermaid">{{.Mermaid}}</pre></div>
-<script type="application/json" id="graph-links">{{.Links}}</script>
+{{/* One box per disjoint pile of work, stacked. The link map is shared: it is
+     keyed by the diagram's name for a node and the whole graph is numbered
+     once, so the binding below does not care which box a node was drawn in. */}}
+{{range .Diagrams}}<div class="graph"><pre class="mermaid">{{.}}</pre></div>
+{{end}}<script type="application/json" id="graph-links">{{.Links}}</script>
 {{end}}
 {{if not .Legend.Empty}}
 <div class="legend">

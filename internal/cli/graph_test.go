@@ -74,8 +74,9 @@ func TestAQueueWithNoDependenciesDrawsNothing(t *testing.T) {
 	if !g.Empty() {
 		t.Errorf("drew %v with nothing blocked on anything", nodeIDs(g))
 	}
-	if g.Mermaid != "" {
-		t.Errorf("emitted diagram source for an empty graph:\n%s", g.Mermaid)
+	if len(g.Diagrams) != 0 {
+		t.Errorf("emitted diagram source for an empty graph:\n%s",
+			strings.Join(g.Diagrams, "\n"))
 	}
 	// And says what it left out, so "small" and "broken" are distinguishable.
 	if g.OmittedProjects != 1 || g.OmittedActions != 1 {
@@ -241,9 +242,11 @@ func TestTheGraphPageAndTheIndexDrawTheSame(t *testing.T) {
 	if index.Graph == nil || own.Graph == nil {
 		t.Fatal("one of the two pages built no graph")
 	}
-	if index.Graph.Mermaid != own.Graph.Mermaid {
+	indexSrc := strings.Join(index.Graph.Diagrams, "\n")
+	ownSrc := strings.Join(own.Graph.Diagrams, "\n")
+	if indexSrc != ownSrc {
 		t.Errorf("the index and its own page draw different diagrams:\n%s\n---\n%s",
-			index.Graph.Mermaid, own.Graph.Mermaid)
+			indexSrc, ownSrc)
 	}
 }
 

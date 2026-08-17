@@ -1,9 +1,17 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// mermaidSource is every diagram the graph draws, as one string. The tests
+// below ask what reached the page rather than which box it landed in, and a
+// node is in exactly one diagram either way.
+func mermaidSource(g *dependencyGraph) string {
+	return strings.Join(mermaid(g), "\n")
+}
 
 // TestALabelSurvivesMermaid covers what a title has to go through, and every
 // case here was found by rendering it in a browser rather than by reading the
@@ -97,7 +105,7 @@ func TestTheSameGraphDrawsTheSameSource(t *testing.T) {
 		},
 		Edges: []graphEdge{{From: "NA1", To: "SL1", Kind: edgeAdvances}},
 	}
-	if first, second := mermaid(g), mermaid(g); first != second {
+	if first, second := mermaidSource(g), mermaidSource(g); first != second {
 		t.Errorf("two renders of one graph differ:\n%s\n---\n%s", first, second)
 	}
 }
@@ -127,7 +135,7 @@ func TestNoClassCollidesWithMermaidsGrammar(t *testing.T) {
 			{ID: "NA2", Kind: nodeAction, Label: "decide it", Class: "decide"},
 		},
 	}
-	src := mermaid(g)
+	src := mermaidSource(g)
 	if strings.Contains(src, ":::click") {
 		t.Errorf("a node still carries :::click, which mermaid cannot parse:\n%s", src)
 	}
@@ -153,7 +161,7 @@ func TestNavigationIsNotInTheDiagramSource(t *testing.T) {
 		},
 		Edges: []graphEdge{{From: "SL1", To: "NA1", Kind: edgeAdvances}},
 	}
-	if src := mermaid(g); strings.Contains(src, "click ") {
+	if src := mermaidSource(g); strings.Contains(src, "click ") {
 		t.Errorf("the diagram source carries a click statement:\n%s", src)
 	}
 
@@ -194,8 +202,66 @@ func TestAnEdgeToAPrunedNodeIsDropped(t *testing.T) {
 		Nodes: []graphNode{{ID: "SL1", Kind: nodeProject, Label: "one", Class: "active"}},
 		Edges: []graphEdge{{From: "SL1", To: "SL999", Kind: edgeBlocks}},
 	}
-	if out := mermaid(g); strings.Contains(out, "SL999") {
+	if out := mermaidSource(g); strings.Contains(out, "SL999") {
 		t.Errorf("drew an edge to a node that is not in the graph:\n%s", out)
+	}
+}
+
+// TestUnrelatedPilesDrawAsSeparateDiagrams. One diagram of n disjoint piles is
+// n times as wide as the widest of them and starts every pile on the top rank,
+// because that is what a layered layout does with disconnected components. The
+// queue really is several unrelated pieces of work, so the page stacks them.
+func TestUnrelatedPilesDrawAsSeparateDiagrams(t *testing.T) {
+	// Two piles of five, which is the threshold, and a stub of two.
+	g := &dependencyGraph{}
+	for _, pile := range []string{"A", "B"} {
+		for i := range ownPanel {
+			g.Nodes = append(g.Nodes, graphNode{
+				ID: fmt.Sprintf("%s%d", pile, i), Kind: nodeProject,
+				Label: "node", Class: "active",
+			})
+			if i > 0 {
+				g.Edges = append(g.Edges, graphEdge{
+					From: fmt.Sprintf("%s%d", pile, i),
+					To:   fmt.Sprintf("%s%d", pile, i-1), Kind: edgeBlocks,
+				})
+			}
+		}
+	}
+	g.Nodes = append(g.Nodes,
+		graphNode{ID: "S0", Kind: nodeProject, Label: "stub", Class: "active"},
+		graphNode{ID: "S1", Kind: nodeAction, Label: "stub", Class: "decide"})
+	g.Edges = append(g.Edges, graphEdge{From: "S1", To: "S0", Kind: edgeAdvances})
+
+	out := mermaid(g)
+	if len(out) != 3 {
+		t.Fatalf("drew %d diagrams, want one per pile plus one for the stubs:\n%s",
+			len(out), strings.Join(out, "\n---\n"))
+	}
+	// Each pile in its own diagram and nothing from the other in it, since a
+	// node drawn twice is two boxes claiming to be one thing.
+	for i, want := range []string{"A0", "B0"} {
+		other := map[string]string{"A0": "B0", "B0": "A0"}[want]
+		if !strings.Contains(out[i], want+"[") {
+			t.Errorf("diagram %d does not hold %s:\n%s", i, want, out[i])
+		}
+		if strings.Contains(out[i], other+"[") {
+			t.Errorf("diagram %d holds both piles:\n%s", i, out[i])
+		}
+	}
+	// Stubs share the last one rather than costing a bordered box each.
+	if !strings.Contains(out[2], "S0[") || !strings.Contains(out[2], "S1(") {
+		t.Errorf("the stubs did not land in the last diagram:\n%s", out[2])
+	}
+
+	// Every node reaches the page exactly once, whichever box it is in: a pile
+	// dropped by the grouping is a silent hole in the picture.
+	all := strings.Join(out, "\n")
+	for _, n := range g.Nodes {
+		drawn := strings.Count(all, "\n  "+n.ID+"[") + strings.Count(all, "\n  "+n.ID+"(")
+		if drawn != 1 {
+			t.Errorf("%s was drawn %d times, want once", n.ID, drawn)
+		}
 	}
 }
 

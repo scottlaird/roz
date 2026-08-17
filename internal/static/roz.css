@@ -224,7 +224,9 @@ h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
 .graph .node.snoozed rect,.graph .node.snoozed path,
 .graph .node.wait rect,.graph .node.wait path{
   fill:var(--wait-bg)!important;stroke:var(--wait)!important}
-.graph .node.click rect,.graph .node.click path{
+/* oneclick, not click: mermaid's grammar reserves the word, so the diagram
+   carries the one-click band under a different name. See mermaidRenames. */
+.graph .node.oneclick rect,.graph .node.oneclick path{
   fill:var(--click-bg)!important;stroke:var(--click)!important}
 .graph .node.decide rect,.graph .node.decide path{
   fill:var(--decide-bg)!important;stroke:var(--decide)!important}

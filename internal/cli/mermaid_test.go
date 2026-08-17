@@ -139,6 +139,39 @@ func TestNoClassCollidesWithMermaidsGrammar(t *testing.T) {
 	}
 }
 
+// TestNavigationIsNotInTheDiagramSource. A `click ... href` statement makes
+// ELK draw nothing at all — not an error, an empty diagram — so the links go
+// out beside the source and are bound to the drawn nodes instead. Worth a test
+// because the failure is silent and the statement is the obvious way to do it.
+func TestNavigationIsNotInTheDiagramSource(t *testing.T) {
+	g := &dependencyGraph{
+		Nodes: []graphNode{
+			{ID: "SL1", Kind: nodeProject, Label: "one", Class: "active", Href: "/project/SL1"},
+			{ID: "owner/repo#7", Kind: nodePR, Label: "two", Class: "wait",
+				Href: "https://github.com/owner/repo/pull/7"},
+			{ID: "NA1", Kind: nodeAction, Label: "three", Class: "decide"},
+		},
+		Edges: []graphEdge{{From: "SL1", To: "NA1", Kind: edgeAdvances}},
+	}
+	if src := mermaid(g); strings.Contains(src, "click ") {
+		t.Errorf("the diagram source carries a click statement:\n%s", src)
+	}
+
+	links := mermaidLinks(g)
+	if got := links["SL1"]; got != "/project/SL1" {
+		t.Errorf("links[SL1] = %q, want the project page", got)
+	}
+	// Keyed by the diagram's name for it, not roz's: that is what the drawn
+	// node's id is built from.
+	ids := mermaidIDs(g.Nodes)
+	if got := links[ids["owner/repo#7"]]; got != "https://github.com/owner/repo/pull/7" {
+		t.Errorf("the pull request's link is not under %q: %v", ids["owner/repo#7"], links)
+	}
+	if _, ok := links["NA1"]; ok {
+		t.Errorf("invented a link for a node that has none: %v", links)
+	}
+}
+
 // TestEachKindOfEdgeDrawsDifferently, because they mean different things: a
 // parent does not block a child, and drawing containment as a dependency
 // arrow would say that it does.

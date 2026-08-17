@@ -55,12 +55,25 @@
      the <pre> stays as it was: the diagram written out as text, which is
      legible, and considerably better than an empty box.
 
-     securityLevel is loose with htmlLabels off, and the pair is the point.
-     Loose is what lets `click` navigate; htmlLabels off is what makes that
-     safe, because a label is then SVG text rather than markup — and labels
-     carry pull-request titles, which come from GitHub and are not ours. Either
-     one alone is wrong: strict silently drops every link, and loose with html
-     labels lets a title write markup into the page.
+     ELK does the layout, and dagre draws it if ELK does not arrive. On the
+     current queue ELK crosses five pairs of edges where dagre crosses
+     twenty-four — measured by sampling the drawn paths, not by eye — and it is
+     the only thing that moved: reordering the source so dagre's own heuristic
+     sees each component together took twenty-four to twenty-three.
+
+     Its render chunk is imported dynamically and so carries no integrity hash,
+     which the entry point's would not cover anyway. Pinned by version, and a
+     loopback tool that already pulls mermaid from the same origin is not made
+     meaningfully worse by it -- but it is a weaker promise than the line
+     above, and worth knowing.
+
+     htmlLabels is off because labels carry pull-request titles, which come
+     from GitHub and are not ours: off makes a label SVG text rather than
+     markup. securityLevel is left at its default, which is strict. It used to
+     be loose, for `click ... href` statements in the diagram source -- and
+     those are gone, because ELK draws an empty diagram when it meets one. The
+     navigation is bound to the drawn nodes instead, from a map the server
+     writes out.
 
      htmlLabels is set twice, and both are load-bearing. Setting it only under
      flowchart leaves the renderer reading the top-level default, which is on:
@@ -71,15 +84,68 @@
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"
         integrity="sha384-rbtjAdnIQE/aQJGEgXrVUlMibdfTSa4PQju4HDhN3sR2PmaKFzhEafuePsl9H/9I"
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+{{/* Classic and immediate, and it has to be both. mermaid's startOnLoad
+     defaults to on, and a module script does not run until after
+     DOMContentLoaded -- so mermaid draws every diagram itself, with default
+     config and dagre, before the module below gets to say otherwise. The run()
+     down there then finds nothing left to process and silently changes
+     nothing. Cost me an hour: the config said elk and the picture was dagre. */}}
 <script>
+  if (window.mermaid) { mermaid.initialize({startOnLoad: false}); }
+</script>
+<script type="module">
   if (window.mermaid) {
+    let layout = "dagre";
+    try {
+      const elk = await import("https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.1.7/dist/mermaid-layout-elk.esm.min.mjs");
+      mermaid.registerLayoutLoaders(elk.default);
+      {{/* Registering only names the loader; the algorithm itself is a second,
+           much larger, dynamically imported chunk. Without this the first
+           render races that download and quietly falls back to dagre -- the
+           config still says elk, the diagram is just laid out by something
+           else, and only a reload looks right. Awaited here so the run below
+           has it. */}}
+      await elk.default.find((l) => l.name === "elk").loader();
+      layout = "elk";
+    } catch (e) {
+      {{/* Offline, blocked, or a version that no longer registers: dagre lays
+           it out and the diagram is worse rather than absent. */}}
+    }
     mermaid.initialize({
       startOnLoad: false,
-      securityLevel: "loose",
       htmlLabels: false,
-      flowchart: {htmlLabels: false, curve: "basis"},
+      layout: layout,
+      {{/* Smaller than the page, not just smaller-looking. mermaid's default
+           is 16px, which drew the diagram larger than the 15px it sits under
+           and made the least detailed thing on the page the loudest. Set in
+           config rather than the stylesheet because the layout measures the
+           text: shrinking it in CSS alone would leave every box sized for
+           16px, and here the canvas comes in with it.
+
+           themeVariables, not the top-level fontSize -- that one is accepted,
+           changes nothing, and leaves the injected stylesheet saying 16px. */}}
+      themeVariables: {fontSize: "11px"},
+      {{/* useMaxWidth false so the diagram is drawn at the size it needs and
+           scrolls inside its box. The default writes width="100%" onto the
+           svg, which scales a wide graph down to the column until the labels
+           are unreadable -- and a diagram nobody can read is a diagram nobody
+           drew. */}}
+      flowchart: {htmlLabels: false, curve: "basis", useMaxWidth: false},
     });
-    mermaid.run({querySelector: "pre.mermaid"});
+    await mermaid.run({querySelector: "pre.mermaid"});
+
+    {{/* The navigation `click` statements used to carry. A drawn node's id is
+         `flowchart-<the diagram's name for it>-<a counter>`, so the counter
+         comes off and what is left is what the link map is keyed by. Bound
+         after the run, since none of it exists until then. */}}
+    const source = document.getElementById("graph-links");
+    const links = source ? JSON.parse(source.textContent) : {};
+    for (const node of document.querySelectorAll(".graph .node")) {
+      const href = links[(node.id || "").replace(/^flowchart-/, "").replace(/-\d+$/, "")];
+      if (!href) continue;
+      node.classList.add("clickable");
+      node.addEventListener("click", () => { window.location.href = href; });
+    }
   }
 </script>
 {{end}}{{end}}
@@ -133,11 +199,13 @@
 <p class="empty">nothing open is blocked on anything open</p>
 {{else}}
 <div class="graph"><pre class="mermaid">{{.Mermaid}}</pre></div>
+<script type="application/json" id="graph-links">{{.Links}}</script>
 {{end}}
 {{if not .Legend.Empty}}
 <div class="legend">
   {{with .Legend.States}}<div class="lg">{{range .}}<span><i class="sw {{.Key}}"></i>{{.Label}}</span>{{end}}</div>{{end}}
   {{with .Legend.Shapes}}<div class="lg">{{range .}}<span><i class="sh {{.Key}}"></i>{{.Label}}</span>{{end}}</div>{{end}}
+  {{if .Legend.Ready}}<div class="lg"><span>solid is ready to pick up now; faded is waiting on something in front of it</span></div>{{end}}
   {{with .Legend.Edges}}<div class="lg">{{range .}}<span><i class="ln {{.Key}}"></i>{{.Label}}</span>{{end}}</div>{{end}}
 </div>
 {{end}}

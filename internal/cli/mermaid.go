@@ -12,9 +12,10 @@ import (
 // needs a layered layout with edge routing, and that is a solved problem
 // belonging to whatever draws it.
 //
-// Left to right, so the arrows read as time: a blocker is to the left of what
-// it blocks. Top-down puts long titles in a narrow column and turns a chain of
-// four into a page of scrolling.
+// Top down, so the arrows read as time down a page that is already read that
+// way: a blocker is above what it blocks. Left to right lays a wide graph out
+// along its longest axis and needs horizontal scrolling to follow one chain,
+// which is the direction a page has least of.
 func mermaid(g *dependencyGraph) string {
 	if g.Empty() {
 		return ""
@@ -22,7 +23,7 @@ func mermaid(g *dependencyGraph) string {
 
 	ids := mermaidIDs(g.Nodes)
 	var b strings.Builder
-	b.WriteString("graph LR\n")
+	b.WriteString("graph TD\n")
 
 	// No classDef here. Mermaid's own grammar cannot parse a CSS var() inside
 	// one — the bracket ends the token — so a palette written into the diagram
@@ -40,14 +41,58 @@ func mermaid(g *dependencyGraph) string {
 		}
 		fmt.Fprintf(&b, "  %s %s %s\n", from, arrowFor(e.Kind), to)
 	}
-	// Links last, so the diagram reads as a diagram in source form and the
-	// navigation is an appendix to it.
-	for _, n := range g.Nodes {
-		if n.Href != "" {
-			fmt.Fprintf(&b, "  click %s href \"%s\"\n", ids[n.ID], n.Href)
+	// The kind, as a second class, so the stylesheet can draw a project like a
+	// project whatever state it is in. `:::` carries one class and the state
+	// has it, since that is the one that varies; a `class` statement is how a
+	// node gets another. Grouped into one statement per kind rather than one
+	// per node, which is the same thing to mermaid and a great deal less of it
+	// to read.
+	for _, kind := range []string{nodeProject, nodeAction, nodePR} {
+		var of []string
+		for _, n := range g.Nodes {
+			if n.Kind == kind {
+				of = append(of, ids[n.ID])
+			}
+		}
+		if len(of) > 0 {
+			fmt.Fprintf(&b, "  class %s %s\n", strings.Join(of, ","), kind)
 		}
 	}
+
+	// And whether it can be picked up now, which is the question the diagram
+	// is usually being asked. A third class rather than a colour of its own:
+	// the state classes say what kind of work it is and are worth keeping, and
+	// this cuts across all of them.
+	var ready []string
+	for _, n := range g.Nodes {
+		if n.Ready {
+			ready = append(ready, ids[n.ID])
+		}
+	}
+	if len(ready) > 0 {
+		fmt.Fprintf(&b, "  class %s ready\n", strings.Join(ready, ","))
+	}
+
 	return b.String()
+}
+
+// mermaidLinks is where each node goes when it is clicked, keyed by the
+// identifier the diagram source uses.
+//
+// Not `click ... href` statements in the source, which is what this was.
+// ELK renders nothing at all when the source carries them -- not an error, an
+// empty diagram -- so the navigation is bound to the drawn nodes instead, from
+// this. It also means the page no longer needs mermaid's "loose" security
+// level, which existed only to let click statements navigate.
+func mermaidLinks(g *dependencyGraph) map[string]string {
+	ids := mermaidIDs(g.Nodes)
+	links := map[string]string{}
+	for _, n := range g.Nodes {
+		if n.Href != "" {
+			links[ids[n.ID]] = n.Href
+		}
+	}
+	return links
 }
 
 // graphClasses are the states the stylesheet knows how to colour. Anything

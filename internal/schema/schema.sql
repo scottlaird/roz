@@ -155,6 +155,11 @@ INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires
   -- the noise would be durable rather than passing. See 0020.
   ('wait_ref',         'wait for a ref',    'predicate', 'ref_exists',        'wait',    0, 1, 0, 0, 0, NULL,
    'Wait for a branch or tag to appear. Closes when one matching the expression exists.'),
+  -- Somebody else's merge, which is not yours to influence: wait_days is NULL
+  -- for wait_ref's reason. It names the predicate `merge` names, and differs
+  -- only in the two settings that say whose pull request it is about. See 0040.
+  ('wait_merge',       'wait for a merge',  'predicate', 'pr_merged',         'wait',    1, 0, 0, 0, 0, NULL,
+   'Wait for somebody else''s pull request to merge. Closes when it has. Unlike `merge`, which is your click on your own pull request, this has no allowance: their merge is not yours to influence.'),
 
   -- Human-closed. These are the items worth spending attention on, and the
   -- only ones that reach the queue as thinking work.

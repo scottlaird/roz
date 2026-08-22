@@ -1,54 +1,184 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="roz">
-  <title>roz</title>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
 
-  <defs>
-    <!-- One lens, drawn on the left and mirrored for the right. Wide and
-         shallow, with the outer corner swept up into a point: that flick is
-         the whole shape, and it reaches past the face on purpose. -->
-    <path id="lens" d="M 44 176
-      C 99 190 178 204 228 211
-      C 240 213 244 220 242 229
-      C 240 251 234 270 221 281
-      C 200 298 137 300 101 288
-      C 80 282 67 270 62 255
-      C 55 230 46 197 44 176 Z"/>
+<svg
+   width="10cm"
+   height="10cm"
+   viewBox="0 0 99.999995 100"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   sodipodi:docname="RozMom.svg"
+   inkscape:export-filename="RozApp_Mom.svg"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="1.7264731"
+     inkscape:cx="181.00485"
+     inkscape:cy="145.3831"
+     inkscape:window-width="1621"
+     inkscape:window-height="1400"
+     inkscape:window-x="489"
+     inkscape:window-y="209"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="layer2" />
+  <defs
+     id="defs1">
+    <linearGradient
+       id="swatch14"
+       inkscape:swatch="solid">
+      <stop
+         style="stop-color:#d06e6e;stop-opacity:1;"
+         offset="0"
+         id="stop14" />
+    </linearGradient>
+    <inkscape:path-effect
+       effect="mirror_symmetry"
+       start_point="73.885955,22.37844"
+       end_point="73.885955,79.244425"
+       center_point="73.885955,50.811432"
+       id="path-effect5"
+       is_visible="true"
+       lpeversion="1.2"
+       lpesatellites=""
+       mode="vertical"
+       discard_orig_path="false"
+       fuse_paths="true"
+       oposite_fuse="true"
+       split_items="false"
+       split_open="false"
+       link_styles="false" />
+    <inkscape:path-effect
+       effect="mirror_symmetry"
+       start_point="73.146146,71.412311"
+       end_point="73.146146,71.412311"
+       center_point="73.146146,71.412311"
+       id="path-effect4"
+       is_visible="false"
+       lpeversion="1.2"
+       lpesatellites=""
+       mode="free"
+       discard_orig_path="false"
+       fuse_paths="false"
+       oposite_fuse="true"
+       split_items="false"
+       split_open="false"
+       link_styles="false" />
+    <linearGradient
+       id="linearGradient2"
+       inkscape:collect="always">
+      <stop
+         style="stop-color:#ece581;stop-opacity:1;"
+         offset="0.32094708"
+         id="stop2" />
+      <stop
+         style="stop-color:#d3c719;stop-opacity:1;"
+         offset="1"
+         id="stop3" />
+    </linearGradient>
+    <inkscape:path-effect
+       effect="mirror_symmetry"
+       start_point="49.999998,0.37446739"
+       end_point="49.999998,78.253746"
+       center_point="49.999998,39.314107"
+       id="path-effect2"
+       is_visible="true"
+       lpeversion="1.2"
+       lpesatellites=""
+       mode="vertical"
+       discard_orig_path="false"
+       fuse_paths="true"
+       oposite_fuse="true"
+       split_items="false"
+       split_open="false"
+       link_styles="false" />
+    <inkscape:path-effect
+       effect="mirror_symmetry"
+       start_point="48.043599,7.3851801"
+       end_point="48.043599,75.047632"
+       center_point="48.043599,41.216406"
+       id="path-effect1"
+       is_visible="true"
+       lpeversion="1.2"
+       lpesatellites=""
+       mode="vertical"
+       discard_orig_path="false"
+       fuse_paths="true"
+       oposite_fuse="true"
+       split_items="false"
+       split_open="false"
+       link_styles="true" />
+    <linearGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient2"
+       id="linearGradient3"
+       x1="49.959755"
+       y1="0.15325582"
+       x2="49.959759"
+       y2="100.07278"
+       gradientUnits="userSpaceOnUse" />
   </defs>
-
-  <!-- Head: widest at the glasses and tapering to a rounded jowly chin — an
-       inverted teardrop, not a dome. No eyes, no mouth, no detail; the
-       glasses are the mark and everything else is a place to hang them. -->
-  <path d="M 256 60
-    C 374 60 464 128 468 214
-    C 470 286 440 358 392 408
-    C 352 450 304 480 256 480
-    C 208 480 160 450 120 408
-    C 72 358 42 286 44 214
-    C 48 128 138 60 256 60 Z"
-    fill="#D8C062"/>
-
-  <!-- Beaded chain, hung from the outer tips and drawn under the frame.
-       Beads are a zero-length dash with a round cap: one dot per gap.
-       Tucked just inside the silhouette rather than hanging beside it, so the
-       chain does not disappear when the logo sits on a dark background. -->
-  <g fill="none" stroke="#2A2419" stroke-width="13" stroke-linecap="round"
-     stroke-dasharray="0 22">
-    <path d="M 48 188 C 44 252 64 336 116 394"/>
-    <path d="M 464 188 C 468 252 448 336 396 394"/>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:url(#linearGradient3);fill-opacity:1;stroke:none;stroke-width:0.847;stroke-linecap:round;stroke-linejoin:bevel;stroke-opacity:1"
+       id="rect1"
+       width="99.91951"
+       height="99.919518"
+       x="-9.8071995e-10"
+       y="0.15325075"
+       ry="19.462849" />
   </g>
-
-  <!-- Glasses. -->
-  <g>
-    <!-- Lenses: a pale wash so they read as glass over the face. -->
-    <use href="#lens" fill="#FBF3C0" fill-opacity="0.55"/>
-    <use href="#lens" fill="#FBF3C0" fill-opacity="0.55" transform="translate(512,0) scale(-1,1)"/>
-
-    <!-- Frames. Mitred, so the flick stays a point instead of a blob. -->
-    <g fill="none" stroke="#2A2419" stroke-width="16"
-       stroke-linejoin="miter" stroke-miterlimit="7">
-      <use href="#lens"/>
-      <use href="#lens" transform="translate(512,0) scale(-1,1)"/>
-      <path d="M 243 226 C 249 216 263 216 269 226"
-            stroke-linecap="round" stroke-linejoin="round"/>
+  <g
+     inkscape:groupmode="layer"
+     id="layer2"
+     inkscape:label="Layer 2">
+    <g
+       id="g4"
+       transform="matrix(1.0472257,0,0,1.2317652,-6.3108598,3.2067668)"
+       style="stroke-width:0.880471">
+      <path
+         style="stroke:#644d0f;stroke-width:3.52189;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1;fill:none;marker-mid:"
+         d="m 94.556445,22.189883 c 0,0 0.772433,2.402991 -0.707339,4.874364 -2.948225,4.923846 -6.821306,12.237458 -12.314866,16.229811 -3.218529,2.339012 -7.877354,4.208574 -11.27179,3.926316 -4.04687,-0.336509 -9.99462,-2.154764 -10.623656,-6.614671 -0.240569,-1.705656 1.839191,-2.906375 3.171241,-3.79241 8.769312,-5.833057 30.73474,-9.726813 30.73474,-9.726813 M 12.986484,22.189883 c 0,0 -0.772432,2.402991 0.70734,4.874364 2.948224,4.923846 6.821306,12.237458 12.314865,16.229811 3.21853,2.339012 7.877355,4.208574 11.271791,3.926316 4.04687,-0.336509 9.99462,-2.154764 10.623656,-6.614671 0.240569,-1.705656 -1.839191,-2.906375 -3.171242,-3.79241 -8.769311,-5.833057 -30.73474,-9.726813 -30.73474,-9.726813"
+         id="path1"
+         sodipodi:nodetypes="csasssc" />
+      <path
+         style="fill:none;fill-opacity:1;stroke:#644d0f;stroke-width:2.11313;stroke-linecap:round;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:1"
+         d="m 59.579266,41.833271 c 0,0 -1.324413,-2.817482 -5.659,-2.925847 m -5.956603,2.925847 c 0,0 1.324413,-2.817482 5.659,-2.925847"
+         id="path2"
+         sodipodi:nodetypes="cc" />
     </g>
+    <path
+       style="fill:#d06e6e;fill-opacity:1;stroke:none;stroke-width:1.24698;stroke-linecap:round;stroke-linejoin:bevel;stroke-dasharray:none;stroke-opacity:1"
+       d="m 71.712891,66.736328 -6.75,2.892578 6.951171,1.121094 1.972657,0.06836 1.970703,-0.06836 6.951172,-1.121094 -6.75,-2.892578 -2.171875,1.650391 z"
+       id="path4"
+       inkscape:path-effect="#path-effect5"
+       inkscape:original-d="m 73.648915,68.566648 2.409547,-1.830098 6.750217,2.891728 -6.95081,1.120875 -2.061622,0.07329 z"
+       transform="matrix(1.4628337,0,0,1.7585205,-58.082865,-39.352945)"
+       sodipodi:nodetypes="cccccc" />
+    <path
+       style="fill:none;fill-opacity:1;stroke:#644d0f;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       d="m 7.2027864,18.849845 c 0.4597522,-0.613003 6.8962846,-6.589783 15.1718266,-3.218266 8.27554,3.371517 18.849846,14.252322 18.849846,14.252322"
+       id="path14" />
+    <path
+       style="fill:none;fill-opacity:1;stroke:#644d0f;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       d="m 58.388543,29.424148 c 0,0 13.945822,-13.179566 31.56966,-4.444272"
+       id="path15" />
   </g>
 </svg>

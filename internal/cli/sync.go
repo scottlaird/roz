@@ -190,8 +190,8 @@ func reportSettled(out io.Writer, all []store.Settled) {
 	}
 }
 
-// sortedKeys makes the report deterministic, since both maps are keyed by
-// pull request.
+// sortedKeys makes output deterministic where it is built from a map: a sync
+// report keyed by pull request, a diagram keyed by parent project.
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

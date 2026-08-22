@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"html/template"
 	"sort"
 	"strings"
 
@@ -21,7 +24,11 @@ const (
 // blocking is a dependency, containment is a statement about what a piece of
 // work is made of, and neither implies the other.
 const (
-	edgeBlocks   = "blocks"   // must finish first
+	edgeBlocks = "blocks" // must finish first
+	// edgeContains runs from the child to the parent, the way it is said: SL21
+	// is part of SL108. Drawn parent-to-child it read as the parent depending
+	// on its children, and put the umbrella above work that is meant to roll
+	// up into it.
 	edgeContains = "contains" // is part of
 	edgeAdvances = "advances" // this action moves that project
 	edgeHides    = "hides"    // folded out of the queue behind
@@ -33,8 +40,12 @@ const (
 type dependencyGraph struct {
 	Nodes []graphNode
 	Edges []graphEdge
-	// Mermaid is the diagram source, rendered by the client.
-	Mermaid string
+	// Diagrams are the diagram sources, rendered by the client, one per disjoint
+	// pile of work and in the order to stack them down the page.
+	Diagrams []string
+	// Links is where each node goes when clicked, keyed by the identifier the
+	// diagram source uses, for the client to bind after it draws.
+	Links template.JS
 	// Coverage says what the diagram does and does not know, in prose, so the
 	// page can state it. A diagram implies completeness, and this one is not
 	// complete — see #88.
@@ -56,6 +67,11 @@ type graphNode struct {
 	ID    string
 	Kind  string
 	Label string
+	// Ready marks what could be picked up now: for an action, that it is in
+	// the queue; for a pull request, that the step it is on is. The state
+	// classes cannot say this -- a merge is coloured one-click whether or not
+	// anything is in front of it.
+	Ready bool
 	// Class is the state worth colouring by: a project's status, an action's
 	// rank class, a pull request's state.
 	Class string
@@ -95,8 +111,8 @@ type graphEdge struct {
 // out are reported instead, because a diagram that is small for a good reason
 // and one that is broken look identical.
 func buildGraph(ctx context.Context, st *store.Store,
-	projects []*store.Project, actions []*store.Action, rank map[string]string,
-	late map[string]int) (*dependencyGraph, error) {
+	projects []*store.Project, actions []*store.Action, verbs []*store.ActionVerb,
+	repoShort map[string]string, late map[string]int) (*dependencyGraph, error) {
 
 	projectBlocks, err := st.ProjectBlockEdges(ctx)
 	if err != nil {
@@ -122,16 +138,47 @@ func buildGraph(ctx context.Context, st *store.Store,
 	if err != nil {
 		return nil, err
 	}
+	// What could be picked up right now. Asked of the store with the filter the
+	// queue itself uses rather than worked out from state here: "ready" alone
+	// is not the answer -- an action folded behind another, or one whose
+	// project is blocked, is ready and still not something to do -- and two
+	// definitions of the queue would eventually disagree with each other.
+	unblocked, err := st.ListActions(ctx, store.ActionFilter{Unblocked: true})
+	if err != nil {
+		return nil, err
+	}
+	actionable := make(map[string]bool, len(unblocked))
+	for _, a := range unblocked {
+		actionable[a.ID] = true
+	}
+
+	rank := map[string]string{}
+	prVerb := map[string]bool{}
+	for _, v := range verbs {
+		rank[v.Verb] = v.RankClass
+		// A verb whose predicate is a fact about a pull request is a step in
+		// getting one merged. Read from the predicate rather than from a list
+		// of verb names, so a pipeline step added later folds without anyone
+		// remembering to add it here -- and so wait_ref and wait_issue, which
+		// are predicate verbs about something else entirely, do not.
+		prVerb[v.Verb] = strings.HasPrefix(v.PredicateKey.String, "pr_")
+	}
 
 	g := &graphBuilder{
-		projects: byID(projects, func(p *store.Project) string { return p.ID }),
-		actions:  byID(actions, func(a *store.Action) string { return a.ID }),
-		prs:      byID(prs, func(p *store.PR) string { return p.ID }),
-		rank:     rank,
-		late:     late,
-		seen:     map[string]bool{},
-		drawn:    map[graphEdge]bool{},
+		projects:   byID(projects, func(p *store.Project) string { return p.ID }),
+		actions:    byID(actions, func(a *store.Action) string { return a.ID }),
+		prs:        byID(prs, func(p *store.PR) string { return p.ID }),
+		rank:       rank,
+		prVerb:     prVerb,
+		repoShort:  repoShort,
+		actionable: actionable,
+		late:       late,
+		seen:       map[string]bool{},
+		drawn:      map[graphEdge]bool{},
+		collapsed:  map[string]string{},
+		foldedInto: map[string][]string{},
 	}
+	g.fold(subjects)
 	return g.build(projectBlocks, actionBlocks, hidden, stacked, subjects), nil
 }
 
@@ -144,16 +191,86 @@ func byID[T any](rows []T, id func(T) string) map[string]T {
 }
 
 type graphBuilder struct {
-	projects map[string]*store.Project
-	actions  map[string]*store.Action
-	prs      map[string]*store.PR
-	rank     map[string]string
-	late     map[string]int
+	projects   map[string]*store.Project
+	actions    map[string]*store.Action
+	prs        map[string]*store.PR
+	rank       map[string]string
+	prVerb     map[string]bool
+	repoShort  map[string]string
+	actionable map[string]bool
+	late       map[string]int
+
+	// collapsed is the action that is not drawn and the pull request it is
+	// drawn as; foldedInto is the same thing read the other way, in the order
+	// the steps were created.
+	collapsed  map[string]string
+	foldedInto map[string][]string
 
 	seen  map[string]bool
 	drawn map[graphEdge]bool
 	nodes []graphNode
 	edges []graphEdge
+}
+
+// fold decides which actions are drawn as the pull request they are about
+// rather than as themselves.
+//
+// A pipeline is four steps and they are the same four every time: un-draft,
+// announce, wait for review, merge. Drawn literally that is four boxes, three
+// arrows between them, four more to the project and four to the pull request
+// they are all about — eleven marks to say a thing the reader already knows
+// the shape of, per pull request. On the queue this graph was drawn from, 25
+// of 37 action nodes were pipeline steps, and 69 of 103 edges touched one. The
+// twelve that remained are the decisions and the writing: exactly what a
+// picture of "what is holding this up" should be made of.
+//
+// What survives the fold is where the pipeline has got to, which is the only
+// part that differs between one pull request and the next: the frontmost open
+// step gives the pull request its colour and its verb. So `NA218 wait_review →
+// NA219 merge → cloud-terraform#1134` becomes `cloud-terraform#1134
+// (wait_review)`, coloured as a wait.
+//
+// Only pipeline steps fold. An action that is about a pull request but is real
+// work — write the thing, decide the approach — stays its own box, because
+// what it says is not recoverable from the pull request's state.
+func (g *graphBuilder) fold(subjects []store.Edge) {
+	for _, e := range subjects {
+		a, ok := g.actions[e.From]
+		if !ok || !a.IsOpen() || !g.prVerb[a.Verb] || !g.prOpen(e.To) {
+			continue
+		}
+		g.collapsed[e.From] = e.To
+		g.foldedInto[e.To] = append(g.foldedInto[e.To], e.From)
+	}
+	for pr := range g.foldedInto {
+		sort.Slice(g.foldedInto[pr], func(i, j int) bool {
+			return g.actions[g.foldedInto[pr][i]].N < g.actions[g.foldedInto[pr][j]].N
+		})
+	}
+}
+
+// prName is what a box calls a pull request: `ip#4204` where the repository
+// has a short name, and the full `owner/repo#4204` where it does not.
+//
+// The short name is what the person writing the queue already types, and here
+// it buys room a diagram has none of: the long form is most of a node's width
+// spent on the same eleven characters as its neighbour. The identifier stays
+// the full one -- this is the label, and nothing keys off it.
+func (g *graphBuilder) prName(p *store.PR) string {
+	if short, ok := g.repoShort[p.Repo]; ok && short != "" {
+		return fmt.Sprintf("%s#%d", short, p.Number)
+	}
+	return p.ID
+}
+
+// resolve is the folded action's stand-in. Everything that adds a node or an
+// edge goes through it, so folding is one decision applied in one place rather
+// than a condition at every call site.
+func (g *graphBuilder) resolve(id string) string {
+	if pr, ok := g.collapsed[id]; ok {
+		return pr
+	}
+	return id
 }
 
 func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked, subjects []store.Edge) *dependencyGraph {
@@ -209,6 +326,19 @@ func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked, subje
 			g.addEdge(a.ID, id, edgeAdvances)
 		}
 	}
+	// A pull request stands in for the steps folded into it, so it inherits
+	// what they advanced. Without this a stack reached by stacking alone hangs
+	// off nothing, and the project it is the work for is somewhere else on the
+	// page.
+	for _, id := range g.currentIDs(nodePR) {
+		for _, aid := range g.foldedInto[id] {
+			a := g.actions[aid]
+			if a.ProjectID.Valid && g.projectOpen(a.ProjectID.String) {
+				g.addProject(a.ProjectID.String)
+				g.addEdge(id, a.ProjectID.String, edgeAdvances)
+			}
+		}
+	}
 
 	// The pull request an action is about, which is what joins the two halves
 	// of the diagram. Without it a stack of pull requests and the work that
@@ -232,11 +362,26 @@ func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked, subje
 	// Containment, one level up. It seeds nothing on its own: a parent is
 	// context for a dependency, not a dependency, and starting from it would
 	// draw every project that happens to be part of something.
+	//
+	// And only where it groups. A parent is worth a box when it says that
+	// several of these are the same piece of work — six blocked siblings
+	// reading as one thing is the whole reason it is drawn. A parent with one
+	// child in the diagram says only what that child's own page says, and
+	// costs a node, an edge, and the distance the layout puts between them.
+	children := map[string][]string{}
 	for _, id := range g.currentIDs(nodeProject) {
 		p := g.projects[id]
 		if p.ParentID.Valid && g.projectOpen(p.ParentID.String) {
-			g.addProject(p.ParentID.String)
-			g.addEdge(p.ParentID.String, id, edgeContains)
+			children[p.ParentID.String] = append(children[p.ParentID.String], id)
+		}
+	}
+	for _, parent := range sortedKeys(children) {
+		if len(children[parent]) < 2 {
+			continue
+		}
+		g.addProject(parent)
+		for _, id := range children[parent] {
+			g.addEdge(id, parent, edgeContains)
 		}
 	}
 
@@ -247,9 +392,16 @@ func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked, subje
 	graph.OmittedActions = countOpen(g.actions, func(a *store.Action) bool {
 		return a.IsOpen() && !g.seen[a.ID]
 	})
+	// Diagrams before coverage, which says how many of them there are and why.
+	graph.Diagrams = mermaid(graph)
 	graph.Coverage = coverage(graph)
 	graph.Legend = legendFor(graph)
-	graph.Mermaid = mermaid(graph)
+	// Marshalling cannot fail on a map of strings, and a diagram that drew is
+	// worth more than one that refused over its navigation, so an error here
+	// costs the links and nothing else.
+	if encoded, err := json.Marshal(mermaidLinks(graph)); err == nil {
+		graph.Links = template.JS(encoded)
+	}
 	return graph
 }
 
@@ -309,6 +461,10 @@ func (g *graphBuilder) addProject(id string) {
 }
 
 func (g *graphBuilder) addAction(id string) {
+	if pr, folded := g.collapsed[id]; folded {
+		g.addPR(pr)
+		return
+	}
 	if g.seen[id] {
 		return
 	}
@@ -322,6 +478,7 @@ func (g *graphBuilder) addAction(id string) {
 		ID:    id,
 		Kind:  nodeAction,
 		Label: nodeLabel(id, a.Title, a.Verb),
+		Ready: g.actionable[id],
 		Class: class,
 		Href:  actionHref(id),
 	})
@@ -333,11 +490,32 @@ func (g *graphBuilder) addPR(id string) {
 	}
 	p := g.prs[id]
 	g.seen[id] = true
+
+	// A pull request with a pipeline folded into it says where that pipeline
+	// has got to; one without says only that it is open, which is what its
+	// state already said.
+	note, class, ready := "", strings.ToLower(p.State.String), false
+	if folded := g.foldedInto[id]; len(folded) > 0 {
+		front := g.actions[folded[0]]
+		note, class = front.Verb, g.rank[front.Verb]
+		// The step it is on, not the pull request: sc#3177's un-draft is folded
+		// behind NA95, so the pull request is not something to do even though
+		// un-drafting is one click.
+		ready = g.actionable[front.ID]
+		if _, isLate := g.late[front.ID]; isLate {
+			class = "late"
+		}
+		for _, aid := range folded {
+			g.seen[aid] = true // drawn, as part of this; not omitted
+		}
+	}
 	g.nodes = append(g.nodes, graphNode{
 		ID:    id,
 		Kind:  nodePR,
-		Label: nodeLabel(id, p.Title, ""),
-		Class: strings.ToLower(p.State.String),
+		Label: nodeLabel(g.prName(p), p.Title, note),
+		Ready: ready,
+		Class: class,
+		Href:  p.URL.String,
 	})
 }
 
@@ -350,6 +528,13 @@ func (g *graphBuilder) addPR(id string) {
 // as two arrows between the same pair of boxes. Keyed on the whole edge, so two
 // kinds between one pair still draw as two.
 func (g *graphBuilder) addEdge(from, to, kind string) {
+	// Both ends through the fold, which is also what drops a pipeline's
+	// internal edges: wait-review blocks merge becomes the pull request
+	// blocking itself, and an edge from a thing to itself is not drawn.
+	from, to = g.resolve(from), g.resolve(to)
+	if from == to {
+		return
+	}
 	e := graphEdge{From: from, To: to, Kind: kind}
 	if g.drawn[e] {
 		return
@@ -409,7 +594,27 @@ func coverage(g *dependencyGraph) []string {
 	}
 	said = append(said, "the open pull request an action is about, which joins the two")
 	said = append(said,
+		"a pull request's pipeline steps drawn as the pull request, labelled with "+
+			"the step it is on, rather than as a box each")
+	said = append(said,
 		"nothing closed: a satisfied blocker is history, and it is left out")
+	// Said explicitly, because several pictures under one heading otherwise
+	// read as one picture that failed to join up. Nothing crosses between them
+	// by construction: they are the graph's connected components.
+	if len(g.Diagrams) > 1 {
+		line := fmt.Sprintf(
+			"%d diagrams, one per pile of work with nothing joining it to the others",
+			len(g.Diagrams))
+		// The last one is the exception and holds several piles, so it would
+		// contradict the sentence above if left unsaid.
+		for _, group := range mermaidComponents(g) {
+			if len(group) < ownPanel {
+				line += "; the last gathers the piles too small to draw alone"
+				break
+			}
+		}
+		said = append(said, line)
+	}
 	return said
 }
 
@@ -434,6 +639,10 @@ type graphLegend struct {
 	States []legendEntry
 	Shapes []legendEntry
 	Edges  []legendEntry
+	// Ready says whether anything is drawn as ready, and so whether the page
+	// should explain what the strong and faded boxes mean. A key to a
+	// distinction the picture is not making is a thing to read for nothing.
+	Ready bool
 }
 
 // legendEntry is one swatch. Key is the CSS class the stylesheet draws it
@@ -446,7 +655,7 @@ type legendEntry struct {
 }
 
 func (l graphLegend) Empty() bool {
-	return len(l.States) == 0 && len(l.Shapes) == 0 && len(l.Edges) == 0
+	return len(l.States) == 0 && len(l.Shapes) == 0 && len(l.Edges) == 0 && !l.Ready
 }
 
 // The glosses, in the order a legend reads. Slices rather than maps: the order
@@ -490,10 +699,18 @@ func legendFor(g *dependencyGraph) graphLegend {
 	for _, e := range g.Edges {
 		kinds[e.Kind] = true
 	}
+	var ready bool
+	for _, n := range g.Nodes {
+		if n.Ready {
+			ready = true
+			break
+		}
+	}
 	return graphLegend{
 		States: used(stateLabels, states),
 		Shapes: used(shapeLabels, shapes),
 		Edges:  used(edgeLabels, kinds),
+		Ready:  ready,
 	}
 }
 

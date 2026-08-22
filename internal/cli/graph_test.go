@@ -74,8 +74,9 @@ func TestAQueueWithNoDependenciesDrawsNothing(t *testing.T) {
 	if !g.Empty() {
 		t.Errorf("drew %v with nothing blocked on anything", nodeIDs(g))
 	}
-	if g.Mermaid != "" {
-		t.Errorf("emitted diagram source for an empty graph:\n%s", g.Mermaid)
+	if len(g.Diagrams) != 0 {
+		t.Errorf("emitted diagram source for an empty graph:\n%s",
+			strings.Join(g.Diagrams, "\n"))
 	}
 	// And says what it left out, so "small" and "broken" are distinguishable.
 	if g.OmittedProjects != 1 || g.OmittedActions != 1 {
@@ -158,8 +159,8 @@ func TestContainmentIsContextRatherThanASeed(t *testing.T) {
 	if !hasNode(g, parent) {
 		t.Errorf("the parent is missing, so the group reads as three loose projects: %v", nodeIDs(g))
 	}
-	if !hasEdge(g, parent, blocker, edgeContains) {
-		t.Errorf("no containment edge %s -> %s in %v", parent, blocker, g.Edges)
+	if !hasEdge(g, blocker, parent, edgeContains) {
+		t.Errorf("no containment edge %s -> %s in %v", blocker, parent, g.Edges)
 	}
 	if hasNode(g, sibling) {
 		t.Errorf("drew %s, which is only related by having the same parent: %v", sibling, nodeIDs(g))
@@ -241,9 +242,11 @@ func TestTheGraphPageAndTheIndexDrawTheSame(t *testing.T) {
 	if index.Graph == nil || own.Graph == nil {
 		t.Fatal("one of the two pages built no graph")
 	}
-	if index.Graph.Mermaid != own.Graph.Mermaid {
+	indexSrc := strings.Join(index.Graph.Diagrams, "\n")
+	ownSrc := strings.Join(own.Graph.Diagrams, "\n")
+	if indexSrc != ownSrc {
 		t.Errorf("the index and its own page draw different diagrams:\n%s\n---\n%s",
-			index.Graph.Mermaid, own.Graph.Mermaid)
+			indexSrc, ownSrc)
 	}
 }
 
@@ -422,6 +425,234 @@ func TestAnActionIsJoinedToItsPullRequest(t *testing.T) {
 	// stays out, or the diagram grows a box per tracked pull request.
 	if hasNode(g, "owner/repo#2") {
 		t.Errorf("drew a pull request no action in the graph is about: %v", nodeIDs(g))
+	}
+}
+
+// TestAPipelineIsDrawnAsItsPullRequest. Four boxes and eleven lines to say
+// "this needs reviewing then merging" is the shape of every pipeline, so
+// drawing it per pull request is the same picture repeated. What differs is
+// where it has got to, and that survives as the pull request's own label and
+// colour.
+func TestAPipelineIsDrawnAsItsPullRequest(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/repo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#1"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	observePR(t, db, "owner/repo#1", "OPEN")
+
+	project := addProject(t, db, "The work this is for")
+	wait := addAction(t, db, "--title", "wait for review", "--verb", "wait_review",
+		"--pr", "owner/repo#1", "--project", project)
+	merge := addAction(t, db, "--title", "merge it", "--verb", "merge",
+		"--pr", "owner/repo#1", "--project", project)
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", merge, "--to", wait); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+	// Something outside the pipeline waiting on a step inside it, which is the
+	// case that must not be lost: the edge moves to the pull request.
+	after := addAction(t, db, "--title", "the follow-on", "--verb", "write")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", after, "--to", merge); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	g := graphFor(t, db)
+	if hasNode(g, wait) || hasNode(g, merge) {
+		t.Errorf("drew a pipeline step as its own box: %v", nodeIDs(g))
+	}
+	if !hasNode(g, "owner/repo#1") {
+		t.Errorf("folded the pipeline away and drew nothing in its place: %v", nodeIDs(g))
+	}
+	if !hasEdge(g, "owner/repo#1", after, edgeBlocks) {
+		t.Errorf("the follow-on lost what it is waiting for: %v", g.Edges)
+	}
+	if !hasEdge(g, "owner/repo#1", project, edgeAdvances) {
+		t.Errorf("the pull request did not inherit what its steps advanced: %v", g.Edges)
+	}
+	// The frontmost open step, not the last one: what is owed now.
+	for _, n := range g.Nodes {
+		if n.ID != "owner/repo#1" {
+			continue
+		}
+		if !strings.Contains(n.Label, "wait_review") {
+			t.Errorf("label %q does not say which step it is on", n.Label)
+		}
+		if n.Class != "wait" {
+			t.Errorf("class %q, want the frontmost step's rank class", n.Class)
+		}
+	}
+	// Folded, not dropped: they are drawn, as part of the pull request.
+	if g.OmittedActions != 0 {
+		t.Errorf("counted %d actions as omitted; folded steps are drawn",
+			g.OmittedActions)
+	}
+}
+
+// TestRealWorkAboutAPullRequestIsNotFolded. The fold is about pipeline steps,
+// whose content is recoverable from the pull request's state. What a write or
+// a decide says is not, so it keeps its box.
+func TestRealWorkAboutAPullRequestIsNotFolded(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/repo")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#1"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	observePR(t, db, "owner/repo#1", "OPEN")
+
+	write := addAction(t, db, "--title", "finish the rebase conflict", "--verb", "write",
+		"--pr", "owner/repo#1")
+	blocked := addAction(t, db, "--title", "then this", "--verb", "write")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", blocked, "--to", write); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	g := graphFor(t, db)
+	if !hasNode(g, write) {
+		t.Errorf("folded a write action into its pull request: %v", nodeIDs(g))
+	}
+	if !hasEdge(g, write, "owner/repo#1", edgeAbout) {
+		t.Errorf("lost what the work is about: %v", g.Edges)
+	}
+}
+
+// TestAPullRequestIsLabelledTheWayItIsSpokenAbout. `owner/saas-infra-plane` is
+// most of a node's width spent on the same characters as its neighbour, and a
+// diagram has no width to spare.
+func TestAPullRequestIsLabelledTheWayItIsSpokenAbout(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/saas-infra-plane", "--short-name", "ip")
+	trackRepo(t, db, "owner/unnamed")
+	for _, key := range []string{"owner/saas-infra-plane#4204", "owner/unnamed#7"} {
+		if _, err := runCLI(t, "pr", "track", "--db", db, key); err != nil {
+			t.Fatalf("pr track %s returned error: %v", key, err)
+		}
+		observePR(t, db, key, "OPEN")
+	}
+	first := addAction(t, db, "--title", "merge it", "--verb", "merge",
+		"--pr", "owner/saas-infra-plane#4204")
+	second := addAction(t, db, "--title", "merge it", "--verb", "merge",
+		"--pr", "owner/unnamed#7")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", second, "--to", first); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	labels := map[string]string{}
+	g := graphFor(t, db)
+	for _, n := range g.Nodes {
+		labels[n.ID] = n.Label
+	}
+	if got := labels["owner/saas-infra-plane#4204"]; !strings.HasPrefix(got, "ip#4204") {
+		t.Errorf("labelled %q, want the short name the queue is written in", got)
+	}
+	// The identifier is untouched: it is what everything else keys off.
+	if !hasNode(g, "owner/saas-infra-plane#4204") {
+		t.Errorf("the short name reached the identifier: %v", nodeIDs(g))
+	}
+	// No short name, no invention.
+	if got := labels["owner/unnamed#7"]; !strings.HasPrefix(got, "owner/unnamed#7") {
+		t.Errorf("labelled %q, want the full name where there is no short one", got)
+	}
+}
+
+// TestAParentIsDrawnOnlyWhereItGroups. A parent earns its box by saying that
+// several of these are one piece of work. With a single child in the diagram it
+// says what that child's own page says, and costs a node, an edge and the
+// distance the layout puts between them.
+func TestAParentIsDrawnOnlyWhereItGroups(t *testing.T) {
+	db := initDB(t)
+	umbrella := addProject(t, db, "Monitoring, broadly")
+	lonely := addProject(t, db, "The only child")
+	blocked := addProject(t, db, "Waiting on it")
+	if _, err := runCLI(t, "project", "set", "--db", db, lonely,
+		"--parent", umbrella); err != nil {
+		t.Fatalf("project set --parent returned error: %v", err)
+	}
+	if _, err := runCLI(t, "project", "block", "--db", db,
+		"--from", blocked, "--to", lonely); err != nil {
+		t.Fatalf("project block returned error: %v", err)
+	}
+
+	if g := graphFor(t, db); hasNode(g, umbrella) {
+		t.Errorf("drew %s, which groups one thing: %v", umbrella, nodeIDs(g))
+	}
+
+	// A second child in the diagram is what makes it worth saying.
+	sibling := addProject(t, db, "The sibling")
+	if _, err := runCLI(t, "project", "set", "--db", db, sibling,
+		"--parent", umbrella); err != nil {
+		t.Fatalf("project set --parent returned error: %v", err)
+	}
+	if _, err := runCLI(t, "project", "block", "--db", db,
+		"--from", sibling, "--to", lonely); err != nil {
+		t.Fatalf("project block returned error: %v", err)
+	}
+
+	g := graphFor(t, db)
+	if !hasNode(g, umbrella) {
+		t.Errorf("did not draw %s, which now groups two: %v", umbrella, nodeIDs(g))
+	}
+	// Child to parent, the way it is said: the sibling is part of the umbrella.
+	if !hasEdge(g, lonely, umbrella, edgeContains) ||
+		!hasEdge(g, sibling, umbrella, edgeContains) {
+		t.Errorf("a grouped parent is missing an edge from a child: %v", g.Edges)
+	}
+	if hasEdge(g, umbrella, lonely, edgeContains) {
+		t.Errorf("containment is drawn parent to child: %v", g.Edges)
+	}
+}
+
+// TestReadyIsAboutTheQueueAndNotTheVerb. The state colours say what kind of
+// work a thing is and cannot say whether it can be started: an un-draft is one
+// click whether or not it is folded behind something else. This is the case
+// that showed it — a pull request whose first step is hidden behind an
+// unrelated wait draws as one-click and is not.
+func TestReadyIsAboutTheQueueAndNotTheVerb(t *testing.T) {
+	db := initDB(t)
+	trackRepo(t, db, "owner/repo", "--short-name", "sc")
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#3177"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	observePR(t, db, "owner/repo#3177", "OPEN")
+
+	gate := addAction(t, db, "--title", "work out what Paul meant", "--verb", "investigate")
+	undraft := addAction(t, db, "--title", "un-draft it", "--verb", "undraft",
+		"--pr", "owner/repo#3177")
+	if _, err := runCLI(t, "action", "hide-behind", "--db", db,
+		"--action", undraft, "--behind", gate); err != nil {
+		t.Fatalf("action hide-behind returned error: %v", err)
+	}
+	// A second pull request with nothing in front of it, to prove the marking
+	// distinguishes rather than just being off.
+	if _, err := runCLI(t, "pr", "track", "--db", db, "owner/repo#256"); err != nil {
+		t.Fatalf("pr track returned error: %v", err)
+	}
+	observePR(t, db, "owner/repo#256", "OPEN")
+	free := addAction(t, db, "--title", "un-draft it", "--verb", "undraft",
+		"--pr", "owner/repo#256")
+	if _, err := runCLI(t, "action", "add-blocker", "--db", db,
+		"--from", free, "--to", gate); err != nil {
+		t.Fatalf("action add-blocker returned error: %v", err)
+	}
+
+	ready := map[string]bool{}
+	class := map[string]string{}
+	for _, n := range graphFor(t, db).Nodes {
+		ready[n.ID], class[n.ID] = n.Ready, n.Class
+	}
+	if ready["owner/repo#3177"] {
+		t.Errorf("drew a pull request as ready whose first step is folded behind %s", gate)
+	}
+	// And still coloured for the work it is, which is the point of the split.
+	if class["owner/repo#3177"] != "click" {
+		t.Errorf("class %q; readiness should not have taken the band away",
+			class["owner/repo#3177"])
+	}
+	if !ready[gate] {
+		t.Errorf("%s is what everything else is waiting on and is not marked ready", gate)
 	}
 }
 

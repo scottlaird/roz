@@ -325,7 +325,7 @@ func TestServeHasADependencyPage(t *testing.T) {
 
 	body := fetch(t, base+"/dependencygraph")
 	for _, want := range []string{
-		"graph LR",            // the diagram source, for the client to draw
+		"graph TD",            // the diagram source, for the client to draw
 		"Roll the change out", // the blocked action, which is the subject
 		"what this draws",     // the coverage statement
 		"roz: dependencies",   // its own title, so a tab is pickable
@@ -357,7 +357,7 @@ func TestTheDiagramSourceIsEscaped(t *testing.T) {
 	base := serving(t, db, "--no-sync", "--no-watch")
 
 	body := fetch(t, base+"/dependencygraph")
-	if !strings.Contains(body, "graph LR") {
+	if !strings.Contains(body, "graph TD") {
 		t.Fatalf("no diagram was drawn, so nothing here is tested:\n%s", body)
 	}
 	if strings.Contains(body, "<img src=x") {

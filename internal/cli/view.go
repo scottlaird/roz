@@ -615,7 +615,14 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 	// listings above: a dependency is a fact about the queue, not about
 	// whichever view is in force.
 	if at.kind == pageIndex || at.kind == pageGraph {
-		if content.Graph, err = buildGraph(ctx, st, everyProject, everyAction, rank, late); err != nil {
+		// The other way round from shortNames: prose resolves what a person
+		// typed, and the diagram has the repository and wants what to call it.
+		repoShort := make(map[string]string, len(shortNames))
+		for short, repo := range shortNames {
+			repoShort[repo] = short
+		}
+		if content.Graph, err = buildGraph(ctx, st, everyProject, everyAction, verbs,
+			repoShort, late); err != nil {
 			return nil, err
 		}
 	}

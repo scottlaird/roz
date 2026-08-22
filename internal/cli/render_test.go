@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/scottlaird/roz/internal/github"
 	"github.com/scottlaird/roz/internal/static"
@@ -41,10 +42,27 @@ func renderedFixture(t *testing.T) string {
 	}
 
 	// One window inside the fortnight and one well beyond it.
-	addWindow(t, db, "oncall", "primary oncall", "2026-08-11", "2026-08-17")
-	addWindow(t, db, "pto", "november pto", "2026-11-20", "2026-11-25")
+	//
+	// Relative to today rather than written down. The page draws the next
+	// fortnight from the clock, so a fixture with fixed dates is a test with
+	// an expiry date on it: these were 2026-08-11 and 2026-11-20, and the
+	// first slid out of the horizon the moment the calendar passed it, which
+	// failed this test and the serve one for a reason that had nothing to do
+	// with either.
+	//
+	// The clock cannot be pinned instead. `renderRouteFor` could take one, but
+	// TestServeServesTheRenderedPage renders through a real server that reads
+	// time.Now() for itself — so the data has to move, not the clock.
+	addWindow(t, db, "oncall", "primary oncall", inDays(0), inDays(3))
+	addWindow(t, db, "pto", "distant pto", inDays(90), inDays(95))
 
 	return db
+}
+
+// inDays is a date relative to today, which is what the page's horizon is
+// measured from.
+func inDays(n int) string {
+	return time.Now().UTC().AddDate(0, 0, n).Format("2006-01-02")
 }
 
 func addWindow(t *testing.T, db, kind, label, starts, ends string) {
@@ -120,8 +138,10 @@ func TestRender(t *testing.T) {
 	// Its own label rather than a word that might occur anywhere: the page
 	// carries a stylesheet full of English, and "away" appears in a comment in
 	// it, which made this assertion fail for a reason that had nothing to do
-	// with calendars.
-	if strings.Contains(out, "november pto") {
+	// with calendars. It is no longer named for a month, either — the fixture
+	// places it relative to today, so a month in the label would be a lie
+	// eleven times a year.
+	if strings.Contains(out, "distant pto") {
 		t.Errorf("the page contains a window beyond the horizon:\n%s", out)
 	}
 }

@@ -1406,6 +1406,28 @@ at all — it is SQLite reading a timestamp as a number.
 
 A shape nobody has checked runs in Go, which is slower and right.
 
+**Membership of a JSON column reaches the query**, and is the one shape where
+that was blocked by somebody else's bug rather than by the rule:
+
+```console
+$ roz pr list --filter 'approvals.exists(a, a == "alice")' --explain-filter
+filter ran in SQL
+```
+
+cel2sql turned that into a `json_each` subquery and then compared the
+subquery's alias as if it were a scalar — `WHERE a = ?` — SQL that was
+generated, accepted by the converter, and refused by SQLite. Fixed upstream in
+SPANDigital/cel2sql#169, released in v3.8.9, and the term now reads `a.value`.
+
+Only that shape. `exists(a, a != "x")` and `exists(a, a.startsWith("x"))` are
+different questions about emptiness and about NULL, neither has been checked,
+and the allow-list fails towards Go on purpose.
+
+**A JSON column compared as a scalar still runs in Go**, and that is not
+leftover caution: `payload == ""` asks whether an array equals a string, which
+is a question about meaning rather than about syntax. The upstream fix does not
+touch it.
+
 ### Following a relation
 
 A filter can cross into what a record is connected to, and every such question

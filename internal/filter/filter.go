@@ -396,9 +396,6 @@ func pushable(probe *nullProbe, env *cel.Env, ast *cel.Ast, term string,
 	}
 
 	referenced := columnsIn(root, at)
-	if hasJSON(referenced) {
-		return false, nil
-	}
 
 	// More than one column that may be absent has row shapes the samples never
 	// build — NULL in the first with a value in the second — so it is not

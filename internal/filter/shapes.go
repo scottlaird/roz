@@ -125,7 +125,15 @@ func columnsIn(e celast.Expr, columns scope) []store.ColumnType {
 // pushableShape reports whether an expression is a shape known to mean the
 // same thing in SQLite and in CEL.
 func pushableShape(e celast.Expr, columns scope) bool {
-	if e == nil || e.Kind() != celast.CallKind {
+	if e == nil {
+		return false
+	}
+	// `approvals.exists(a, a == "alice")` is a comprehension rather than a
+	// call, so it is answered before the switch below ever sees it.
+	if e.Kind() == celast.ComprehensionKind {
+		return pushableExists(e.AsComprehension(), columns)
+	}
+	if e.Kind() != celast.CallKind {
 		return false
 	}
 	call := e.AsCall()
@@ -189,6 +197,67 @@ func pushableShape(e celast.Expr, columns scope) bool {
 	default:
 		return false
 	}
+}
+
+// pushableExists admits the one comprehension shape that is known to mean the
+// same thing in both engines: membership of a JSON array of text.
+//
+//	approvals.exists(a, a == "alice")
+//	  → EXISTS (SELECT 1 FROM json_each(approvals) AS a WHERE a.value = ?)
+//
+// This was held back entirely until SPANDigital/cel2sql#169, which had the
+// converter compare the subquery's alias as a scalar — `WHERE a = ?` — SQL
+// that was generated, accepted by the converter and rejected by SQLite. The
+// fix writes the iteration variable through the dialect, and v3.8.9 carries
+// it. See scottlaird/roz#202.
+//
+// The narrowest shape that answers the flagship question, deliberately, for
+// the reason the whole gate is an allow-list: what it refuses runs in Go,
+// which is slower and right, and what it admits has to be right.
+//
+//   - Equality against a text literal only. `exists(a, a.startsWith("x"))` and
+//     `exists(a, a != "x")` are different questions about NULL and about
+//     emptiness, and neither has been checked.
+//   - A JSON column of text as the range. A relation traversal is also a
+//     comprehension and is not this: it is answered by the chain path, which
+//     builds a correlated subquery of its own.
+//   - Emptiness agrees without any special case: CEL's exists over [] is
+//     false, and EXISTS over no rows is false. These columns are NOT NULL
+//     DEFAULT '[]', so there is no third state to disagree about.
+func pushableExists(c celast.ComprehensionExpr, columns scope) bool {
+	column, ok := columns.resolve(c.IterRange())
+	if !ok || !column.JSON || column.Kind != "text" {
+		return false
+	}
+	// The exists macro's step is `accu || <predicate>`; the predicate is what
+	// decides this.
+	step := c.LoopStep()
+	if step == nil || step.Kind() != celast.CallKind {
+		return false
+	}
+	call := step.AsCall()
+	if call.FunctionName() != operators.LogicalOr || len(call.Args()) != 2 {
+		return false
+	}
+	predicate := call.Args()[1]
+	if predicate.Kind() != celast.CallKind {
+		return false
+	}
+	inner := predicate.AsCall()
+	if inner.FunctionName() != operators.Equals || len(inner.Args()) != 2 {
+		return false
+	}
+	// One side the iteration variable, the other a text literal. Either way
+	// round: `a == "x"` and `"x" == a` are the same question.
+	lhs, rhs := inner.Args()[0], inner.Args()[1]
+	return isIterVar(lhs, c.IterVar()) && literalKind(rhs) == "text" ||
+		isIterVar(rhs, c.IterVar()) && literalKind(lhs) == "text"
+}
+
+// isIterVar reports whether an expression is the comprehension's own variable,
+// rather than a column that happens to be in scope.
+func isIterVar(e celast.Expr, name string) bool {
+	return e != nil && e.Kind() == celast.IdentKind && e.AsIdent() == name
 }
 
 // The member function names as they appear in the AST.
@@ -301,8 +370,15 @@ func comparesToLiteral(args []celast.Expr, columns scope, rule comparisonRule) b
 		}
 		if kind := literalKind(order[1]); kind != "" {
 			// A JSON column compared as a scalar is not what it looks like:
-			// the value is the encoded array, and cel2sql renders it as a
-			// json_each subquery that SQLite rejects.
+			// the value is the encoded array, so `payload == ""` is asking
+			// whether an array equals a string.
+			//
+			// This survived the upstream fix in #202 on purpose. That bug was
+			// SQL the converter emitted and SQLite rejected, and it is gone;
+			// this is a question about meaning rather than about syntax, and
+			// it did not go with it. `approvals.exists(a, a == "x")` is the
+			// shape that asks about a JSON column and means something — see
+			// pushableExists.
 			return !c.JSON && rule(c, kind)
 		}
 	}

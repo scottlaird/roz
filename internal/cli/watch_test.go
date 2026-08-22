@@ -501,8 +501,11 @@ func TestWatchFilterRunsInTheQuery(t *testing.T) {
 		t.Errorf("the filter did not reach the query:\n%s", out)
 	}
 
-	// payload is a JSON column, which cel2sql cannot convert (#202). Falling
-	// back to Go is the right answer; generating SQL that does not run is not.
+	// payload is a JSON column compared as a scalar, which asks whether an
+	// array equals a string. Falling back to Go is the right answer, and it
+	// still is after #202: that fixed SQL the converter emitted and SQLite
+	// rejected, where this is a question about meaning. Membership —
+	// `approvals.exists(a, a == "x")` — is the JSON shape that does push down.
 	out, err = runCLI(t, "watch", "--db", db, "--once", "-n", "20",
 		"--filter", `payload == ""`, "--explain-filter")
 	if err != nil {

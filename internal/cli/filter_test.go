@@ -265,8 +265,10 @@ func TestAChainSurvivesBeingSplit(t *testing.T) {
 	}
 
 	// The same chain beside a term the query cannot take: the chain is still
-	// answered by the query and the JSON term in Go, and the answer is the
-	// one above. That split is what --explain-filter reports, and getting it
+	// answered by the query and the other term in Go, and the answer is the
+	// one above. `exists(...) == false` is a comparison whose left side is a
+	// comprehension, which is not the membership shape #202 opened up — that
+	// one now pushes down. That split is what --explain-filter reports, and getting it
 	// wrong in either direction shows up here as a different set of rows.
 	both := expr + ` && approvals.exists(x, x == "nobody") == false`
 	split, err := runCLI(t, "pr", "list", "--db", db, "--filter", both,

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/scottlaird/roz/internal/store"
 )
 
@@ -251,32 +253,82 @@ func TestARowCELCannotAnswerDoesNotMatch(t *testing.T) {
 	}
 }
 
-// TestAJSONTermRunsInGo: cel2sql converts `approvals.exists(a, a == "x")` into
-// a json_each subquery whose alias it then compares as a scalar, which SQLite
-// rejects with "no such column: a" — SQL that is generated, accepted and
-// wrong. Until that is fixed upstream, such a term is held back.
-func TestAJSONTermRunsInGo(t *testing.T) {
+// TestAJSONTermPushesDown, which it did not until SPANDigital/cel2sql#169.
+//
+// The converter turned `approvals.exists(a, a == "x")` into a json_each
+// subquery and then compared the subquery's alias as a scalar — `WHERE a = ?`
+// — SQL that was generated, accepted by the converter and rejected by SQLite
+// with "no such column: a". The fix writes the iteration variable through the
+// dialect; v3.8.9 carries it, and the term now reads `a.value`.
+//
+// See scottlaird/roz#202.
+func TestAJSONTermPushesDown(t *testing.T) {
 	f := compile(t, `approvals.exists(a, a == "alice")`)
 
-	if where, _ := f.SQL(); where != "" {
-		t.Errorf("a JSON term was pushed down as %q", where)
+	where, args := f.SQL()
+	if where == "" {
+		t.Fatal("a JSON term was held back, and the upstream fix is in")
+	}
+	if !strings.Contains(where, "json_each") || !strings.Contains(where, "a.value") {
+		t.Errorf("SQL = %q, want a json_each comparing a.value", where)
+	}
+	if len(args) != 1 || args[0] != "alice" {
+		t.Errorf("args = %v, want the literal as a value", args)
+	}
+}
+
+// TestTheJSONTermMeansWhatItSays is the assertion the shape gate exists to
+// protect: SQL that SQLite accepts is not the same thing as SQL that means
+// what the filter said. The bug behind #202 produced SQL that was generated
+// and accepted by the converter, and only SQLite refused it.
+//
+// So the fragment is run against real SQLite rather than pattern-matched.
+func TestTheJSONTermMeansWhatItSays(t *testing.T) {
+	f := compile(t, `approvals.exists(a, a == "alice")`)
+	where, args := f.SQL()
+	if where == "" {
+		t.Fatal("nothing was pushed down, so there is nothing to run")
 	}
 
-	for _, tc := range []struct {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE r (approvals TEXT NOT NULL DEFAULT '[]')`); err != nil {
+		t.Fatalf("creating the table: %v", err)
+	}
+
+	for _, tt := range []struct {
 		approvals string
 		want      bool
+		why       string
 	}{
-		{`["alice","bob"]`, true},
-		{`["bob"]`, false},
-		{`[]`, false},
+		{`["alice","bob"]`, true, "the name among others"},
+		{`["alice"]`, true, "the name alone"},
+		{`["bob"]`, false, "somebody else"},
+		// CEL's exists over [] is false and EXISTS over no rows is false, so
+		// the two agree here without any special case. These columns are NOT
+		// NULL DEFAULT '[]', so there is no third state to disagree about.
+		{`[]`, false, "nobody"},
+		{`["ALICE"]`, false, "case matters, as it does in CEL"},
+		{`["alicia"]`, false, "a prefix is not a member"},
 	} {
-		got, err := f.Keep(&row{Approvals: tc.approvals})
-		if err != nil {
-			t.Fatalf("Keep(%s) returned error: %v", tc.approvals, err)
-		}
-		if got != tc.want {
-			t.Errorf("Keep(%s) = %v, want %v", tc.approvals, got, tc.want)
-		}
+		t.Run(tt.approvals, func(t *testing.T) {
+			if _, err := db.Exec(`DELETE FROM r`); err != nil {
+				t.Fatalf("clearing: %v", err)
+			}
+			if _, err := db.Exec(`INSERT INTO r VALUES (?)`, tt.approvals); err != nil {
+				t.Fatalf("inserting: %v", err)
+			}
+			var n int
+			if err := db.QueryRow(`SELECT count(*) FROM r WHERE `+where, args...).Scan(&n); err != nil {
+				t.Fatalf("SQLite refused %q: %v", where, err)
+			}
+			if got := n == 1; got != tt.want {
+				t.Errorf("%s: matched = %v, want %v (%s)", tt.approvals, got, tt.want, tt.why)
+			}
+		})
 	}
 }
 
@@ -412,7 +464,6 @@ func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
 		{`title.matches("^Fix")`, false, "the dialect refuses regexes outright"},
 		{`!merged_at`, false, "NOT over a non-boolean is SQLite coercing, not negating"},
 		{`number > "5"`, false, "SQLite compares across types by affinity; CEL calls it an error"},
-		{`approvals.exists(a, a == "alice")`, false, "a JSON column is not a scalar"},
 		// Column against column was refused until a join needed it — "a child
 		// that outranks its parent" compares two rows' priorities and neither
 		// side is a literal. The rules are the literal ones applied to both
@@ -420,6 +471,12 @@ func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
 		{`state == title`, true, "two columns of one kind, and NULL excludes in both engines"},
 		{`state != title`, false, "state may be absent, and != is where the two part company"},
 		{`title != id`, true, "neither column can be absent, so there is no row to differ over"},
+		{`approvals.exists(a, a == "x")`, true,
+			"membership of a JSON array of text, since cel2sql#169 made the SQL valid"},
+		{`approvals.exists(a, a != "x")`, false,
+			"a different question about emptiness, and one nobody has checked"},
+		{`approvals.exists(a, a.startsWith("x"))`, false,
+			"the inner comparison is not the one shape that was checked"},
 	}
 
 	for _, tc := range tests {
@@ -544,11 +601,21 @@ func TestAColumnNameInAStringIsNotAColumn(t *testing.T) {
 	}
 }
 
-// TestAJSONColumnIsStillHeldBack, now decided by resolving the term rather
-// than by searching it.
-func TestAJSONColumnIsStillHeldBack(t *testing.T) {
-	f := compile(t, `approvals.exists(a, a == "alice")`)
-	if where, _ := f.SQL(); where != "" {
-		t.Errorf("a JSON term was pushed down as %q", where)
+// TestOnlyTheCheckedJSONShapeIsPushed. The gate is an allow-list because a
+// probe can only fail to find a difference, never show there is none — so what
+// was not checked runs in Go, which is slower and right.
+func TestOnlyTheCheckedJSONShapeIsPushed(t *testing.T) {
+	for _, tt := range []struct{ expr, why string }{
+		{`approvals.exists(a, a != "alice")`, "!= over an array asks about emptiness too"},
+		{`approvals.exists(a, a.contains("ali"))`, "a substring test inside the array"},
+		{`approvals.all(a, a == "alice")`, "all over [] is true in CEL and has no EXISTS twin"},
+		{`approvals.exists(a, a == title)`, "the other side is a column, not a literal"},
+	} {
+		t.Run(tt.expr, func(t *testing.T) {
+			f := compile(t, tt.expr)
+			if where, _ := f.SQL(); where != "" {
+				t.Errorf("pushed down as %q, but %s", where, tt.why)
+			}
+		})
 	}
 }

@@ -118,11 +118,44 @@ def unmatte(on_white, on_black, out_path):
     write_png(out_path, w1, h1, rows)
 
 
+def end_of_root_tag(svg):
+    """Index just past the root <svg ...> start tag.
+
+    The background rectangle has to go inside the root element. Splitting on
+    the first ">" put it after the XML declaration instead, which is content
+    before the root and not a document at all -- qlmanage rendered the parse
+    error rather than the artwork, and the pipeline wrote nine PNGs of an
+    error message. An Inkscape export leads with a declaration and a comment,
+    where the file this was written against opened with <svg.
+
+    Quote-aware, because ">" is legal inside an attribute value. Standard
+    library only, like the rest of this, and it leaves the document otherwise
+    byte for byte: parsing and re-serialising would rewrite the namespace
+    prefixes of somebody's drawing to no purpose.
+    """
+    start = svg.index("<svg")
+    quote = None
+    for i in range(start, len(svg)):
+        c = svg[i]
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+        elif c == ">":
+            return i + 1
+    raise ValueError("no closing > on the root <svg> tag")
+
+
 def render(svg_path, size, background, out_png):
     """Rasterise svg_path at size with an opaque background rectangle."""
     svg = pathlib.Path(svg_path).read_text()
-    head, rest = svg.split(">", 1)
-    backed = f'{head}><rect x="-2000" y="-2000" width="8000" height="8000" fill="{background}"/>{rest}'
+    at = end_of_root_tag(svg)
+    backed = (
+        svg[:at]
+        + f'<rect x="-2000" y="-2000" width="8000" height="8000" fill="{background}"/>'
+        + svg[at:]
+    )
     with tempfile.TemporaryDirectory() as tmp:
         staged = pathlib.Path(tmp, "staged.svg")
         staged.write_text(backed)

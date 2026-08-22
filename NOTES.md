@@ -2993,15 +2993,24 @@ migration, which [it does notice](#upgrading-while-something-is-running).
 
 ## The logo
 
-`assets/roz.svg` is the master; `assets/roz-mark.svg` is the same drawing with
-the chain dropped, the frame thickened and the head replaced by a filled tile,
-because at 16px the beads are noise and a hairline frame smears into a grey
-band. Everything else in `assets/` is generated from those two.
+`assets/roz.svg` is the artwork, and everything else in `assets/` is generated
+from it. There was a second drawing — `roz-mark.svg`, the same thing with the
+chain dropped, the frame thickened and the head replaced by a filled tile,
+because at 16px the beads were noise and a hairline frame smeared into a grey
+band. The current artwork is a bold enough shape to survive being shrunk, so
+the mark is gone and one file feeds every size.
+
+**What that costs is the 16px.** At 32 and above the drawing reads exactly as
+it should. At 16 the mouth disappears and the brows go faint, leaving the
+glasses carrying the whole mark — recognisable, and softer than the purpose-cut
+tile it replaced. If that ever stops being good enough the answer is another
+mark, not a different rasteriser.
 
 The page carries the 32px icon inline as a data URI rather than linking a
 file. It predates the static handler and has not been worth moving: under a
 kilobyte of base64 is cheaper than the request would be, and unlike the
-stylesheet it does not change.
+stylesheet it does not change. `internal/cli/icon/roz-32.png` is a copy of
+`assets/roz-32.png` and has to be updated with it.
 
 There is no rasteriser with an alpha channel on a stock macOS box, so
 `assets/unmatte.py` renders each size twice through Quick Look, once over
@@ -3011,11 +3020,28 @@ white and once over black, and recovers the alpha:
     over black:  Cb = C*a
     so           a  = 1 - (Cw - Cb)  and  C = Cb / a
 
-Standard library only, about three seconds for the whole set. Regenerate with:
+It injects an opaque background rectangle to do that, and it has to go *inside*
+the root element. It used to split on the first `>`, which was the end of the
+`<svg` tag in the file this was written against and is the end of the XML
+declaration in anything Inkscape exports — putting the rectangle before the
+root, where it is not a document at all. Quick Look then rasterised the parse
+error, and the pipeline wrote a set of PNGs of an error message.
+
+Standard library only, about three seconds for the whole set:
 
 ```console
-$ python3 assets/unmatte.py assets/roz-mark.svg 32 assets/roz-32.png
+$ for n in 16 32 48 64 128 180 256 512 1024; do
+    python3 assets/unmatte.py assets/roz.svg $n assets/roz-$n.png
+  done
+$ cp assets/roz-32.png internal/cli/icon/roz-32.png
+$ python3 assets/makeico.py assets/favicon.ico \
+    assets/roz-16.png assets/roz-32.png assets/roz-48.png
 ```
+
+The favicon is three of those PNGs in a container, stored verbatim — an `.ico`
+is a header, a directory entry each, and the data. Nothing used to build it,
+so it kept the previous drawing through a regeneration, which is exactly the
+sort of thing a browser tab notices and nobody else does.
 
 ## Where to read more
 

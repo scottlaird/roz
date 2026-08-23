@@ -81,18 +81,38 @@ const rankJoins = ` LEFT JOIN project p ON p.id = a.project_id` +
 //	effort        of the project it advances, smallest first: prefer finishing
 //	n             creation order, so the result is stable
 //
-// Unstated sorts last at every term. Unprioritised is not the same as low,
-// and an effort nobody has estimated is not evidence of being quick.
+// An action that advances no project takes the middle band rather than
+// sorting last.
+//
+// Sorting it last was the same mistake as sorting it first, in the other
+// direction: it lost to every action that had a priority, whatever its verb
+// and whatever it would unblock, so on a queue of thirteen the bottom four
+// were exactly the four with no project. `chase` actions have no project by
+// nature, which is what makes both ends wrong — first would head the queue
+// with every chase, and last buries the decisions that free other work. See
+// #257.
+//
+// unstatedPriority is a band a project can actually hold, not a sentinel
+// outside the range. Anything that groups by priority would draw a sentinel as
+// a real band, and a band nobody can be in is worse than a wrong one.
+//
+// Only this term is filled. Unstated effort still sorts last, because an
+// effort nobody has estimated is not evidence of being quick — where a missing
+// priority is evidence of nothing at all, which is exactly the middle.
 func rankOrder() string {
 	return strings.Join([]string{
 		"a.rank_pin IS NULL", "a.rank_pin",
-		"p.priority IS NULL", "p.priority",
+		fmt.Sprintf("coalesce(p.priority, %d)", unstatedPriority),
 		ordinal("v.rank_class", RankClasses),
 		"coalesce(u.n, 0) DESC",
 		ordinal("p.effort", Efforts),
 		"a.n",
 	}, ", ")
 }
+
+// unstatedPriority is where an action with no project sorts: the middle of the
+// 1..9 the schema allows, so it is a band that exists.
+const unstatedPriority = 5
 
 // ordinal renders a CASE mapping known values to their position, so a column
 // holding names sorts in a stated order rather than alphabetically.

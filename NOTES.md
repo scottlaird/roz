@@ -608,6 +608,20 @@ it wins outright. Then what you said matters. Then how big a step this is —
 clear out and things you are only waiting on sink. Then how much finishing it
 frees. Then prefer the project that is nearly done.
 
+**An action advancing no project takes the middle priority band**, so it is
+ordered by the terms below rather than sunk beneath everything with a project.
+It used to sort last, which buried it whatever its verb and whatever it would
+unblock — on a queue of thirteen the bottom four were exactly the four with no
+project. Sorting it first would be the same mistake facing the other way, and
+worse: `chase` actions have no project by nature, so every chase would head the
+queue.
+
+The fill is 5, a band a project can actually hold. A sentinel outside 1–9 would
+draw as a real band in anything that groups by priority, and a band nobody can
+be in is worse than a wrong one. Only this term is filled — an unstated effort
+still sorts last, because an effort nobody has estimated is not evidence of
+being quick, where a missing priority is evidence of nothing at all.
+
 **The unblocks count is transitive**, and that is the point of it. The sketch's
 argument is that "this week's most important items were the ones gating
 chains", and a direct count gives the head of a chain of four the same 1 as

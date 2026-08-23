@@ -172,6 +172,12 @@ INSERT INTO actionverb (verb, label, closes, predicate_key, rank_class, requires
   -- only in the two settings that say whose pull request it is about. See 0040.
   ('wait_merge',       'wait for a merge',  'predicate', 'pr_merged',         'wait',    1, 0, 0, 0, 0, NULL,
    'Wait for somebody else''s pull request to merge. Closes when it has. Unlike `merge`, which is your click on your own pull request, this has no allowance: their merge is not yours to influence.'),
+  -- The one wait with no predicate, because there is nothing to observe: an
+  -- outage, a person, another team. It keeps an allowance where wait_ref has
+  -- none -- nothing will ever close this on its own, so a wait that has run
+  -- long matters more here, not less. See 0042.
+  ('wait_on',          'wait on',           'human',     NULL,                'wait',    0, 0, 0, 0, 0, 3,
+   'Wait for something roz cannot see: an outage, an answer from a person, another team''s work. Closed by hand, because there is nothing to poll. Not for a pull request that is merely slow -- wait_review closes itself, and this would not.'),
 
   -- Human-closed. These are the items worth spending attention on, and the
   -- only ones that reach the queue as thinking work.

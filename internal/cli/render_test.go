@@ -155,8 +155,15 @@ func TestRenderEscapes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render returned error: %v", err)
 	}
-	if strings.Contains(out, "<script>") {
+	// The title's own markup, not any <script> on the page: the shell carries
+	// scripts of its own — the localiser, the reload stream — so matching the
+	// bare tag tested whether the page had any script at all, which is a
+	// different question and one that changes for unrelated reasons.
+	if strings.Contains(out, "<script>alert(1)</script>") {
 		t.Errorf("a title reached the page unescaped:\n%s", out)
+	}
+	if strings.Contains(out, "alert(1)") && !strings.Contains(out, "&lt;script&gt;alert(1)") {
+		t.Errorf("the title's script survived in some other form:\n%s", out)
 	}
 	if !strings.Contains(out, "&lt;script&gt;") || !strings.Contains(out, "&amp; friends") {
 		t.Errorf("the title is missing or mangled:\n%s", out)
@@ -215,7 +222,7 @@ func TestTemplateIsTheOneOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the embedded index: %v", err)
 	}
-	for _, want := range []string{"{{.Stamp}}", "{{.GeneratedAt}}", `{{template "body" .}}`} {
+	for _, want := range []string{"{{.Stamp}}", ".GeneratedAt", `{{template "body" .}}`} {
 		if !strings.Contains(string(shell), want) {
 			t.Errorf("the shell does not use %s", want)
 		}
@@ -918,4 +925,65 @@ func issueCell(t *testing.T, page string) string {
 		return page
 	}
 	return m
+}
+
+// TestAnInstantIsMarkedForTheBrowser is #255. Times are stored and rendered in
+// UTC — a database shared between a laptop and a server has no other honest
+// choice — and read by somebody who should not have to do the arithmetic.
+//
+// The server sends the instant and the browser puts it in the reader's zone,
+// so what the page has to carry is a datetime attribute and a fallback.
+func TestAnInstantIsMarkedForTheBrowser(t *testing.T) {
+	db := renderedFixture(t)
+
+	out, err := renderIndex(t, db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+
+	found := regexp.MustCompile(`<time datetime="([^"]+)">([^<]*)</time>`).FindAllStringSubmatch(out, -1)
+	if len(found) == 0 {
+		t.Fatalf("no instant is marked for localising:\n%s", out)
+	}
+	for _, m := range found {
+		at, text := m[1], m[2]
+		if _, err := time.Parse(time.RFC3339, at); err != nil {
+			t.Errorf("datetime=%q is not RFC3339: %v", at, err)
+		}
+		// The text inside is the fallback, and is what a browser running no
+		// script keeps showing.
+		if strings.TrimSpace(text) == "" {
+			t.Errorf("datetime=%q has no fallback text", at)
+		}
+	}
+}
+
+// TestADateIsNotMarkedForLocalising is the other half, and the one that would
+// be a bug rather than a missing feature.
+//
+// A snooze date is a day, not a moment. Putting it through a timezone can move
+// it: the page's own stamp of 2026-08-23T04:40Z renders as the 22nd in a
+// western zone, and a snooze "until the 23rd" shown as the 22nd is wrong in a
+// way nobody would think to check.
+func TestADateIsNotMarkedForLocalising(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "parked")
+	if _, err := runCLI(t, "project", "snooze", "--db", db, project,
+		"--snooze-until", "2099-03-14", "--snooze-reason", "later"); err != nil {
+		t.Fatalf("project snooze returned error: %v", err)
+	}
+
+	out, err := renderIndex(t, db)
+	if err != nil {
+		t.Fatalf("render returned error: %v", err)
+	}
+	if !strings.Contains(out, "2099-03-14") {
+		t.Fatalf("the snooze date is not on the page at all:\n%s", out)
+	}
+	for _, m := range regexp.MustCompile(`<time datetime="([^"]+)"`).FindAllStringSubmatch(out, -1) {
+		if strings.HasPrefix(m[1], "2099-03-14") {
+			t.Errorf("a snooze date was marked for localising as %q, "+
+				"which can move it to the wrong day", m[1])
+		}
+	}
 }

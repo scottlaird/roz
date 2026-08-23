@@ -50,6 +50,11 @@ type Result struct {
 	// the same way and for the same reason, and a different problem: a slow
 	// review is chased, and one nobody requested is announced.
 	Unannounced []store.Unannounced
+	// Woken are the actions whose deferral ran out this cycle and are back in
+	// play. The other end of such a wait -- the issue closing -- arrives
+	// through Settle and is reported as a close, which is what makes the two
+	// distinguishable.
+	Woken []*store.Action
 	// Settled lists the actions closed because what was observed satisfied
 	// their predicate, with whatever each closure cascaded into.
 	Settled []store.Settled
@@ -631,6 +636,20 @@ func checkOverdue(ctx context.Context, st *store.Store, result *Result) error {
 		return err
 	}
 	result.Unannounced = unannounced
+
+	// Deferrals whose date has arrived. Here rather than in a sweep of its own
+	// for the reason the comment above gives: this runs on both paths out of
+	// Sync, and a date passes whether or not there was anything to poll.
+	//
+	// A wake rather than an exception. A snoozed action is invisible to the
+	// overdue check on purpose -- a deferred action is not late -- so the date
+	// arriving has to bring it back into play instead of reporting it. See
+	// store.WakeExpired.
+	woken, err := st.WakeExpired(ctx, store.ActorPredicate)
+	if err != nil {
+		return err
+	}
+	result.Woken = woken
 	return nil
 }
 

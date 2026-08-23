@@ -259,8 +259,33 @@ func (a *Action) relations() []Relation {
 				Blank: func() any { return &Project{} },
 			},
 		},
+		{
+			// The tracker issue this waits on, which is the other end of a
+			// wait that can also end on a date. #264 asks for both ends to be
+			// visible so it is clear which one is still live, and the snooze
+			// half was already a column while this one was in a table nothing
+			// printed.
+			Name: "waits_for_issue", Load: waitedOnIssueID,
+			Join: &Join{
+				Kind: ToOne, Table: "tracker_issue", Near: "id", Far: "id",
+				Via: &Junction{
+					Table: "action_tracker_issue", Near: "action_id", Far: "issue_id",
+				},
+				Blank: func() any { return &TrackerIssue{} },
+			},
+		},
 		{Name: "held_by", Load: heldByIDs},
 	}
+}
+
+// waitedOnIssueID names the issue an action waits for, absent where it waits
+// on none — which is every action that is not a wait_issue.
+func waitedOnIssueID(ctx context.Context, tx *Tx, id string) (any, error) {
+	issue, err := tx.IssueWaitedOnBy(ctx, id)
+	if err != nil || issue == "" {
+		return nil, err
+	}
+	return issue, nil
 }
 
 // relations for a project: the Jira issues it tracks.

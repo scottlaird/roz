@@ -2639,6 +2639,36 @@ remember; and if the deadline moves out — the allowance was raised, a fresh
 review was requested, or the pull request was announced again — it is reported
 again, because it is a different wait.
 
+### A wait is only asked about once the chain reaches it
+
+`waiting_unannounced` says a pull request is waiting for a review nobody was
+asked for. It has a precondition: the step has to be **ready**.
+
+A pipeline holds its steps with `action_blocks` — `instantiate` calls
+`AddBlocker` and nothing else — so the ordinary chain on a draft is `undraft`
+ready, `send_for_review` blocked, `wait_review` blocked. Asking the wait at the
+end whether anybody was told is asking about a pull request that has not been
+sent out, which is the correct state for a draft.
+
+The advice was worse than unactionable. Running `pr announce` on an unsent pull
+request records an announcement that never happened and starts the wait clock,
+so a later real one reads as a duplicate and every elapsed figure after it is
+wrong. **An exception whose remediation would record something false must not be
+raised.**
+
+`state` is the whole test, and it is already the answer: an action is blocked
+exactly while it has an open blocker, maintained on every edge change and every
+close, so `ready` means nothing ahead of it is open by induction along the
+chain. There is nothing to walk and no cycle to guard against. `hidden_behind`
+goes with it, since a hidden action can be ready.
+
+Both together are what `overdueQuery` already tested. Two sweeps asking "is
+this worth somebody's attention" that disagree about which actions are live
+means one of them is wrong.
+
+Suppressing is not latching: nothing is recorded while the step is unready, so
+a wait genuinely stalled at the head of a chain still reports.
+
 ### A standing condition is reported once a day
 
 Some exceptions describe a situation rather than an event: a pull request that

@@ -26,6 +26,11 @@ func TestAWaitOnAnUnrequestedReviewIsReported(t *testing.T) {
 		t.Fatalf("the fixture has no wait_review action")
 	}
 
+	// The chain has to reach it first. A blocked step is not waiting on
+	// anybody, and asking whether a review was requested of a pull request
+	// that has not been sent out is the bug in #265.
+	reachTheWait(t, st, created, wait)
+
 	reported, err := st.UnannouncedWaits(ctx, ActorPredicate)
 	if err != nil {
 		t.Fatalf("UnannouncedWaits() returned error: %v", err)
@@ -146,6 +151,22 @@ func hide(t *testing.T, st *Store, a *Action, behind string) {
 	}
 }
 
+// reachTheWait closes everything ahead of a step, which is what the cascade
+// does as a chain runs. A wait is only asked about once it is ready — see the
+// predicate's own comment — so a fixture that wants a report has to get there.
+func reachTheWait(t *testing.T, st *Store, created []*Action, wait *Action) {
+	t.Helper()
+	for _, a := range created {
+		if a.ID == wait.ID {
+			break
+		}
+		closeIt(t, st, CloseRequest{ID: a.ID})
+	}
+	if got := loadAction(t, st, wait.ID); got.State != ActionReady {
+		t.Fatalf("%s is %q after its chain closed, want ready", wait.ID, got.State)
+	}
+}
+
 func waitStep(t *testing.T, created []*Action) *Action {
 	t.Helper()
 	for _, a := range created {
@@ -189,6 +210,9 @@ func TestHidingDefersTheQuestionRatherThanAnsweringIt(t *testing.T) {
 	_, created := pipelineFor(t, st, "review")
 	wait := waitStep(t, created)
 
+	// Reachable by the chain, so that hiding is the only thing keeping it
+	// quiet and the test is about hiding rather than about blocking.
+	reachTheWait(t, st, created, wait)
 	hide(t, st, wait, created[0].ID)
 	if reported, err := st.UnannouncedWaits(ctx, ActorPredicate); err != nil {
 		t.Fatalf("UnannouncedWaits() returned error: %v", err)
@@ -223,17 +247,20 @@ func TestHidingDefersTheQuestionRatherThanAnsweringIt(t *testing.T) {
 	}
 }
 
-// TestABlockedWaitIsStillReported. Hidden and blocked are different edges:
-// hidden is the judgement that there is nothing to do but clear the one in
-// front, where blocked is a fact about ordering, and a blocked step can have a
-// real announcement gap somebody could close today.
-func TestABlockedWaitIsStillReported(t *testing.T) {
+// TestABlockedWaitIsNotReported, which is the case that actually fires and
+// the one #262 got wrong.
+//
+// That issue reported the steps as hidden_behind each other and I fixed
+// hidden_behind. A pipeline holds its steps with action_blocks — instantiate
+// calls AddBlocker and nothing else — so no chain step is ever hidden, and the
+// fix silenced a shape that does not occur while leaving the one that does.
+// This test asserted the wrong behaviour was right. See #265.
+func TestABlockedWaitIsNotReported(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
 	_, created := pipelineFor(t, st, "review")
 	wait := waitStep(t, created)
 
-	// The chain already blocks it; nothing is hidden.
 	reloaded := loadAction(t, st, wait.ID)
 	if reloaded.State != ActionBlocked {
 		t.Fatalf("%s is %q, so this test is not about a blocked step", wait.ID, reloaded.State)
@@ -246,7 +273,111 @@ func TestABlockedWaitIsStillReported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnannouncedWaits() returned error: %v", err)
 	}
-	if len(reported) != 1 {
-		t.Errorf("reported %+v, want the blocked wait: blocking is not hiding", reported)
+	if len(reported) != 0 {
+		t.Errorf("reported %+v about a step whose chain has not reached it: "+
+			"the pull request has not been sent out, which is correct for a draft", reported)
+	}
+}
+
+// TestTheAdviceWouldRecordSomethingFalse is why this is a bug rather than
+// noise. `pr announce` on an unsent pull request writes down an announcement
+// that never happened and starts the wait clock, so a later real one reads as
+// a duplicate and every elapsed figure after it is wrong. An exception whose
+// remediation is harmful must not be raised.
+func TestTheAdviceWouldRecordSomethingFalse(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	pr, created := pipelineFor(t, st, "review")
+	wait := waitStep(t, created)
+
+	if got := loadAction(t, st, wait.ID); got.State == ActionReady {
+		t.Fatalf("%s is ready, so the chain has reached it and the advice is sound", wait.ID)
+	}
+	reported, err := st.UnannouncedWaits(ctx, ActorPredicate)
+	if err != nil {
+		t.Fatalf("UnannouncedWaits() returned error: %v", err)
+	}
+	for _, r := range reported {
+		if r.PR == pr.ID {
+			t.Errorf("advised announcing %s, which has not been sent out", pr.ID)
+		}
+	}
+}
+
+// TestItFiresOnceTheChainReachesIt. Suppressing is not latching: nothing is
+// recorded while the step is unready, so a wait that is genuinely stalled at
+// the head of a chain is still the finding this was written for.
+func TestItFiresOnceTheChainReachesIt(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	_, created := pipelineFor(t, st, "review")
+	wait := waitStep(t, created)
+
+	if reported, err := st.UnannouncedWaits(ctx, ActorPredicate); err != nil {
+		t.Fatalf("UnannouncedWaits() returned error: %v", err)
+	} else if len(reported) != 0 {
+		t.Fatalf("reported before the chain reached it: %+v", reported)
+	}
+
+	// Everything ahead of it closes, which is what the cascade does.
+	for _, a := range created {
+		if a.ID == wait.ID {
+			break
+		}
+		closeIt(t, st, CloseRequest{ID: a.ID})
+	}
+	if got := loadAction(t, st, wait.ID); got.State != ActionReady {
+		t.Fatalf("%s is %q after its chain closed, want ready", wait.ID, got.State)
+	}
+
+	reported, err := st.UnannouncedWaits(ctx, ActorPredicate)
+	if err != nil {
+		t.Fatalf("UnannouncedWaits() returned error: %v", err)
+	}
+	if len(reported) != 1 || reported[0].Action.ID != wait.ID {
+		t.Errorf("reported %+v once live, want the wait: suppressing must not latch", reported)
+	}
+}
+
+// TestASnoozedWaitIsNotReported. Ready is the test rather than "not blocked",
+// so a wait deliberately parked until a date is quiet for the same reason a
+// blocked one is: nothing about it is worth somebody's attention today.
+func TestASnoozedWaitIsNotReported(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	_, created := pipelineFor(t, st, "review")
+	wait := waitStep(t, created)
+
+	for _, a := range created {
+		if a.ID == wait.ID {
+			break
+		}
+		closeIt(t, st, CloseRequest{ID: a.ID})
+	}
+	if reported, _ := st.UnannouncedWaits(ctx, ActorPredicate); len(reported) != 1 {
+		t.Fatalf("the fixture does not report before snoozing, so this proves nothing")
+	}
+
+	tx, err := st.Begin(ctx, ActorHuman)
+	if err != nil {
+		t.Fatalf("Begin() returned error: %v", err)
+	}
+	before := loadAction(t, st, wait.ID)
+	after := before.Clone()
+	after.State = ActionSnoozed
+	after.SnoozeUntil = sql.NullString{String: "2099-01-01", Valid: true}
+	if _, err := tx.Update(ctx, before, after); err != nil {
+		t.Fatalf("Update() returned error: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
+	}
+
+	// A fresh sweep: the previous one recorded an exception, so this asks
+	// whether a snoozed step would be found at all.
+	if reported, err := st.UnannouncedWaits(ctx, ActorPredicate); err != nil {
+		t.Fatalf("UnannouncedWaits() returned error: %v", err)
+	} else if len(reported) != 0 {
+		t.Errorf("reported %+v about a step snoozed until 2099", reported)
 	}
 }

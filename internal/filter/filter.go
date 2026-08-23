@@ -140,6 +140,18 @@ func Compile(blank any, expr string, opts ...Option) (*Filter, error) {
 	}
 	f.source = expr
 
+	// Before anything is read, so an unknown or misused name never returns a
+	// result set. An empty answer that means "you wrote that wrong" is
+	// indistinguishable from one that means "there are none", and the second
+	// is what a reader will believe.
+	checked, err := compileTerm(env, expr)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRelationUse(checked.NativeRep().Expr(), joins); err != nil {
+		return nil, fmt.Errorf("--filter %q: %w", expr, err)
+	}
+
 	terms, err := conjuncts(env, expr)
 	if err != nil {
 		return nil, err

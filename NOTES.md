@@ -1406,6 +1406,28 @@ at all — it is SQLite reading a timestamp as a number.
 
 A shape nobody has checked runs in Go, which is slower and right.
 
+**A relation compared as a value is refused rather than answered.** A relation
+is declared as a `dyn`, because `subject_pr.state` has to compile and what a
+far row holds is not known until it is read — so `subject_pr == "owner/repo#1"`
+compiles too, and matches nothing:
+
+```console
+$ roz action list --filter 'subject_pr == "owner/repo#123"'
+Error: "subject_pr" is a relation, not a column, so comparing it matches
+nothing: read a field of it (subject_pr.<field>), or ask what it holds
+(subject_pr.exists(x, ...))
+```
+
+An empty result that means "you wrote that wrong" is indistinguishable from one
+that means "there are none", and the second is what a reader believes. A
+misspelled column was already refused by CEL, with a caret and a position; this
+is the gap beside it, a name that exists in a position where it cannot mean
+anything.
+
+Reading a field, walking it and counting it are what a relation is for, so
+those are what is allowed — `size(actions)` as well as `actions.size()`, since
+the global spelling works and answers correctly.
+
 **Membership of a JSON column reaches the query**, and is the one shape where
 that was blocked by somebody else's bug rather than by the rule:
 

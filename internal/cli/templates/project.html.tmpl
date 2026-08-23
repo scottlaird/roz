@@ -49,13 +49,30 @@
 
   {{if .OwnActions}}
   <section>
-    <h2>what it takes</h2>
+    {{/* The count is in the heading because that is the question the page is
+         opened with. Reading it off the rows means reading all of them, which
+         is how a project whose work finished six days ago passed for one that
+         still had work outstanding. */}}
+    <h2>what it takes <span class="count">{{.OpenActions}} of {{.TotalActions}} still open</span></h2>
     <ol class="queue">
       {{range .OwnActions}}
-      <li id="{{.ID}}" class="{{.RankClass}}{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
+      {{/* Closed rows stay. The history is why this page is worth opening on
+           a project that has been running a while; what was missing was the
+           state, not fewer rows. */}}
+      <li id="{{.ID}}" class="{{if .Closed}}closed{{else}}{{.RankClass}}{{end}}{{if .Expired}} expired{{end}}{{if .Late}} late{{end}}">
         <div class="do">
           {{if .Age}}<span class="age">{{.Age}}</span>{{end}}
           <span class="id"><a href="{{.Href}}">{{.ID}}</a></span>{{.Title}}<span class="verb">{{.Verb}}</span>
+          {{/* The state as it is, rather than open against closed: snoozed
+               and blocked are open and not actionable, and flattening them
+               would lose the distinction the states exist to draw.
+
+               For a closed one the reason, not the state. State says done or
+               dropped and the reason says which kind of ending it was, so the
+               reason is the more specific of the two and printing both reads
+               "dropped · dropped" half the time. */}}
+          {{if .Closed}}<span class="state done">{{if .ClosedReason}}{{.ClosedReason}}{{else}}{{.State}}{{end}}</span>
+          {{else}}<span class="state">{{.State}}</span>{{end}}
           {{if .Late}}<span class="overdue">{{.Late}}</span>{{end}}
         </div>
         {{if .Why}}<div class="why prose">{{.Why}}</div>{{end}}

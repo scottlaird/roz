@@ -477,3 +477,81 @@ func TestTheTitleIsTextNotMarkup(t *testing.T) {
 		}
 	}
 }
+
+// TestAProjectPageSaysWhatIsLeft is #267. The page listed a project's actions
+// with no indication of whether each was open, so one whose work finished six
+// days ago read exactly like one still waiting on it — and the reported case
+// was somebody raising an item that was already snoozed with a reason.
+func TestAProjectPageSaysWhatIsLeft(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "Rate-limit the public API")
+
+	done := addAction(t, db, "--title", "write the limiter", "--verb", "write", "--project", project)
+	dropped := addAction(t, db, "--title", "the abandoned one", "--verb", "write", "--project", project)
+	superseded := addAction(t, db, "--title", "a better plan replaced it", "--verb", "write", "--project", project)
+	open := addAction(t, db, "--title", "still to do", "--verb", "write", "--project", project)
+
+	if _, err := runCLI(t, "action", "close", "--db", db, done); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+	for _, tt := range []struct{ id, reason string }{
+		{dropped, "dropped"}, {superseded, "superseded"},
+	} {
+		if _, err := runCLI(t, "action", "close", "--db", db, tt.id, "--reason", tt.reason); err != nil {
+			t.Fatalf("action close --reason %s returned error: %v", tt.reason, err)
+		}
+	}
+
+	page := routeHTML(t, db, route{kind: pageProject, id: project})
+
+	// The count is in the heading, because reading it off the rows means
+	// reading all of them — which is the failure.
+	if !strings.Contains(page, "1 of 4 still open") {
+		t.Errorf("the page does not say how much is left:\n%s", page)
+	}
+
+	// Each ending named, and by its reason: state says done or dropped, the
+	// reason says which kind of ending, and the reason is the specific one.
+	for _, want := range []string{"completed", "dropped", "superseded", "ready"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page does not show %q:\n%s", want, page)
+		}
+	}
+
+	// Closed rows stay: the history is why the page is worth opening on a
+	// project that has been running a while.
+	for _, id := range []string{done, dropped, superseded, open} {
+		if !strings.Contains(page, id) {
+			t.Errorf("%s is missing from the page; closed rows are not hidden", id)
+		}
+	}
+
+	// And they are marked, so they do not read as outstanding work.
+	closedRows := strings.Count(page, `class="closed`)
+	if closedRows != 3 {
+		t.Errorf("%d rows marked closed, want 3:\n%s", closedRows, page)
+	}
+}
+
+// TestAnOpenActionKeepsItsRankClass. Marking the closed ones must not flatten
+// the live ones: the band is what a scan reads, and #92 is why it is there.
+func TestAnOpenActionKeepsItsRankClass(t *testing.T) {
+	db := initDB(t)
+	project := addProject(t, db, "one")
+	addAction(t, db, "--title", "a judgement", "--verb", "decide", "--project", project)
+	closed := addAction(t, db, "--title", "finished", "--verb", "write", "--project", project)
+	if _, err := runCLI(t, "action", "close", "--db", db, closed); err != nil {
+		t.Fatalf("action close returned error: %v", err)
+	}
+
+	page := routeHTML(t, db, route{kind: pageProject, id: project})
+	if !strings.Contains(page, `class="decide`) {
+		t.Errorf("an open action lost its rank class:\n%s", page)
+	}
+	if strings.Contains(page, `class="write`) {
+		t.Errorf("a closed action kept a rank class instead of reading as closed:\n%s", page)
+	}
+	if !strings.Contains(page, "2 of 2 still open") && !strings.Contains(page, "1 of 2 still open") {
+		t.Errorf("the heading count is missing:\n%s", page)
+	}
+}

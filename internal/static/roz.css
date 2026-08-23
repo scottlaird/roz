@@ -305,3 +305,15 @@ h2 a.more{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
 .key i.wait{border-left-color:var(--wait);background:var(--wait-bg)}
 .key i.late{border-left-color:var(--bad)}
 .key i.expired{border-left-color:var(--bad);background:var(--bad-bg)}
+
+/* A closed action on a project page. It keeps its row -- the history is why
+   the page is worth opening -- and stops competing with the work that is
+   still outstanding. See #267. */
+ol.queue li.closed{background:var(--sink);border-left-color:var(--rule);opacity:.72}
+ol.queue li.closed::before,ol.queue li.closed .id a{color:var(--faint)}
+ol.queue li.closed .do{color:var(--mid)}
+.state{font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;
+       color:var(--faint);margin-left:.55em;white-space:nowrap}
+.state.done{color:var(--mid)}
+h2 .count{font-size:.72em;font-weight:400;text-transform:none;letter-spacing:0;
+          margin-left:.6em;color:var(--faint)}

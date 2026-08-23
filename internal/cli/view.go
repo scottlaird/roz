@@ -211,8 +211,14 @@ type pageContent struct {
 	Action  *actionView
 	// Children are the projects this one is made of, on a project page.
 	Children []projectView
-	// OwnActions are the actions advancing it.
+	// OwnActions are the actions advancing it, closed ones included: the
+	// history is why the page is worth opening on a project that has been
+	// running a while.
 	OwnActions []actionView
+	// OpenActions and TotalActions head that list, so "is there anything left"
+	// does not mean reading every row.
+	OpenActions  int
+	TotalActions int
 	// Notes is the authored prose, by slot. A slot with nothing in it is
 	// absent rather than empty, so the template can ask without guarding.
 	Notes map[string]noteView
@@ -264,6 +270,15 @@ type actionView struct {
 	// rather than by raising a second item about itself, so without this the
 	// allowance on a verb like `merge` would say nothing anybody could see.
 	Late string
+	// Closed says the work is over, and ClosedReason says how it ended.
+	//
+	// Both, because `completed` and `dropped` mean different things to
+	// somebody deciding whether a project is finished — and the state alone
+	// flattens that. A project page listed its actions with no indication
+	// either way, so one whose work was done six days ago read exactly like
+	// one still waiting on it. See #267.
+	Closed       bool
+	ClosedReason string
 }
 
 // noteView is one keyed prose block, rendered.
@@ -700,6 +715,10 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			if a.ProjectID.Valid && a.ProjectID.String == at.id {
 				row := actionRow(a, rank, prsByAction, issuesByProject, text, stamp, late)
 				row.Href = actionHref(a.ID)
+				content.TotalActions++
+				if !row.Closed {
+					content.OpenActions++
+				}
 				content.OwnActions = append(content.OwnActions, row)
 			}
 		}
@@ -785,6 +804,10 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		Age:       age(a, now),
 		Expired:   expired(a.SnoozeUntil, now),
 		Late:      lateLabel(late, a.ID),
+		Closed:    !a.IsOpen(),
+		// The reason rather than the state: state says done or dropped, and
+		// the reason says which kind of ending it was.
+		ClosedReason: nullText(a.ClosedReason),
 	}
 	for _, p := range prs[a.ID] {
 		view.PRs = append(view.PRs, prRow(p, text))

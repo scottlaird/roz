@@ -2514,6 +2514,37 @@ Saturday, which is tolerable only because an overdue wait becomes something
 sitting in the queue on Monday rather than something demanding attention when
 it fires.
 
+### Waiting on something roz cannot see
+
+Every other wait is backed by a predicate over something observable: a pull
+request, a ref, a tracker issue. `wait_on` is the one with nothing to poll — an
+outage, an answer from a person, another team's work.
+
+```console
+$ roz action add --title "the host is down" --verb wait_on
+$ roz action hide-behind --action NA2 --behind NA1
+```
+
+Those cases used to get `investigate`, which misreports the item three ways: a
+`session` rank class offers it as work when there is none to do, no allowance
+means nothing notices a wait that has run long, and it reads as something the
+owner can advance — which is exactly what it is not.
+
+**No predicate, deliberately.** Inventing one — polling a status page — would
+make the verb narrower than the need and put roz in the business of monitoring
+third parties. It is closed by hand, and closing it frees and unhides whatever
+was behind it like any other close.
+
+**It keeps an allowance where `wait_ref` has none.** The reasoning that leaves
+a release gate without one is that nobody can be chased about a release date.
+Here there is somebody to chase by construction — that is what makes it manual
+— and nothing will ever close it on its own, so a wait that has run long
+matters more, not less.
+
+It is not for a pull request that is merely slow. `wait_review` closes itself
+and this would not, which is why the verb's own description says so: the easy
+verb tends to win.
+
 `rank_class` is tunable the same way. What a verb *means* is not: `closes` and
 the predicate it names are checked against the build when the database opens,
 so a verb naming a predicate this binary lacks is refused at startup. Editing

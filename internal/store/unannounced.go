@@ -39,6 +39,24 @@ const EventWaitingUnannounced = "waiting_unannounced"
 // announced_at only. first_review_requested_at being set is exactly what made
 // the original case invisible, so treating it as evidence would reproduce the
 // bug rather than report it.
+//
+// # Why hidden steps are excluded
+//
+// A hidden action is not waiting; it is parked. The ordinary pipeline on a
+// draft pull request is undraft, then an announce hidden behind it, then a
+// wait_review hidden behind that — and the wait raised "nobody was asked for
+// this review" every sweep, for ever, about a pull request that is still a
+// draft and has an announce step queued up to do exactly what the exception
+// asks for. Two of them fired every sweep for a week. See #262.
+//
+// This asks whether there is something to go and do, and a hidden action has
+// by construction nothing to do but clear the one in front. The same rule
+// overdueQuery draws, for the same reason: hiding defers the question rather
+// than answering it, so the exception fires the moment the step becomes live.
+//
+// blocked_by is deliberately not treated the same way. Hidden is the judgement
+// that there is nothing to do; blocked is a fact about ordering, and a blocked
+// step can have a real announcement gap somebody could close today.
 const unannouncedWaits = `
 SELECT %s, pr.id
   FROM action a
@@ -47,6 +65,7 @@ SELECT %s, pr.id
   JOIN pr ON pr.id = link.pr_id
   JOIN github_repo r ON r.id = pr.repo
  WHERE a.closed_at IS NULL
+   AND a.hidden_behind IS NULL
    AND v.predicate_key IN (?, ?)
    AND pr.announced_at IS NULL
    AND EXISTS (SELECT 1 FROM pipeline_step s

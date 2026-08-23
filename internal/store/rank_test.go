@@ -224,3 +224,76 @@ func TestCreationOrderIsUntouched(t *testing.T) {
 		t.Errorf("default order changed; want %s then %s", first.ID, second.ID)
 	}
 }
+
+// TestAProjectlessActionTakesTheMiddleBand is #257. An action advancing no
+// project had no priority to compare and lost to every action that had one,
+// whatever its verb and whatever it would unblock: on a queue of thirteen the
+// bottom four were exactly the four with no project.
+func TestAProjectlessActionTakesTheMiddleBand(t *testing.T) {
+	st := newStore(t)
+
+	urgent := addProject(t, st, "urgent")
+	barely := addProject(t, st, "barely wanted")
+	setPriority(t, st, urgent, 1)
+	setPriority(t, st, barely, 8)
+
+	onUrgent := addAction(t, st, "write the urgent one", "write")
+	onBarely := addAction(t, st, "write the barely wanted one", "write")
+	loose := addAction(t, st, "decide something", "decide")
+	advances(t, st, onUrgent, urgent)
+	advances(t, st, onBarely, barely)
+
+	got := ranked(t, st, ActionFilter{})
+	want := []string{onUrgent.ID, loose.ID, onBarely.ID}
+	wantOrder(t, got, want)
+}
+
+// TestTheFillIsABandAProjectCanHold. A sentinel outside 1..9 would read as a
+// real band in anything that groups by priority, and a band nobody can be in
+// is worse than a wrong one.
+func TestTheFillIsABandAProjectCanHold(t *testing.T) {
+	if unstatedPriority < 1 || unstatedPriority > 9 {
+		t.Errorf("unstatedPriority = %d, which no project can hold", unstatedPriority)
+	}
+}
+
+// TestRankPinStillBeatsEverything, which is the escape hatch for exactly this
+// kind of disagreement and must not have been narrowed by filling the band.
+func TestRankPinStillBeatsEverything(t *testing.T) {
+	st := newStore(t)
+
+	urgent := addProject(t, st, "urgent")
+	setPriority(t, st, urgent, 1)
+	onUrgent := addAction(t, st, "write the urgent one", "write")
+	advances(t, st, onUrgent, urgent)
+
+	pinned := addAction(t, st, "pinned, and advancing nothing", "write")
+	attach(t, st, pinned, func(a *Action) {
+		a.RankPin = sql.NullInt64{Int64: 1, Valid: true}
+	})
+
+	if got := ranked(t, st, ActionFilter{}); got[0] != pinned.ID {
+		t.Errorf("order = %v, want %s first", got, pinned.ID)
+	}
+}
+
+// TestAnUnstatedEffortStillSortsLast. Only the priority term is filled: an
+// effort nobody has estimated is not evidence of being quick, where a missing
+// priority is evidence of nothing at all — which is what the middle means.
+func TestAnUnstatedEffortStillSortsLast(t *testing.T) {
+	st := newStore(t)
+
+	quick := addProject(t, st, "quick")
+	unknown := addProject(t, st, "unestimated")
+	setPriority(t, st, quick, 5)
+	setPriority(t, st, unknown, 5)
+	setEffort(t, st, quick, "hours")
+
+	a := addAction(t, st, "on the quick one", "write")
+	b := addAction(t, st, "on the unestimated one", "write")
+	advances(t, st, a, quick)
+	advances(t, st, b, unknown)
+
+	got := ranked(t, st, ActionFilter{})
+	wantOrder(t, got, []string{a.ID, b.ID})
+}

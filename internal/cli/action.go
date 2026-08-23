@@ -730,9 +730,19 @@ func newActionListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "Actions, in the order they were created",
 		Long: "Creation order by default. --sort priority uses what the status page\n" +
-			"uses: any rank_pin, then the priority of the project the action\n" +
-			"advances, then the verb's rank class, then how much closing it would\n" +
-			"free, then effort. See the README for what sets each of those.",
+			"uses, each term breaking the ties the one before it left:\n\n" +
+			"  rank_pin    the explicit override, which beats everything else\n" +
+			"  priority    of the project this advances\n" +
+			"  rank_class  click, then decide, then session, then wait\n" +
+			"  unblocks    how much closing it frees, most first\n" +
+			"  effort      of that project, smallest first\n" +
+			"  n           creation order, so the result is stable\n\n" +
+			"An action advancing no project takes the middle priority band rather\n" +
+			"than sorting last, so it is ordered by the terms below — a decide\n" +
+			"that frees three actions outranks a low-priority write, and still\n" +
+			"sits below genuinely urgent project work. Sorting it last buried\n" +
+			"every chase, which has no project by nature.\n\n" +
+			"See the README for what sets each of those.",
 		Args: cobra.NoArgs,
 		RunE: runActionList,
 	}

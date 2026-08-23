@@ -2669,6 +2669,39 @@ means one of them is wrong.
 Suppressing is not latching: nothing is recorded while the step is unready, so
 a wait genuinely stalled at the head of a chain still reports.
 
+### A wait with two ends
+
+Handing work to somebody else produces a wait that can end two ways: the
+tracker issue closes, or enough time passes that it is worth asking how it is
+going. Whichever arrives first ends it.
+
+```console
+$ roz action add --title "handed to the other team" --verb wait_issue --issue PROJ-42
+$ roz action snooze NA1 --snooze-until 2026-08-24 --snooze-reason "check back"
+```
+
+Both ends are already expressible; what was missing was the second one
+arriving. `Settle` has no state filter, so a snoozed `wait_issue` closes the
+moment its issue does, whatever state it is in. The date needed a **wake**, not
+an exception: a snoozed action is invisible to the overdue check on purpose,
+because a deferred action is not late — that is the whole point of deferring
+it.
+
+So `WakeExpired` runs in the sync cycle beside the deadline sweep, clears the
+date and the reason the way `action wake` does by hand, and puts the action
+back in play — `blocked` rather than `ready` where something still blocks it,
+since waking ends the deferral rather than claiming the work became actionable.
+
+**The two endings are distinguishable**, and that is the load-bearing part: the
+issue half is inert for trackers nothing syncs, so a wait on a Jira key will in
+practice always end on the date, and a wait that always ends the same way
+teaches you to ignore it. The issue closing is a close; the date arriving is a
+`snooze_expired` event, `info` rather than an exception, because a deferral
+reaching its date is the deferral working.
+
+`action show` carries both: the snooze date was already a column, and
+`waits_for_issue` is the other end, which lived in a table nothing printed.
+
 ### A standing condition is reported once a day
 
 Some exceptions describe a situation rather than an event: a pull request that

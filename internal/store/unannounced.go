@@ -40,23 +40,41 @@ const EventWaitingUnannounced = "waiting_unannounced"
 // the original case invisible, so treating it as evidence would reproduce the
 // bug rather than report it.
 //
-// # Why hidden steps are excluded
+// # Why only a ready step is asked about
 //
-// A hidden action is not waiting; it is parked. The ordinary pipeline on a
-// draft pull request is undraft, then an announce hidden behind it, then a
-// wait_review hidden behind that — and the wait raised "nobody was asked for
-// this review" every sweep, for ever, about a pull request that is still a
-// draft and has an announce step queued up to do exactly what the exception
-// asks for. Two of them fired every sweep for a week. See #262.
+// A pipeline holds its steps with action_blocks, not hidden_behind: instantiate
+// calls AddBlocker and nothing else. So the ordinary chain on a draft pull
+// request is undraft ready, send_for_review blocked, wait_review blocked -- and
+// the wait at the end raised "nobody was asked for this review" every sweep,
+// about a pull request that has not been sent out yet, which is the correct
+// state for a draft.
 //
-// This asks whether there is something to go and do, and a hidden action has
-// by construction nothing to do but clear the one in front. The same rule
-// overdueQuery draws, for the same reason: hiding defers the question rather
-// than answering it, so the exception fires the moment the step becomes live.
+// The advice was worse than unactionable. Running `pr announce` on an unsent
+// pull request records an announcement that never happened and starts the wait
+// clock, so a later real one looks like a duplicate and every elapsed figure
+// after it is wrong.
 //
-// blocked_by is deliberately not treated the same way. Hidden is the judgement
-// that there is nothing to do; blocked is a fact about ordering, and a blocked
-// step can have a real announcement gap somebody could close today.
+// state is the test, and it is already the answer. An action is blocked exactly
+// while it has an open blocker -- applyBlockedState maintains that on every
+// edge change and every close -- so `ready` means nothing ahead of it is open,
+// by induction along the chain. #265 asks for a recursive walk to the head,
+// terminating safely on a cycle; there is nothing to walk and no cycle to
+// terminate on, because the column holds the result and the state machine is
+// what keeps it true. A second derivation could only disagree with the first.
+//
+// hidden_behind as well, since a hidden action can be ready: hiding is the
+// judgement that there is nothing to do but clear the one in front, which is
+// the same argument in a different edge.
+//
+// Both together are exactly what overdueQuery tests, and that is the point.
+// Two sweeps asking "is this worth somebody's attention" that disagree about
+// which actions are live means one of them is wrong -- and #262 fixed the
+// hidden half of this while leaving the half that actually fires, because a
+// chain is blocked rather than hidden and the report said otherwise.
+//
+// Suppressing is not latching. Nothing is recorded while the step is unready,
+// so the exception fires the moment the chain opens up and the wait is
+// genuinely stalled, which is the case it was written for.
 const unannouncedWaits = `
 SELECT %s, pr.id
   FROM action a
@@ -65,6 +83,7 @@ SELECT %s, pr.id
   JOIN pr ON pr.id = link.pr_id
   JOIN github_repo r ON r.id = pr.repo
  WHERE a.closed_at IS NULL
+   AND a.state = ?
    AND a.hidden_behind IS NULL
    AND v.predicate_key IN (?, ?)
    AND pr.announced_at IS NULL
@@ -101,7 +120,7 @@ func (s *Store) UnannouncedWaits(ctx context.Context, actor Actor) ([]Unannounce
 
 	query := fmt.Sprintf(unannouncedWaits, strings.Join(columns, ", "))
 	rows, err := s.db.QueryContext(ctx, query,
-		RoleSubject, PredicateApproved, PredicateApprovedBy, PredicateAnnounced)
+		RoleSubject, ActionReady, PredicateApproved, PredicateApprovedBy, PredicateAnnounced)
 	if err != nil {
 		return nil, fmt.Errorf("finding waits on an unannounced review: %w", err)
 	}

@@ -1,0 +1,50 @@
+# golangci-lint v2 configuration.
+#
+# Two linters, and the config is mostly about what they may not say.
+#
+# staticcheck is here for its dead-code check above all: nine unused functions
+# sat in the tree for weeks, two of them carrying paragraphs of rationale for
+# constraints the page no longer enforced that way, because nothing in CI ran
+# it. A function nothing calls is not harmless -- it is a comment that lies.
+#
+# errcheck is here for the unchecked error that matters, and it can only be
+# heard if the ones that do not are quiet. Two idioms are deliberately
+# unchecked throughout: `defer x.Close()` on a handle whose close failure has
+# nothing to say after the reads succeeded, and `fmt.Fprint*` to a writer the
+# command already owns. Without these exclusions errcheck reports about fifty
+# of those and the real one is on page three.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        # Rolled back after a successful commit, deliberately: Rollback on a
+        # committed transaction returns ErrTxDone, and the defer is the
+        # guarantee that a transaction abandoned by an early return is
+        # released. See Tx.Rollback.
+        - (*database/sql.Tx).Rollback
+        - (*github.com/scottlaird/roz/internal/store.Tx).Rollback
+        - (*github.com/scottlaird/roz/internal/store.Store).Close
+        - (*github.com/scottlaird/roz/internal/filter.nullProbe).Close
+  exclusions:
+    # Tests close what they opened in t.Cleanup and do not care whether it
+    # worked; the process is about to exit.
+    rules:
+      - path: _test\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofmt

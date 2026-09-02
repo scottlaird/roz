@@ -517,41 +517,6 @@ func withClock(env *cel.Env, expr string, at string) (string, error) {
 // timestamps as text.
 const timeFormat = "2006-01-02T15:04:05.000Z"
 
-// mentionsIdent reports whether an expression names an identifier.
-func mentionsIdent(e celast.Expr, name string) bool {
-	found := false
-	var walk func(celast.Expr)
-	walk = func(n celast.Expr) {
-		if n == nil || found {
-			return
-		}
-		switch n.Kind() {
-		case celast.IdentKind:
-			found = found || n.AsIdent() == name
-		case celast.SelectKind:
-			walk(n.AsSelect().Operand())
-		case celast.CallKind:
-			call := n.AsCall()
-			walk(call.Target())
-			for _, arg := range call.Args() {
-				walk(arg)
-			}
-		case celast.ListKind:
-			for _, element := range n.AsList().Elements() {
-				walk(element)
-			}
-		case celast.ComprehensionKind:
-			c := n.AsComprehension()
-			walk(c.IterRange())
-			walk(c.LoopCondition())
-			walk(c.LoopStep())
-			walk(c.Result())
-		}
-	}
-	walk(e)
-	return found
-}
-
 // SQL is what the query should carry: a WHERE fragment and its arguments,
 // both empty when nothing could be pushed down.
 //

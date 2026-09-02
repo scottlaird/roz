@@ -247,13 +247,6 @@ func checkActionReferences(ctx context.Context, st *store.Store, actor store.Act
 	return checkProjectExists(ctx, tx, a.ProjectID)
 }
 
-// checkVerbUsable reports an unknown or retired verb as itself, rather than
-// letting the foreign key report a constraint.
-func checkVerbUsable(ctx context.Context, tx *store.Tx, verb string) error {
-	_, err := loadUsableVerb(ctx, tx, verb)
-	return err
-}
-
 func loadUsableVerb(ctx context.Context, tx *store.Tx, verb string) (*store.ActionVerb, error) {
 	v, err := tx.LoadVerb(ctx, verb)
 	if errors.Is(err, sql.ErrNoRows) {

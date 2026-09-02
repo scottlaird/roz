@@ -442,7 +442,8 @@ func (t *linkTransformer) Transform(doc *ast.Document, reader text.Reader, _ par
 	// parent's child list, which is not a thing to do to a walk in progress.
 	var targets []*ast.Text
 	var written []*ast.Link
-	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+	// Walk's error is the visitor's, and this one never returns one.
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
@@ -629,7 +630,7 @@ func Validate(src string) error {
 
 	source := []byte(src)
 	var found []byte
-	ast.Walk(validator.Parser().Parse(text.NewReader(source)),
+	_ = ast.Walk(validator.Parser().Parse(text.NewReader(source)),
 		func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 			if !entering {
 				return ast.WalkContinue, nil

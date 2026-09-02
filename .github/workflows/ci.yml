@@ -41,6 +41,17 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # staticcheck and errcheck, through golangci-lint so they share one
+      # config and one exclusion list. In the fast job for the same reason
+      # gofmt is: a dead function or an unchecked error should say so in
+      # seconds, not after the race detector. Pinned, because the v2 config
+      # format is not the v1 one and an unpinned action would break on the
+      # major bump.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20

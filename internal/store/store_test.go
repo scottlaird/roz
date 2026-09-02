@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -248,19 +247,6 @@ func recordFutureMigration(t *testing.T, path string, version int) {
 		version, "9999_from_the_future.sql", "2027-01-01T00:00:00.000Z")
 	if err != nil {
 		t.Fatalf("recording the future migration: %v", err)
-	}
-}
-
-func setUserVersion(t *testing.T, path string, version int) {
-	t.Helper()
-	db, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open() returned error: %v", err)
-	}
-	defer db.Close()
-
-	if _, err := db.Exec("PRAGMA user_version = " + strconv.Itoa(version)); err != nil {
-		t.Fatalf("setting user_version: %v", err)
 	}
 }
 

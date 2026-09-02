@@ -71,10 +71,6 @@ func parsePage(body string) *template.Template {
 		"templates/shell.html.tmpl", "templates/"+body+".html.tmpl"))
 }
 
-// page is the index, kept under its old name for the callers that only ever
-// wanted that one.
-var page = pages[pageIndex]
-
 // stylesheet is the one static file the page needs.
 const stylesheet = "roz.css"
 

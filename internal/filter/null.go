@@ -211,18 +211,3 @@ func nullableCount(referenced []store.ColumnType) int {
 	}
 	return n
 }
-
-// hasJSON reports whether a term reads a JSON column.
-//
-// cel2sql converts `approvals.exists(a, a == "x")` into a json_each subquery
-// and then compares the alias as a scalar, which SQLite rejects with "no such
-// column: a" — SQL that is generated, accepted and wrong. Until that is fixed
-// upstream, such a term runs in Go, where it is correct.
-func hasJSON(referenced []store.ColumnType) bool {
-	for _, c := range referenced {
-		if c.JSON {
-			return true
-		}
-	}
-	return false
-}

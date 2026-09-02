@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -450,20 +448,4 @@ func calendarFilterFrom(cmd *cobra.Command) (store.WindowFilter, error) {
 	}
 	filter.Sort = sort
 	return filter, nil
-}
-
-func writeCalendarTable(out io.Writer, entries []*store.CalendarWindow) error {
-	if len(entries) == 0 {
-		fmt.Fprintln(out, "no calendar entries")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tKIND\tFROM\tTO (INCL)\tCAPACITY\tLABEL")
-	for _, entry := range entries {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			entry.ID, entry.Kind, entry.StartsOn, entry.EndsOn,
-			entry.Capacity, orDash(entry.Label))
-	}
-	return w.Flush()
 }

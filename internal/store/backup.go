@@ -92,7 +92,7 @@ func Restore(ctx context.Context, src, dst string, replace bool) (movedAside str
 	if _, err := source.db.ExecContext(ctx, "VACUUM INTO ?", staged); err != nil {
 		return "", fmt.Errorf("staging the restore at %s: %w", staged, err)
 	}
-	defer os.Remove(staged) // a no-op once the rename below has moved it
+	defer func() { _ = os.Remove(staged) }() // a no-op once the rename below has moved it
 
 	if _, err := os.Stat(dst); err == nil {
 		movedAside = fmt.Sprintf("%s.replaced-%s", dst, time.Now().UTC().Format(backupStamp))

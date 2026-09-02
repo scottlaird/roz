@@ -460,13 +460,6 @@ func prFilterFrom(cmd *cobra.Command) (store.PRFilter, error) {
 	}, nil
 }
 
-func nullBoolText(v sql.NullBool) string {
-	if !v.Valid {
-		return "-"
-	}
-	return yesNo(v.Bool)
-}
-
 func yesNo(b bool) string {
 	if b {
 		return "yes"

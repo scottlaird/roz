@@ -37,21 +37,6 @@ func issueJSON(t *testing.T, db, key string) map[string]any {
 	return object
 }
 
-// projectJSON reads one project back as an object.
-func projectJSON(t *testing.T, db, id string) map[string]any {
-	t.Helper()
-
-	out, err := runCLI(t, "project", "show", "--db", db, id, "-o", "json")
-	if err != nil {
-		t.Fatalf("project show returned error: %v", err)
-	}
-	var object map[string]any
-	if err := json.Unmarshal([]byte(out), &object); err != nil {
-		t.Fatalf("output is not JSON: %v\n%s", err, out)
-	}
-	return object
-}
-
 // jiraProject adds a project carrying a Jira key.
 func jiraProject(t *testing.T, db, title, key string) string {
 	t.Helper()

@@ -1681,13 +1681,21 @@ different database.
 
 ## Continuous integration
 
-CI runs on every pull request and on `main`: `gofmt`, `go vet`, and the tests
-under the race detector. Only under the race detector — it runs the same tests,
-and it is the run that matters, because `serve` renders the page on one
-goroutine while the watcher reads the log on another.
+CI runs on every pull request and on `main`: `gofmt`, `go vet`, `golangci-lint`,
+and the tests under the race detector. Only under the race detector — it runs
+the same tests, and it is the run that matters, because `serve` renders the
+page on one goroutine while the watcher reads the log on another.
+
+The linter is `staticcheck` and `errcheck` behind one config, `.golangci.yml`,
+which excludes the two idioms the codebase leaves unchecked on purpose —
+`defer x.Close()` and `fmt.Fprint*` — so that the unchecked error which
+matters is not on page three. It is there for dead code above all: nine
+unused functions sat in the tree for weeks, two carrying rationale for
+constraints the page no longer met that way, because nothing ran the check.
+A function nothing calls is a comment that lies.
 
 ```
-gofmt -l . && go vet ./... && go test -race ./...
+gofmt -l . && go vet ./... && golangci-lint run ./... && go test -race ./...
 ```
 
 Nothing in the suite reaches the network or the real `gh`: GitHub reads go

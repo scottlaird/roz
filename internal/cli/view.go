@@ -151,30 +151,6 @@ func refsFor(actions []*store.Action, projects []*store.Project, onPage map[stri
 	return refs
 }
 
-// remaining returns the entities not already shown, so each appears on the
-// page exactly once.
-//
-// Exactly once is the constraint that matters: an id has to be unique in a
-// document, so an action cannot be anchored both in the queue and in an index
-// of everything. Splitting the set rather than repeating it means the anchor
-// is wherever the entity is, and a link never has to know which section that
-// turned out to be.
-func remaining[T any](all []T, id func(T) string, shown ...[]string) []T {
-	seen := map[string]bool{}
-	for _, list := range shown {
-		for _, s := range list {
-			seen[s] = true
-		}
-	}
-	var out []T
-	for _, item := range all {
-		if !seen[id(item)] {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
 // The view model the status page renders.
 //
 // Structured rather than preformatted text, because the page's whole job is
@@ -404,10 +380,6 @@ type route struct {
 	// builds the listing's own default, which is what every page did before
 	// there was anywhere to say otherwise.
 	view string
-}
-
-func buildPage(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings) (*pageContent, error) {
-	return buildRoute(ctx, st, now, live, cfg, route{})
 }
 
 func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, cfg settings, at route) (*pageContent, error) {
@@ -775,14 +747,6 @@ func ids(actions []*store.Action) []string {
 	out := make([]string, len(actions))
 	for i, a := range actions {
 		out[i] = a.ID
-	}
-	return out
-}
-
-func projectIDs(projects []*store.Project) []string {
-	out := make([]string, len(projects))
-	for i, p := range projects {
-		out[i] = p.ID
 	}
 	return out
 }

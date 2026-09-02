@@ -59,18 +59,29 @@ const prFields = `
       } } }
     }`
 
-// buildQuery renders one aliased query, and the alias-to-key mapping needed
-// to make sense of the response.
-//
-// Aliases are positional (pr0, pr1) rather than derived from the key, because
-// a GraphQL alias must be a bare identifier and repository names contain
-// characters that are not.
+// buildQuery renders one aliased query for a batch of pull requests, and the
+// alias-to-key mapping needed to make sense of the response.
 func buildQuery(keys []string) (query string, aliases map[string]string, err error) {
 	if len(keys) == 0 {
 		return "", nil, fmt.Errorf("no pull requests to fetch")
 	}
+	return buildAliasedQuery(keys, "pr", "pullRequest", prFields)
+}
 
-	aliases = make(map[string]string, len(keys))
+// buildAliasedQuery renders one query that asks for `object` by number in
+// each key's repository, one aliased selection per key, and returns the
+// alias-to-key mapping needed to read the response back.
+//
+// Aliases are positional (pr0, pr1) rather than derived from the key, because
+// a GraphQL alias must be a bare identifier and repository names contain
+// characters that are not. The prefix only keeps a pull request batch and an
+// issue batch readable side by side; the mapping is what carries meaning.
+//
+// One builder for both kinds, and for whatever a per-repository sweep needs
+// next: the loop is the same, and only the object, its fields and the alias
+// prefix ever differed.
+func buildAliasedQuery(keys []string, prefix, object, fields string) (string, map[string]string, error) {
+	aliases := make(map[string]string, len(keys))
 	var b strings.Builder
 	b.WriteString("query {\n  rateLimit { cost remaining limit resetAt }\n")
 
@@ -79,11 +90,11 @@ func buildQuery(keys []string) (query string, aliases map[string]string, err err
 		if err != nil {
 			return "", nil, err
 		}
-		alias := "pr" + strconv.Itoa(i)
+		alias := prefix + strconv.Itoa(i)
 		aliases[alias] = key
 
-		fmt.Fprintf(&b, "  %s: repository(owner: %q, name: %q) { pullRequest(number: %d) {%s\n  } }\n",
-			alias, owner, name, number, prFields)
+		fmt.Fprintf(&b, "  %s: repository(owner: %q, name: %q) { %s(number: %d) {%s\n  } }\n",
+			alias, owner, name, object, number, fields)
 	}
 	b.WriteString("}\n")
 

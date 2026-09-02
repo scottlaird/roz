@@ -191,25 +191,16 @@ func (p *closePlan) readPipeline(ctx context.Context, tx *Tx) error {
 		return err
 	}
 
-	// The pull request's own chain wins when it has one; otherwise the
-	// repository's, read here rather than copied when the pull request was
-	// tracked, so a repository whose policy changes carries the pull requests
-	// that never claimed an exception to it.
-	//
 	// named is whichever said so, and is what an error should blame.
-	chain, named := r.Pipeline, repo
-	if pr.Pipeline.Valid {
-		chain, named = pr.Pipeline, p.subject
-	}
-	if !chain.Valid {
+	name, named := effectivePipeline(pr, r, repo)
+	if name == "" {
 		return nil
 	}
 
-	pipeline, err := tx.LoadPipeline(ctx, chain.String)
+	pipeline, err := tx.LoadPipeline(ctx, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%s names pipeline %q, which does not exist",
-				named, chain.String)
+			return fmt.Errorf("%s names pipeline %q, which does not exist", named, name)
 		}
 		return err
 	}
@@ -374,39 +365,19 @@ func stateForReason(reason string) string {
 // Chaining them at creation is what makes the rest mechanical: closing a step
 // frees the next through the same unblocking every other action gets, so
 // there is no separate notion of "advancing a pipeline" to keep correct.
+//
+// The cascade always creates a whole tail, so "the one before it" is the
+// previous element of its own slice; that is the only thing this knows that
+// instantiateAfter does not, so it works the blockers out and hands over.
 func (t *Tx) instantiate(ctx context.Context, steps []*Action, planned []plannedStep,
 	subject string) ([]*Action, error) {
 
-	repo, _, repoErr := ParsePRKey(subject)
-	for i, a := range steps {
-		if err := t.Insert(ctx, a); err != nil {
-			return nil, err
-		}
-		if err := t.LinkPR(ctx, a, subject, RoleSubject); err != nil {
-			return nil, err
-		}
-		if i > 0 {
-			if err := t.AddBlocker(ctx, steps[i-1], a); err != nil {
-				return nil, err
-			}
-		}
-
-		// A step that waits for a release becomes a gate rather than a wait.
-		// What it resolves to is a fact about the repository, and reading that
-		// here would mean a network call inside closing an action. A step
-		// waiting for a group needs none of that: the group is already on the
-		// action, written when it was built.
-		if spec := planned[i].spec; spec != "" && !planned[i].requiresOwner {
-			if repoErr != nil {
-				return nil, fmt.Errorf("%s waits for %s, but %q names no repository",
-					a.ID, spec, subject)
-			}
-			if err := t.AddPendingRef(ctx, PendingRef{
-				ActionID: a.ID, RepoID: repo, Kind: RefTag, Spec: spec,
-			}); err != nil {
-				return nil, err
-			}
-		}
+	blockers := make([]string, len(steps))
+	for i := 1; i < len(steps); i++ {
+		blockers[i] = steps[i-1].ID
+	}
+	if err := t.instantiateAfter(ctx, steps, planned, subject, blockers); err != nil {
+		return nil, err
 	}
 	return steps, nil
 }

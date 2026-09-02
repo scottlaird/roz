@@ -541,7 +541,8 @@ func newActionSnoozeCmd() *cobra.Command {
 		Short: "Defer an action to a real date",
 		Long: "--snooze-until must be a date or timestamp. \"Next week\" is not one,\n" +
 			"and that is the point: a snooze nobody can act on is how work goes\n" +
-			"quiet. `roz action list --expired` is what finds them again.",
+			"quiet. The date arriving wakes it on the next sync; `roz action list\n" +
+			"--expired` finds one that nothing has woken yet.",
 		Args: cobra.ExactArgs(1),
 		RunE: runActionSnooze,
 	}

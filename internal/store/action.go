@@ -283,9 +283,10 @@ type ActionFilter struct {
 // today is already past it: "hide this until the 12th" stops hiding on the
 // 12th rather than the 13th.
 //
-// One definition, shared by the Expired filter and by inPlay below. `--expired`
-// is how you ask for these specifically and the queue now contains them, so two
-// spellings of the same idea could put an item in one and not the other.
+// One definition, shared by the Expired filter, by inPlay below and by
+// WakeExpired. `--expired` is how you ask for these specifically, the queue
+// contains them, and the sweep wakes them, so two spellings of the same idea
+// could put an item in one and not the others.
 const expiredSnooze = "(a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_until < ?)"
 
 // inPlay are the conditions an action meets to be worth listing at all: open,
@@ -298,10 +299,13 @@ const expiredSnooze = "(a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_
 // only way back was to notice — which makes the mechanism for deferring work
 // also a way to drop it.
 //
-// It stays snoozed rather than being woken. Waking would rewrite an authored
-// column from a clock, which is a different kind of write from any this makes
-// elsewhere, and it would throw away the reason it was deferred. The row is
-// unchanged; the queue simply stops pretending the date has not arrived.
+// It is still snoozed here because nothing has woken it yet. WakeExpired is
+// what ends a deferral: it runs every sync cycle, moves the row back to ready
+// and clears the date and the reason. So a row this branch matches is one the
+// sweep has not reached — the seconds before the next cycle, or for ever when
+// nothing is syncing — and the queue shows it rather than losing it. The
+// branch is the fallback, not the rule. It used to be the rule, and refused
+// to wake; the reasons it gave are answered in WakeExpired's comment.
 func inPlay(now string) ([]string, []any) {
 	return []string{
 			"a.closed_at IS NULL",

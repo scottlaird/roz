@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 // BlockProject records that blocker must close before blocked can proceed.
@@ -203,40 +202,15 @@ func (t *Tx) OpenProjectBlockers(ctx context.Context, id string) ([]string, erro
 // BlockedProjects returns the open projects this one blocks — what closing it
 // would free.
 func (t *Tx) BlockedProjects(ctx context.Context, id string) ([]*Project, error) {
-	fields, err := fieldsOfStruct(&Project{})
-	if err != nil {
-		return nil, err
-	}
-	columns := make([]string, len(fields))
-	for i, f := range fields {
-		columns[i] = "p." + f.column
-	}
-
-	query := fmt.Sprintf(`
+	blocked, err := t.loadProjects(ctx, `
 		SELECT %s FROM project p
 		WHERE p.status NOT IN (?, ?, ?)
 		  AND p.id IN (SELECT blocked_id FROM project_blocks WHERE blocker_id = ?)
-		ORDER BY p.n`, strings.Join(columns, ", "))
-	rows, err := t.tx.QueryContext(ctx, query,
-		ProjectDone, ProjectRetired, ProjectSuperseded, id)
+		ORDER BY p.n`, ProjectDone, ProjectRetired, ProjectSuperseded, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading what %s blocks: %w", id, err)
 	}
-	defer rows.Close()
-
-	var blocked []*Project
-	for rows.Next() {
-		var p Project
-		dest := make([]any, len(fields))
-		for i, f := range fields {
-			dest[i] = f.pointerOf(&p)
-		}
-		if err := rows.Scan(dest...); err != nil {
-			return nil, fmt.Errorf("reading what %s blocks: %w", id, err)
-		}
-		blocked = append(blocked, &p)
-	}
-	return blocked, rows.Err()
+	return blocked, nil
 }
 
 // freeBlockedProjects re-evaluates everything waiting on a project that has

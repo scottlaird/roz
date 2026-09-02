@@ -615,7 +615,8 @@ func runActionWake(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// updateAction is the read-modify-write every action verb performs.
+// updateAction is the read-modify-write every action verb performs, plus
+// what only an action needs afterwards.
 func updateAction(cmd *cobra.Command, id string, change func(context.Context, *store.Tx, *store.Action) error) error {
 	ctx := cmd.Context()
 
@@ -629,37 +630,9 @@ func updateAction(cmd *cobra.Command, id string, change func(context.Context, *s
 	}
 	defer st.Close()
 
-	tx, err := st.Begin(ctx, actor)
+	changes, err := updateIn(ctx, cmd.OutOrStdout(), st, actor, id, (*store.Tx).LoadAction, change)
 	if err != nil {
 		return err
-	}
-	defer tx.Rollback()
-
-	before, err := tx.LoadAction(ctx, id)
-	if err != nil {
-		return notFoundOr(err, id)
-	}
-
-	after := before.Clone()
-	if err := change(ctx, tx, after); err != nil {
-		return err
-	}
-
-	changes, err := tx.Update(ctx, before, after)
-	if err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	out := cmd.OutOrStdout()
-	if len(changes) == 0 {
-		fmt.Fprintf(out, "%s unchanged\n", id)
-		return nil
-	}
-	for _, change := range changes {
-		fmt.Fprintf(out, "%s %s\n", id, change)
 	}
 
 	// Changing the verb changes which question the action closes on, and the

@@ -625,57 +625,10 @@ func runProjectSupersede(cmd *cobra.Command, _ []string) error {
 	})
 }
 
-// updateProject is the read-modify-write every project verb performs: load,
-// apply the change to a clone, and let Tx.Update work out what moved.
-//
-// Nothing is written when the change is a no-op, and the actor rule is
-// applied by Update rather than here.
+// updateProject is the read-modify-write every project verb performs.
 func updateProject(cmd *cobra.Command, id string, change func(context.Context, *store.Tx, *store.Project) error) error {
-	ctx := cmd.Context()
-
-	actor, err := actorFrom(cmd)
-	if err != nil {
-		return err
-	}
-	st, err := openStore(cmd)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	tx, err := st.Begin(ctx, actor)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	before, err := tx.LoadProject(ctx, id)
-	if err != nil {
-		return notFoundOr(err, id)
-	}
-
-	after := before.Clone()
-	if err := change(ctx, tx, after); err != nil {
-		return err
-	}
-
-	changes, err := tx.Update(ctx, before, after)
-	if err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	out := cmd.OutOrStdout()
-	if len(changes) == 0 {
-		fmt.Fprintf(out, "%s unchanged\n", id)
-		return nil
-	}
-	for _, change := range changes {
-		fmt.Fprintf(out, "%s %s\n", id, change)
-	}
-	return nil
+	_, err := updateRecord(cmd, id, (*store.Tx).LoadProject, change)
+	return err
 }
 
 // notFoundOr turns a missing row into a message naming the identifier, since

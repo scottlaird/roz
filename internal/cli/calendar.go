@@ -267,51 +267,9 @@ func runCalendarSet(cmd *cobra.Command, args []string) error {
 }
 
 func updateCalendarEntry(cmd *cobra.Command, id string, change func(context.Context, *store.CalendarWindow) error) error {
-	ctx := cmd.Context()
-
-	actor, err := actorFrom(cmd)
-	if err != nil {
-		return err
-	}
-	st, err := openStore(cmd)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	tx, err := st.Begin(ctx, actor)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	before, err := tx.LoadCalendarWindow(ctx, id)
-	if err != nil {
-		return notFoundOr(err, id)
-	}
-
-	after := before.Clone()
-	if err := change(ctx, after); err != nil {
-		return err
-	}
-
-	changes, err := tx.Update(ctx, before, after)
-	if err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	out := cmd.OutOrStdout()
-	if len(changes) == 0 {
-		fmt.Fprintf(out, "%s unchanged\n", id)
-		return nil
-	}
-	for _, change := range changes {
-		fmt.Fprintf(out, "%s %s\n", id, change)
-	}
-	return nil
+	_, err := updateRecord(cmd, id, (*store.Tx).LoadCalendarWindow,
+		func(ctx context.Context, _ *store.Tx, w *store.CalendarWindow) error { return change(ctx, w) })
+	return err
 }
 
 func newCalendarShowCmd() *cobra.Command {

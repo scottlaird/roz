@@ -155,8 +155,8 @@ func announcedAt(cmd *cobra.Command) (string, error) {
 	return validateTimestamp(flagAt, given)
 }
 
-// updatePR is the read-modify-write for a pull request, mirroring
-// updateProject but with the actor supplied by the caller rather than a flag.
+// updatePR is the read-modify-write for a pull request, with the actor
+// supplied by the caller rather than a flag.
 func updatePR(
 	ctx context.Context,
 	cmd *cobra.Command,
@@ -165,37 +165,7 @@ func updatePR(
 	id string,
 	change func(*store.PR) error,
 ) error {
-	tx, err := st.Begin(ctx, actor)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	before, err := tx.LoadPR(ctx, id)
-	if err != nil {
-		return notFoundOr(err, id)
-	}
-
-	after := before.Clone()
-	if err := change(after); err != nil {
-		return err
-	}
-
-	changes, err := tx.Update(ctx, before, after)
-	if err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	out := cmd.OutOrStdout()
-	if len(changes) == 0 {
-		fmt.Fprintf(out, "%s unchanged\n", id)
-		return nil
-	}
-	for _, change := range changes {
-		fmt.Fprintf(out, "%s %s\n", id, change)
-	}
-	return nil
+	_, err := updateIn(ctx, cmd.OutOrStdout(), st, actor, id, (*store.Tx).LoadPR,
+		func(_ context.Context, _ *store.Tx, p *store.PR) error { return change(p) })
+	return err
 }

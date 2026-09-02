@@ -1186,6 +1186,28 @@ One tool call at a time. #73 took the database off a package variable, but
 cobra still holds flag state per command, so two in flight would share it.
 Stdio gets that for free by reading a line at a time; here it is a mutex.
 
+## Times are shown where the reader is
+
+Everything is stored and rendered in UTC, because a database shared between a
+laptop and a server has no other honest choice. It is read by somebody in one
+timezone, who should not have to do the arithmetic — so the server sends the
+instant and the browser puts it in the reader's own zone:
+
+```html
+<time datetime="2026-08-23T04:40:55Z">2026-08-23T04:40:55Z</time>
+```
+
+A few lines of script rewrite that to `just now`, `6:41 PM`, `yesterday`,
+`Aug 2` or `Jul 18, 2025`, and put the full local time in the tooltip so the
+compact form never costs the exact answer. The text inside the element is the
+server's, in UTC, and is what stays when no script runs.
+
+**Only instants.** A snooze date and a release date are *days*, not moments,
+and a timezone can move one to the wrong day — that same stamp, `04:40Z`,
+renders as the 22nd in a western zone, so "snoozed until the 23rd" shown as the
+22nd would be wrong in a way nobody would think to check. Those are left
+exactly as they are, and so are the relative chips: `3d` needs no zone.
+
 ## The page links to itself
 
 Every action and project has an anchor, which is its identifier verbatim:

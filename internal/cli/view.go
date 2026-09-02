@@ -159,8 +159,10 @@ func refsFor(actions []*store.Action, projects []*store.Project, onPage map[stri
 type pageContent struct {
 	// Owner is whose queue this is, from `roz config`. Empty is normal and
 	// the heading simply reads "roz".
-	Owner       string
-	GeneratedAt string
+	Owner string
+	// GeneratedAt is when this page was built. Localised in the browser, with
+	// the UTC instant as the fallback and the tooltip.
+	GeneratedAt whenView
 	Stamp       string
 	Windows     []windowView
 	Queue       []actionView
@@ -216,6 +218,19 @@ type pageContent struct {
 	Graph *dependencyGraph
 }
 
+// whenView is an instant the page shows: the value a browser can localise, and
+// the text to draw when nothing does.
+//
+// Only instants. A snooze date and a release date are dates — a day, not a
+// moment — and turning one into local time can move it by a day, which is the
+// opposite of helpful. See localiseTimes in the shell.
+type whenView struct {
+	// At is RFC3339, in UTC, for the datetime attribute.
+	At string
+	// Text is what the server rendered, and what stays if no script runs.
+	Text string
+}
+
 type windowView struct {
 	Label    string
 	Kind     string
@@ -262,7 +277,7 @@ type noteView struct {
 	Body template.HTML
 	// Set is when it was last written. Worth showing: a note is authored and
 	// nothing revisits it, so how old it is says how much to trust it.
-	Set string
+	Set whenView
 }
 
 type prView struct {
@@ -522,11 +537,14 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 		titlesFrom(allPRs, allIssues, everyAction, everyProject))
 
 	content := &pageContent{
-		Owner:       cfg.owner,
-		Title:       titleFor(cfg.owner),
-		GeneratedAt: now.UTC().Format(time.RFC3339),
-		Live:        live,
-		Favicon:     favicon,
+		Owner: cfg.owner,
+		Title: titleFor(cfg.owner),
+		GeneratedAt: whenView{
+			At:   now.UTC().Format(time.RFC3339),
+			Text: now.UTC().Format(time.RFC3339),
+		},
+		Live:    live,
+		Favicon: favicon,
 	}
 	content.StylesheetURL = static.URL(stylesheet)
 
@@ -591,7 +609,10 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 		}
 		content.Notes[slot] = noteView{
 			Body: text.markdown.Render(note.Body),
-			Set:  shortDate(note.UpdatedAt),
+			Set: whenView{
+				At:   note.UpdatedAt,
+				Text: shortDate(note.UpdatedAt),
+			},
 		}
 	}
 

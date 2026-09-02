@@ -15,7 +15,7 @@
          is, the heading is what it always was rather than a dangling
          separator. */}}
     <h1><a href="/">roz</a>{{with .Owner}} <span class="owner">· {{.}}</span>{{end}}</h1>
-    <div class="stamp">{{.GeneratedAt}} · {{.Stamp}}</div>
+    <div class="stamp">{{template "when" .GeneratedAt}} · {{.Stamp}}</div>
   </header>
 
   {{/* Where this page sits. Absent on the index, which is the root: a
@@ -32,6 +32,49 @@
 
   <footer>The page is a view; the database is the truth. Nothing reads it back.</footer>
 </div>
+{{/* Times are stored and rendered in UTC, because a database shared between a
+     laptop and a server has no other honest choice, and read by somebody in
+     one timezone who should not have to do the arithmetic. So the server sends
+     the instant and the browser puts it in the reader's own zone.
+
+     Only <time datetime> elements, which is only ever an instant. A snooze
+     date and a release date are days rather than moments, and shifting one by
+     a timezone can move it to the wrong day -- so they are left exactly as
+     they are, and the "until 2099-01-01" chips are untouched.
+
+     The element keeps its server-rendered UTC text until this runs, so a
+     browser with no script shows what it always showed. Comments live out here
+     because html/template strips them from inside <script>. */}}
+<script>
+  (function () {
+    var now = new Date();
+    var time = {hour: "numeric", minute: "2-digit"};
+    var day = {month: "short", day: "numeric"};
+    var withYear = {month: "short", day: "numeric", year: "numeric"};
+
+    document.querySelectorAll("time[datetime]").forEach(function (el) {
+      var at = new Date(el.getAttribute("datetime"));
+      if (isNaN(at.getTime())) return;
+
+      // The full local time is the tooltip, so the compact form never costs
+      // the reader the exact answer.
+      el.title = at.toLocaleString();
+
+      var seconds = (now - at) / 1000;
+      if (seconds >= 0 && seconds < 60) {
+        el.textContent = "just now";
+      } else if (at.toDateString() === now.toDateString()) {
+        el.textContent = at.toLocaleTimeString([], time);
+      } else if (at.toDateString() === new Date(now - 864e5).toDateString()) {
+        el.textContent = "yesterday";
+      } else if (at.getFullYear() === now.getFullYear()) {
+        el.textContent = at.toLocaleDateString([], day);
+      } else {
+        el.textContent = at.toLocaleDateString([], withYear);
+      }
+    });
+  })();
+</script>
 {{if .Live}}
 {{/* The server streams a line on /events whenever the log moves. Reloading
      whole is crude and correct: the page is cheap to build and holds no state
@@ -188,7 +231,7 @@
      struct is always truthy in a template, so `{{if .}}` would draw an empty
      box for every slot nobody has written to. */}}
 {{if .Body}}<section class="note"><div class="prose">{{.Body}}</div>
-<p class="noteset">written {{.Set}}</p></section>{{end}}
+<p class="noteset">written {{template "when" .Set}}</p></section>{{end}}
 {{end}}
 
 {{/* The whole thing is one span so the key and its state cannot be split by
@@ -253,3 +296,10 @@
 </div></div>
 {{end}}
 {{end}}
+
+{{/* An instant, for the browser to put in the reader's own timezone. The text
+     inside is the server's, in UTC, and is what stays when no script runs --
+     which is also what `roz render` used to write to a file. */}}
+{{define "when" -}}
+<time datetime="{{.At}}">{{.Text}}</time>
+{{- end}}

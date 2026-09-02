@@ -510,7 +510,8 @@ func newProjectSnoozeCmd() *cobra.Command {
 		Use:   "snooze <project>",
 		Short: "Defer a project to a real date",
 		Long: "--until must be a date or timestamp. \"Next week\" is not one, and that\n" +
-			"is the point: a snooze nobody can act on is how work goes quiet.\n\n" +
+			"is the point: a snooze nobody can act on is how work goes quiet.\n" +
+			"The date arriving wakes it on the next sync.\n\n" +
 			"Status and date move together, because the schema couples them.",
 		Args: cobra.ExactArgs(1),
 		RunE: runProjectSnooze,

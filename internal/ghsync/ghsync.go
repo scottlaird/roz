@@ -50,11 +50,11 @@ type Result struct {
 	// the same way and for the same reason, and a different problem: a slow
 	// review is chased, and one nobody requested is announced.
 	Unannounced []store.Unannounced
-	// Woken are the actions whose deferral ran out this cycle and are back in
-	// play. The other end of such a wait -- the issue closing -- arrives
-	// through Settle and is reported as a close, which is what makes the two
-	// distinguishable.
-	Woken []*store.Action
+	// Woken are the actions and projects whose deferral ran out this cycle
+	// and are back in play. The other end of such a wait -- the issue closing
+	// -- arrives through Settle and is reported as a close, which is what
+	// makes the two distinguishable.
+	Woken store.Woken
 	// Settled lists the actions closed because what was observed satisfied
 	// their predicate, with whatever each closure cascaded into.
 	Settled []store.Settled

@@ -644,8 +644,15 @@ it was told.
 
 ## When a snooze runs out
 
-A snooze says "hide this until a date". On that date it stops hiding: the item
-is back in the queue, marked, with the date it came due.
+A snooze says "hide this until a date". On that date the sync cycle wakes it:
+the item goes back to `ready` — `active` for a project, `blocked` for either
+where something still blocks it — the date and the reason are cleared the way
+`action wake` clears them by hand, and a `snooze_expired` event records what
+ran out, reason included. Actions and projects follow the same rule.
+
+Between the date arriving and the next cycle — or for ever, when nothing is
+syncing — the item is still `snoozed`, and the queue shows it anyway, marked
+with the date it came due:
 
 ```console
 $ roz action list --unblocked
@@ -654,19 +661,20 @@ NA1  snoozed  decide  -        due 2026-08-05  past its date
 NA3  ready    decide  -        -               ordinary
 ```
 
-It stays `snoozed`. Waking it would rewrite an authored column from a clock —
-a different kind of write from any this makes elsewhere — and would throw away
-the reason it was deferred, which is often still worth reading even once the
-date has gone. The row is unchanged; the queue simply stops pretending the
-date has not arrived.
+That is the fallback, not the rule. It used to be the rule: waking was refused
+because a clock would be rewriting an authored column, and because the reason
+it was deferred would be thrown away. Both objections were real. What outweighed
+them is that a deferral nothing ends is how work goes quiet — a wait on a
+tracker nobody syncs can only end on the date, so the date has to end it — and
+the reason is kept by the event rather than by the row.
 
 The comparison is against an instant, not a date, so a snooze until the 12th
-comes back on the 12th rather than the 13th. `--expired` asks for these
-specifically and uses the same definition, so the two cannot disagree about
-what is in the queue.
+comes back on the 12th rather than the 13th. The wake, the queue and
+`--expired` share one definition of expired, so they cannot disagree about
+which rows those are.
 
-Expect a burst the first time on a queue that has been running a while. That
-is the backlog arriving, not a malfunction.
+Expect a burst of wakes the first time a syncer runs against a queue that has
+been running a while. That is the backlog arriving, not a malfunction.
 
 ## Staleness
 
@@ -2713,6 +2721,8 @@ So `WakeExpired` runs in the sync cycle beside the deadline sweep, clears the
 date and the reason the way `action wake` does by hand, and puts the action
 back in play — `blocked` rather than `ready` where something still blocks it,
 since waking ends the deferral rather than claiming the work became actionable.
+The same sweep wakes a snoozed project, so the two entities do not follow
+opposite rules for the same situation.
 
 **The two endings are distinguishable**, and that is the load-bearing part: the
 issue half is inert for trackers nothing syncs, so a wait on a Jira key will in

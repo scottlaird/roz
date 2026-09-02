@@ -21,6 +21,7 @@ func snoozeProject(t *testing.T, st *Store, p *Project, until string) {
 	after := p.Clone()
 	after.Status = ProjectSnoozed
 	after.SnoozeUntil = sql.NullString{String: until, Valid: true}
+	after.SnoozeReason = "check back"
 	if _, err := tx.Update(ctx, p, after); err != nil {
 		t.Fatalf("Update() returned error: %v", err)
 	}

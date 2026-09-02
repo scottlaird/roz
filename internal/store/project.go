@@ -95,6 +95,43 @@ func (s *Store) AllocateProject(ctx context.Context, p *Project) error {
 
 // LoadProject reads a project by id, returning sql.ErrNoRows if there is
 // none.
+// One definition, shared by the Expired filter and by WakeExpired, for the
+// reason expiredSnooze gives on the action side: two spellings of the same
+// idea could put a project in the listing and not the sweep.
+const expiredProjectSnooze = "(status = ? AND snooze_until IS NOT NULL AND snooze_until < ?)"
+
+// loadProjects runs a query whose single %s is the column list, aliased p.
+func (t *Tx) loadProjects(ctx context.Context, query string, args ...any) ([]*Project, error) {
+	fields, err := fieldsOfStruct(&Project{})
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]string, len(fields))
+	for i, f := range fields {
+		columns[i] = "p." + f.column
+	}
+
+	rows, err := t.tx.QueryContext(ctx, fmt.Sprintf(query, strings.Join(columns, ", ")), args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading projects: %w", err)
+	}
+	defer rows.Close()
+
+	var projects []*Project
+	for rows.Next() {
+		var p Project
+		dest := make([]any, len(fields))
+		for i, f := range fields {
+			dest[i] = f.pointerOf(&p)
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, fmt.Errorf("reading projects: %w", err)
+		}
+		projects = append(projects, &p)
+	}
+	return projects, rows.Err()
+}
+
 func (t *Tx) LoadProject(ctx context.Context, id string) (*Project, error) {
 	var p Project
 	if err := t.Load(ctx, &p, id); err != nil {
@@ -268,7 +305,7 @@ func (f ProjectFilter) clauses(now string) ([]string, []any) {
 		where = append(where, fmt.Sprintf("status NOT IN (%s)", strings.Join(placeholders, ", ")))
 	}
 	if f.Expired {
-		where = append(where, "status = ? AND snooze_until IS NOT NULL AND snooze_until < ?")
+		where = append(where, expiredProjectSnooze)
 		args = append(args, ProjectSnoozed, now)
 	}
 	if f.Orphaned {

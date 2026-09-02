@@ -108,8 +108,11 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	reportEjected(out, result.Ejected)
 	reportOverdue(out, result.Overdue)
 	reportUnannounced(out, result.Unannounced)
-	for _, a := range result.Woken {
+	for _, a := range result.Woken.Actions {
 		fmt.Fprintf(out, "%s is back: the deferral ran out\n", a.ID)
+	}
+	for _, p := range result.Woken.Projects {
+		fmt.Fprintf(out, "%s is back: the deferral ran out\n", p.ID)
 	}
 
 	if !quiet {

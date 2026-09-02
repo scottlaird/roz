@@ -392,7 +392,13 @@ func (s *Store) applyChain(ctx context.Context, actor Actor, result *ChainResult
 
 	blockers := chainBlockers(state, planned, steps)
 	project, why := inheritedFrom(ctx, tx, state)
-	if err := tx.instantiateAfter(ctx, steps, planned, prID, blockers, project, why); err != nil {
+	specs := make([]plannedStep, len(planned))
+	for i, a := range steps {
+		a.ProjectID = project
+		a.Why = why
+		specs[i] = planned[i].plannedStep
+	}
+	if err := tx.instantiateAfter(ctx, steps, specs, prID, blockers); err != nil {
 		return nil, err
 	}
 
@@ -476,20 +482,22 @@ func inheritedFrom(ctx context.Context, tx *Tx, state *ChainState) (project sql.
 	return project, why
 }
 
-// instantiateAfter writes the steps, each blocked by whatever chainBlockers
-// named for it.
+// instantiateAfter writes the steps, each about the pull request and each
+// blocked by whatever blockers[i] names, or by nothing where it is empty.
 //
-// It is instantiate with the edges supplied rather than implied. The cascade
-// always creates a whole tail, so "the one before it" is the previous element
-// of its own slice; here the chain is being joined partway along and a
-// predecessor may be an action that was already there.
-func (t *Tx) instantiateAfter(ctx context.Context, steps []*Action, planned []chainPlan,
-	subject string, blockers []string, project sql.NullString, why string) error {
+// The one body for creating pipeline steps. The cascade (instantiate) always
+// creates a whole tail and names each step's predecessor; a chain being joined
+// partway along (applyChain) may name an action that was already there. A
+// blocker is an identifier rather than a loaded record for that reason: the
+// two callers hold them differently, and the row is what AddBlocker needs.
+//
+// Steps arrive already allocated and already carrying their project and why;
+// this writes them, it does not decide what they say.
+func (t *Tx) instantiateAfter(ctx context.Context, steps []*Action, planned []plannedStep,
+	subject string, blockers []string) error {
 
 	repo, _, repoErr := ParsePRKey(subject)
 	for i, a := range steps {
-		a.ProjectID = project
-		a.Why = why
 		if err := t.Insert(ctx, a); err != nil {
 			return err
 		}
@@ -507,6 +515,11 @@ func (t *Tx) instantiateAfter(ctx context.Context, steps []*Action, planned []ch
 			}
 		}
 
+		// A step that waits for a release becomes a gate rather than a wait.
+		// What it resolves to is a fact about the repository, and reading that
+		// here would mean a network call inside closing an action. A step
+		// waiting for a group needs none of that: the group is already on the
+		// action, written when it was built.
 		if spec := planned[i].spec; spec != "" && !planned[i].requiresOwner {
 			if repoErr != nil {
 				return fmt.Errorf("%s waits for %s, but %q names no repository",

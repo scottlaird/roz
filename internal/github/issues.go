@@ -3,8 +3,6 @@ package github
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"context"
 )
@@ -83,26 +81,10 @@ func (c *Client) Issues(ctx context.Context, keys []string) (IssueResult, error)
 	return result, nil
 }
 
-// buildIssueQuery renders one aliased query and the alias-to-key mapping.
+// buildIssueQuery renders one aliased query for a batch of issues and the
+// alias-to-key mapping.
 func buildIssueQuery(keys []string) (string, map[string]string, error) {
-	aliases := make(map[string]string, len(keys))
-
-	var b strings.Builder
-	b.WriteString("query {\n  rateLimit { cost remaining limit resetAt }\n")
-	for i, key := range keys {
-		owner, name, number, err := splitKey(key)
-		if err != nil {
-			return "", nil, err
-		}
-		alias := "issue" + strconv.Itoa(i)
-		aliases[alias] = key
-
-		fmt.Fprintf(&b, "  %s: repository(owner: %q, name: %q) { issue(number: %d) {%s\n  } }\n",
-			alias, owner, name, number, issueFields)
-	}
-	b.WriteString("}\n")
-
-	return b.String(), aliases, nil
+	return buildAliasedQuery(keys, "issue", "issue", issueFields)
 }
 
 type wireIssue struct {

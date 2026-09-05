@@ -82,9 +82,7 @@ SELECT %s, pr.id
   JOIN action_pr link ON link.action_id = a.id AND link.role = ?
   JOIN pr ON pr.id = link.pr_id
   JOIN github_repo r ON r.id = pr.repo
- WHERE a.closed_at IS NULL
-   AND a.state = ?
-   AND a.hidden_behind IS NULL
+ WHERE ` + liveAction + `
    AND v.predicate_key IN (?, ?)
    AND pr.announced_at IS NULL
    AND EXISTS (SELECT 1 FROM pipeline_step s

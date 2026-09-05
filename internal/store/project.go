@@ -100,6 +100,12 @@ func (s *Store) AllocateProject(ctx context.Context, p *Project) error {
 // idea could put a project in the listing and not the sweep.
 const expiredProjectSnooze = "(status = ? AND snooze_until IS NOT NULL AND snooze_until < ?)"
 
+// SnoozeExpired is expiredProjectSnooze for a row in hand. See
+// Action.SnoozeExpired for why it is a method and how it compares.
+func (p *Project) SnoozeExpired(now string) bool {
+	return snoozeExpired(p.Status, ProjectSnoozed, p.SnoozeUntil, now)
+}
+
 // loadProjects runs a query whose single %s is the column list, aliased p.
 func (t *Tx) loadProjects(ctx context.Context, query string, args ...any) ([]*Project, error) {
 	fields, err := fieldsOfStruct(&Project{})

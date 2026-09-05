@@ -75,12 +75,17 @@ func TestServeStopsOnInterrupt(t *testing.T) {
 	db := initDB(t)
 	withFetcher(t, stubFetcher{result: github.Result{}})
 
+	log := &syncedBuffer{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runServeCLI(ctx, t, db, "--addr", "127.0.0.1:0", "--no-sync", "--no-watch") }()
+	go func() {
+		done <- runCLIContext(ctx, log, "serve", "--db", db, "--addr", "127.0.0.1:0", "--no-sync", "--no-watch")
+	}()
 
-	// Give it a moment to start, then stop it.
-	time.Sleep(100 * time.Millisecond)
+	// Stop it once it is actually serving. Stopping it earlier would test
+	// cancellation during startup, which is a different thing, and how early
+	// depended on the scheduler.
+	waitForAddress(t, log)
 	cancel()
 
 	select {
@@ -164,11 +169,6 @@ func fetch(t *testing.T, url string) string {
 		t.Fatalf("GET %s returned %d: %s", url, resp.StatusCode, body)
 	}
 	return string(body)
-}
-
-func runServeCLI(ctx context.Context, t *testing.T, db string, extra ...string) error {
-	t.Helper()
-	return runCLIContext(ctx, io.Discard, append([]string{"serve", "--db", db}, extra...)...)
 }
 
 // runCLIContext is runCLI with a context, so a long-running command can be

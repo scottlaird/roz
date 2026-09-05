@@ -253,8 +253,9 @@ func TestWatchExcludesWhileFollowing(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
+	following := startedFollowing(t)
 	go func() { done <- root.ExecuteContext(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	following()
 
 	if _, err := runCLI(t, "project", "add", "--db", db, "--title", "mine",
 		"--actor", "agent:claude"); err != nil {
@@ -381,10 +382,9 @@ func TestWatchFollowsNewEvents(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
+	following := startedFollowing(t)
 	go func() { done <- root.ExecuteContext(ctx) }()
-
-	// Let the watcher take its starting cursor before anything new lands.
-	time.Sleep(100 * time.Millisecond)
+	following()
 	if got := out.String(); got != "" {
 		t.Fatalf("watch printed before any new event, want nothing:\n%s", got)
 	}
@@ -405,6 +405,27 @@ func TestWatchFollowsNewEvents(t *testing.T) {
 	// Exactly the new event, not a replay of the two seeded ones.
 	if lines := nonEmptyLines(out.String()); len(lines) != 1 {
 		t.Errorf("watch printed %d lines, want only the new event:\n%s", len(lines), out.String())
+	}
+}
+
+// startedFollowing arranges for the watch the caller is about to start to
+// signal when its tail has taken its starting cursor, and returns the wait.
+// Before that moment an event written by the test could be swallowed by
+// the cursor; after it, it cannot -- so this is the condition the tests
+// actually depend on, which a fixed sleep was only guessing at.
+func startedFollowing(t *testing.T) func() {
+	t.Helper()
+	started := make(chan struct{})
+	var once sync.Once
+	watchFollowing = func() { once.Do(func() { close(started) }) }
+	t.Cleanup(func() { watchFollowing = func() {} })
+	return func() {
+		t.Helper()
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			t.Fatal("watch never started following")
+		}
 	}
 }
 
@@ -603,8 +624,9 @@ func TestWatchFilterAdvancesTheCursorOverWhatItHides(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
+	following := startedFollowing(t)
 	go func() { done <- root.ExecuteContext(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	following()
 
 	// Hidden by the filter, and read by the tail.
 	project := addProject(t, db, "not a note")
@@ -616,7 +638,10 @@ func TestWatchFilterAdvancesTheCursorOverWhatItHides(t *testing.T) {
 		t.Fatalf("watch did not report the matching event: %v\n%s", err, out.String())
 	}
 	// Long enough for several more polls, which would replay the hidden event
-	// if the cursor had stopped at the last printed line.
+	// if the cursor had stopped at the last printed line. A sleep is right
+	// here and nowhere else in this file: the assertion is that nothing
+	// happens, and there is no condition to wait for -- a slow runner can only
+	// make this pass when it should not, never fail when it should not.
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	if err := <-done; err != nil {

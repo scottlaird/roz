@@ -361,9 +361,7 @@ func (s *Store) ResolvePendingRef(ctx context.Context, p PendingRef) (*Resolved,
 	// Worth a line in the log either way: what an action waits for was decided
 	// by roz rather than written by anybody, and this is the only record of
 	// what it counted from.
-	if err := tx.emit(ctx, action, event{
-		kind: eventChanged, field: "waits_for", oldValue: p.Spec, newValue: wait.Spec(),
-	}); err != nil {
+	if err := tx.Changed(ctx, action, "waits_for", p.Spec, wait.Spec()); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

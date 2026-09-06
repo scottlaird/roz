@@ -3,25 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
-)
-
-// Event kinds for the edges. They are written by hand rather than diffed,
-// which is the exception to the rule and the reason for it: an edge lives in
-// its own table, so there is no column on the action for diffing to catch.
-//
-// There is no unblocked event to match. Unblocking is a change to
-// action.state, which the diff already logs; a second event saying the same
-// thing would only be a second thing to keep true.
-const (
-	eventBlocked = "blocked"
-	// eventUnblocked is the edge being removed, not the state changing. A
-	// blocker closing shows up as the ordinary state diff; this is somebody
-	// deciding the dependency was wrong rather than satisfied.
-	eventUnblocked = "unblocked"
-	eventLinked    = "linked"
-	eventUnlinked  = "unlinked"
 )
 
 // How a pull request relates to an action.
@@ -140,7 +124,7 @@ func (t *Tx) blocks(ctx context.Context, from, to string) (bool, error) {
 
 	var found int
 	err := t.tx.QueryRowContext(ctx, query, from, to).Scan(&found)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -252,7 +236,7 @@ func (t *Tx) SubjectPR(ctx context.Context, id string) (string, bool, error) {
 	var pr string
 	err := t.tx.QueryRowContext(ctx,
 		"SELECT pr_id FROM action_pr WHERE action_id = ? AND role = ?", id, RoleSubject).Scan(&pr)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {

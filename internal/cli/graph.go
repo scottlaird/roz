@@ -111,8 +111,8 @@ type graphEdge struct {
 // out are reported instead, because a diagram that is small for a good reason
 // and one that is broken look identical.
 func buildGraph(ctx context.Context, st *store.Store,
-	projects []*store.Project, actions []*store.Action, verbs []*store.ActionVerb,
-	repoShort map[string]string, late map[string]int) (*dependencyGraph, error) {
+	projects []*store.Project, actions []*store.Action, queue []*store.Action,
+	verbs []*store.ActionVerb, repoShort map[string]string, late map[string]int) (*dependencyGraph, error) {
 
 	projectBlocks, err := st.ProjectBlockEdges(ctx)
 	if err != nil {
@@ -138,17 +138,14 @@ func buildGraph(ctx context.Context, st *store.Store,
 	if err != nil {
 		return nil, err
 	}
-	// What could be picked up right now. Asked of the store with the filter the
-	// queue itself uses rather than worked out from state here: "ready" alone
-	// is not the answer -- an action folded behind another, or one whose
-	// project is blocked, is ready and still not something to do -- and two
-	// definitions of the queue would eventually disagree with each other.
-	unblocked, err := st.ListActions(ctx, store.ActionFilter{Unblocked: true})
-	if err != nil {
-		return nil, err
-	}
-	actionable := make(map[string]bool, len(unblocked))
-	for _, a := range unblocked {
+	// What could be picked up right now is the queue, handed in rather than
+	// asked for again: "ready" alone is not the answer -- an action folded
+	// behind another, or one whose project is blocked, is ready and still not
+	// something to do -- and the page has already run the one query that
+	// knows. A second query with the same filter would be the same rows today
+	// and a second definition of the queue tomorrow.
+	actionable := make(map[string]bool, len(queue))
+	for _, a := range queue {
 		actionable[a.ID] = true
 	}
 
@@ -392,14 +389,19 @@ func (g *graphBuilder) build(projectBlocks, actionBlocks, hidden, stacked, subje
 	graph.OmittedActions = countOpen(g.actions, func(a *store.Action) bool {
 		return a.IsOpen() && !g.seen[a.ID]
 	})
+	// One id map for the whole graph, built here and handed to both the
+	// diagrams and the navigation. The client binds a click by the drawn
+	// node's id, so the two must agree to the character; building it once is
+	// what makes that true rather than currently true.
+	ids := mermaidIDs(graph.Nodes)
 	// Diagrams before coverage, which says how many of them there are and why.
-	graph.Diagrams = mermaid(graph)
+	graph.Diagrams = mermaid(graph, ids)
 	graph.Coverage = coverage(graph)
 	graph.Legend = legendFor(graph)
 	// Marshalling cannot fail on a map of strings, and a diagram that drew is
 	// worth more than one that refused over its navigation, so an error here
 	// costs the links and nothing else.
-	if encoded, err := json.Marshal(mermaidLinks(graph)); err == nil {
+	if encoded, err := json.Marshal(mermaidLinks(graph, ids)); err == nil {
 		graph.Links = template.JS(encoded)
 	}
 	return graph

@@ -161,7 +161,7 @@ func TestStalenessOrdersLeastRecentlyCheckedFirst(t *testing.T) {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
 	want := []string{never.ID, old.ID, recent.ID}
-	if got := projectIDs(found); !equalStrings(got, want) {
+	if got := IDs(found); !equalStrings(got, want) {
 		t.Errorf("staleness order = %v, want %v", got, want)
 	}
 }
@@ -181,7 +181,7 @@ func TestStalenessOrdersActionsToo(t *testing.T) {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
 	want := []string{never.ID, old.ID, recent.ID}
-	if got := ids(found); !equalStrings(got, want) {
+	if got := IDs(found); !equalStrings(got, want) {
 		t.Errorf("staleness order = %v, want %v", got, want)
 	}
 }
@@ -200,7 +200,7 @@ func TestStalenessStillFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(found), []string{ready.ID}) {
-		t.Errorf("--unblocked --sort staleness returned %v, want [%s]", ids(found), ready.ID)
+	if !equalStrings(IDs(found), []string{ready.ID}) {
+		t.Errorf("--unblocked --sort staleness returned %v, want [%s]", IDs(found), ready.ID)
 	}
 }

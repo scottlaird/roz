@@ -10,7 +10,7 @@ import (
 // below ask what reached the page rather than which box it landed in, and a
 // node is in exactly one diagram either way.
 func mermaidSource(g *dependencyGraph) string {
-	return strings.Join(mermaid(g), "\n")
+	return strings.Join(mermaid(g, mermaidIDs(g.Nodes)), "\n")
 }
 
 // TestALabelSurvivesMermaid covers what a title has to go through, and every
@@ -165,7 +165,7 @@ func TestNavigationIsNotInTheDiagramSource(t *testing.T) {
 		t.Errorf("the diagram source carries a click statement:\n%s", src)
 	}
 
-	links := mermaidLinks(g)
+	links := mermaidLinks(g, mermaidIDs(g.Nodes))
 	if got := links["SL1"]; got != "/project/SL1" {
 		t.Errorf("links[SL1] = %q, want the project page", got)
 	}
@@ -233,7 +233,7 @@ func TestUnrelatedPilesDrawAsSeparateDiagrams(t *testing.T) {
 		graphNode{ID: "S1", Kind: nodeAction, Label: "stub", Class: "decide"})
 	g.Edges = append(g.Edges, graphEdge{From: "S1", To: "S0", Kind: edgeAdvances})
 
-	out := mermaid(g)
+	out := mermaid(g, mermaidIDs(g.Nodes))
 	if len(out) != 3 {
 		t.Fatalf("drew %d diagrams, want one per pile plus one for the stubs:\n%s",
 			len(out), strings.Join(out, "\n---\n"))

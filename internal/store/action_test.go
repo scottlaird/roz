@@ -328,8 +328,8 @@ func TestUnblockedIsTheQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(got), []string{ready.ID}) {
-		t.Errorf("ListActions(unblocked) = %v, want [%s]", ids(got), ready.ID)
+	if !equalStrings(IDs(got), []string{ready.ID}) {
+		t.Errorf("ListActions(unblocked) = %v, want [%s]", IDs(got), ready.ID)
 	}
 }
 
@@ -347,8 +347,8 @@ func TestUnblockedLeavesOutWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(got), []string{ready.ID}) {
-		t.Errorf("ListActions(unblocked) = %v, want [%s]", ids(got), ready.ID)
+	if !equalStrings(IDs(got), []string{ready.ID}) {
+		t.Errorf("ListActions(unblocked) = %v, want [%s]", IDs(got), ready.ID)
 	}
 
 	// It is still open, and --open is where you go to see it.
@@ -356,9 +356,9 @@ func TestUnblockedLeavesOutWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(got), []string{ready.ID, waiting.ID}) {
+	if !equalStrings(IDs(got), []string{ready.ID, waiting.ID}) {
 		t.Errorf("ListActions(open) = %v, want both %s and %s",
-			ids(got), ready.ID, waiting.ID)
+			IDs(got), ready.ID, waiting.ID)
 	}
 }
 
@@ -378,8 +378,8 @@ func TestUnblockedFollowsTheCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(got), []string{dependent.ID}) {
-		t.Errorf("ListActions(unblocked) = %v, want [%s]", ids(got), dependent.ID)
+	if !equalStrings(IDs(got), []string{dependent.ID}) {
+		t.Errorf("ListActions(unblocked) = %v, want [%s]", IDs(got), dependent.ID)
 	}
 }
 
@@ -411,8 +411,8 @@ func TestPriorityOrderFollowsTheProject(t *testing.T) {
 	}
 	// The one advancing nothing has no priority, so it sorts last.
 	want := []string{quick.ID, slow.ID, loose.ID}
-	if !equalStrings(ids(got), want) {
-		t.Errorf("ListActions(priority) = %v, want %v", ids(got), want)
+	if !equalStrings(IDs(got), want) {
+		t.Errorf("ListActions(priority) = %v, want %v", IDs(got), want)
 	}
 
 	// The default is still creation order, which nothing else should have
@@ -421,8 +421,8 @@ func TestPriorityOrderFollowsTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(got), []string{slow.ID, quick.ID, loose.ID}) {
-		t.Errorf("the default order changed: %v", ids(got))
+	if !equalStrings(IDs(got), []string{slow.ID, quick.ID, loose.ID}) {
+		t.Errorf("the default order changed: %v", IDs(got))
 	}
 }
 
@@ -469,8 +469,8 @@ func TestRankPinOverridesPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(got), []string{pinned.ID, high.ID}) {
-		t.Errorf("ListActions(priority) = %v, want the pin first", ids(got))
+	if !equalStrings(IDs(got), []string{pinned.ID, high.ID}) {
+		t.Errorf("ListActions(priority) = %v, want the pin first", IDs(got))
 	}
 }
 
@@ -488,8 +488,8 @@ func TestPriorityOrderStillFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(got), []string{ready.ID}) {
-		t.Errorf("ListActions(unblocked, priority) = %v, want [%s]", ids(got), ready.ID)
+	if !equalStrings(IDs(got), []string{ready.ID}) {
+		t.Errorf("ListActions(unblocked, priority) = %v, want [%s]", IDs(got), ready.ID)
 	}
 }
 
@@ -536,22 +536,22 @@ func TestWaitingIsWhatTheQueueLeavesOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(queue), []string{work.ID}) {
-		t.Errorf("--unblocked = %v, want [%s]", ids(queue), work.ID)
+	if !equalStrings(IDs(queue), []string{work.ID}) {
+		t.Errorf("--unblocked = %v, want [%s]", IDs(queue), work.ID)
 	}
 
 	waiting, err := st.ListActions(ctx, ActionFilter{Waiting: true})
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(waiting), []string{waits.ID}) {
-		t.Errorf("--waiting = %v, want [%s]", ids(waiting), waits.ID)
+	if !equalStrings(IDs(waiting), []string{waits.ID}) {
+		t.Errorf("--waiting = %v, want [%s]", IDs(waiting), waits.ID)
 	}
 
 	// Blocked and hidden are in neither: their blocker is already in the
 	// queue, and listing them is the noise the fold rule exists to stop.
 	for _, unwanted := range []string{blocked.ID, hidden.ID} {
-		if contains(ids(queue), unwanted) || contains(ids(waiting), unwanted) {
+		if contains(IDs(queue), unwanted) || contains(IDs(waiting), unwanted) {
 			t.Errorf("%s appears in the queue or the waiting list", unwanted)
 		}
 	}
@@ -581,8 +581,8 @@ func TestStaleFindsAClaimGitHubContradicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
-	if !equalStrings(ids(stale), []string{lying.ID}) {
-		t.Errorf("--stale = %v, want only [%s]", ids(stale), lying.ID)
+	if !equalStrings(IDs(stale), []string{lying.ID}) {
+		t.Errorf("--stale = %v, want only [%s]", IDs(stale), lying.ID)
 	}
 	_, _ = honest, abandoned
 }
@@ -624,7 +624,7 @@ func TestStaleSaysNothingAboutAnUnsyncedPullRequest(t *testing.T) {
 		t.Fatalf("ListActions() returned error: %v", err)
 	}
 	if len(stale) != 0 {
-		t.Errorf("--stale = %v on no evidence, want nothing", ids(stale))
+		t.Errorf("--stale = %v on no evidence, want nothing", IDs(stale))
 	}
 }
 

@@ -75,14 +75,6 @@ func missingVerbs(state *ChainState) []string {
 	return verbs
 }
 
-func createdIDs(result *ChainResult) []string {
-	ids := make([]string, len(result.Created))
-	for i, a := range result.Created {
-		ids[i] = a.ID
-	}
-	return ids
-}
-
 // TestAHandMadeHeadLeavesNothingBehindIt is the bug in #96, stated. Closing it
 // is not a failure of anything — the predicate fired, the action closed for the
 // right reason — and the pull request is left with no open actions at all,
@@ -108,7 +100,7 @@ func TestAHandMadeHeadLeavesNothingBehindIt(t *testing.T) {
 		t.Fatalf("LinkedActions() returned error: %v", err)
 	}
 	if len(open) != 0 {
-		t.Fatalf("open actions = %v, want none: that is the failure", ids(open))
+		t.Fatalf("open actions = %v, want none: that is the failure", IDs(open))
 	}
 
 	// And that state is visible rather than having to be deduced from an
@@ -179,7 +171,7 @@ func TestInstantiateCreatesTheTail(t *testing.T) {
 
 	result := instantiate(t, st, pr.ID)
 	if len(result.Created) != 3 {
-		t.Fatalf("created %v, want the three remaining steps", createdIDs(result))
+		t.Fatalf("created %v, want the three remaining steps", IDs(result.Created))
 	}
 	for i, want := range []string{"send_for_review", "wait_review", "merge"} {
 		if result.Created[i].Verb != want {
@@ -213,7 +205,7 @@ func TestANewStepWaitsOnTheStepBeforeIt(t *testing.T) {
 
 	result := instantiate(t, st, pr.ID)
 	if len(result.Created) != 3 {
-		t.Fatalf("created %v, want undraft, send_for_review and merge", createdIDs(result))
+		t.Fatalf("created %v, want undraft, send_for_review and merge", IDs(result.Created))
 	}
 	merge := len(result.Created) - 1
 	if result.Created[merge].Verb != "merge" {
@@ -269,7 +261,7 @@ func TestInstantiateIsIdempotent(t *testing.T) {
 	second := instantiate(t, st, pr.ID)
 
 	if len(second.Created) != 0 {
-		t.Errorf("the second run created %v, want nothing", createdIDs(second))
+		t.Errorf("the second run created %v, want nothing", IDs(second.Created))
 	}
 	if got := chainOf(t, st, pr.ID); len(got.Missing()) != 0 {
 		t.Errorf("still missing %v after instantiating", missingVerbs(got))
@@ -336,7 +328,7 @@ func TestAnUnsyncedRequestGetsTheWholeChain(t *testing.T) {
 
 	result := instantiate(t, st, pr.ID)
 	if len(result.Created) != 4 {
-		t.Errorf("created %v, want all four steps of %s", createdIDs(result), PipelineReview)
+		t.Errorf("created %v, want all four steps of %s", IDs(result.Created), PipelineReview)
 	}
 }
 

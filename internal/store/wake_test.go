@@ -211,7 +211,7 @@ func TestAProjectSnoozeEndsTheSameWay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WakeExpired() returned error: %v", err)
 	}
-	if got, want := projectIDs(woken.Projects), []string{plain.ID, held.ID}; !equalStrings(got, want) {
+	if got, want := IDs(woken.Projects), []string{plain.ID, held.ID}; !equalStrings(got, want) {
 		t.Fatalf("woke %v, want %v", got, want)
 	}
 

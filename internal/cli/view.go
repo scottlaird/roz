@@ -516,7 +516,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 	onPage := map[string]bool{}
 	switch at.kind {
 	case pageIndex:
-		for _, a := range append(ids(queue), ids(waiting)...) {
+		for _, a := range append(store.IDs(queue), store.IDs(waiting)...) {
 			onPage[a] = true
 		}
 		for _, node := range tree {
@@ -629,7 +629,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 		for short, repo := range shortNames {
 			repoShort[repo] = short
 		}
-		if content.Graph, err = buildGraph(ctx, st, everyProject, everyAction, verbs,
+		if content.Graph, err = buildGraph(ctx, st, everyProject, everyAction, queue, verbs,
 			repoShort, late); err != nil {
 			return nil, err
 		}
@@ -762,14 +762,6 @@ func projectRow(p *store.Project, node store.TreeNode, openPerProject map[string
 		Issues:   issueViews(issuesByProject[p.ID], text),
 		Expired:  p.SnoozeExpired(stamp),
 	}
-}
-
-func ids(actions []*store.Action) []string {
-	out := make([]string, len(actions))
-	for i, a := range actions {
-		out[i] = a.ID
-	}
-	return out
 }
 
 func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.ActionPR,

@@ -634,7 +634,7 @@ func TestOrphanedIsLiveWorkOnly(t *testing.T) {
 		t.Errorf("%s has an open action and should not be orphaned", worked.ID)
 	}
 	if len(found) != 2 {
-		t.Errorf("listed %d projects, want 2: %v", len(found), projectIDs(found))
+		t.Errorf("listed %d projects, want 2: %v", len(found), IDs(found))
 	}
 }
 
@@ -652,7 +652,7 @@ func TestOrphanedIgnoresASnooze(t *testing.T) {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
 	if len(found) != 0 {
-		t.Errorf("listed %v, want nothing: the only project is snoozed", projectIDs(found))
+		t.Errorf("listed %v, want nothing: the only project is snoozed", IDs(found))
 	}
 }
 
@@ -670,7 +670,7 @@ func TestOrphanedComposesWithStatus(t *testing.T) {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
 	if len(found) != 1 || found[0].ID != active.ID {
-		t.Errorf("listed %v, want only %s", projectIDs(found), active.ID)
+		t.Errorf("listed %v, want only %s", IDs(found), active.ID)
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 func observeRefs(t *testing.T, db, repo string, names ...string) {
 	t.Helper()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
 	}
@@ -44,7 +44,7 @@ func observeRefs(t *testing.T, db, repo string, names ...string) {
 func pendingSpec(t *testing.T, db, actionID string) string {
 	t.Helper()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
 	}
@@ -67,7 +67,7 @@ func pendingSpec(t *testing.T, db, actionID string) string {
 func waitMatcher(t *testing.T, db, actionID string) string {
 	t.Helper()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
 	}

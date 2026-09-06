@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -628,15 +627,6 @@ func runProjectSupersede(cmd *cobra.Command, _ []string) error {
 // updateProject is the read-modify-write every project verb performs.
 func updateProject(cmd *cobra.Command, id string, change func(context.Context, *store.Tx, *store.Project) error) error {
 	_, err := updateRecord(cmd, id, (*store.Tx).LoadProject, change)
-	return err
-}
-
-// notFoundOr turns a missing row into a message naming the identifier, since
-// sql.ErrNoRows on its own says nothing about what was being looked for.
-func notFoundOr(err error, id string) error {
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("no such item: %s", id)
-	}
 	return err
 }
 

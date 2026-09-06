@@ -206,7 +206,7 @@ func routeHTML(t *testing.T, db string, at route) string {
 func renderRouteFor(t *testing.T, db string, at route) (string, error) {
 	t.Helper()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("opening %s: %v", db, err)
 	}

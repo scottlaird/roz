@@ -140,7 +140,7 @@ func TestVocabularyMatchesTheSchemasRule(t *testing.T) {
 // for. A verb whose function this build lacks stops the tool at startup.
 func TestOpenStoreRefusesAnUnknownPredicate(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestOpenStoreRefusesAnUnknownPredicate(t *testing.T) {
 	}
 	db.Close()
 
-	_, err = OpenStore(path)
+	_, err = OpenStore(context.Background(), path)
 	if err == nil {
 		t.Fatal("OpenStore() accepted a verb with no registered predicate, want an error")
 	}
@@ -177,7 +177,7 @@ func TestOpenStoreRefusesAnUnknownPredicate(t *testing.T) {
 // should not stop the tool. Rows are never deleted, only deactivated.
 func TestRetiredVerbsDoNotBlockStartup(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -192,7 +192,7 @@ func TestRetiredVerbsDoNotBlockStartup(t *testing.T) {
 	}
 	db.Close()
 
-	st, err := OpenStore(path)
+	st, err := OpenStore(context.Background(), path)
 	if err != nil {
 		t.Fatalf("OpenStore() refused a retired verb: %v", err)
 	}

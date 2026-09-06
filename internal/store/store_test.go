@@ -21,7 +21,7 @@ func newDBPath(t *testing.T) string {
 func TestInitCreatesDatabase(t *testing.T) {
 	path := newDBPath(t)
 
-	result, err := Init(path, testPrefixes())
+	result, err := Init(context.Background(), path, testPrefixes())
 	if err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
@@ -60,12 +60,12 @@ func TestInitCreatesDatabase(t *testing.T) {
 func TestInitPreservesExistingData(t *testing.T) {
 	path := newDBPath(t)
 
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("first Init() returned error: %v", err)
 	}
 	setNextN(t, path, EntityAction, 42)
 
-	result, err := Init(path, testPrefixes())
+	result, err := Init(context.Background(), path, testPrefixes())
 	if err != nil {
 		t.Fatalf("second Init() returned error: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestInitPreservesExistingData(t *testing.T) {
 func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 	path := newDBPath(t)
 
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	latest, err := LatestSchemaVersion()
@@ -94,7 +94,7 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 	}
 	recordFutureMigration(t, path, latest+1)
 
-	if _, err := Init(path, testPrefixes()); err == nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err == nil {
 		t.Error("Init() on a newer schema version returned nil, want an error")
 	}
 }
@@ -102,7 +102,7 @@ func TestInitRejectsUnknownSchemaVersion(t *testing.T) {
 func TestInitCreatesParentDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a", "b", "c", "roz.db")
 
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Dir(path)); err != nil {
@@ -114,7 +114,7 @@ func TestInitCreatesParentDirectory(t *testing.T) {
 // than in schema.sql: they must hold on a connection Init did not open.
 func TestConnectionPragmas(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -148,7 +148,7 @@ func TestConnectionPragmas(t *testing.T) {
 // TestForeignKeysEnforced checks the pragma has teeth, not just the value.
 func TestForeignKeysEnforced(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -176,7 +176,7 @@ func TestOpenRejectsNonDatabase(t *testing.T) {
 		t.Fatalf("writing fixture: %v", err)
 	}
 
-	if _, err := Init(path, testPrefixes()); err == nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err == nil {
 		t.Error("Init() on a non-database file returned nil, want an error")
 	}
 }
@@ -287,7 +287,7 @@ func TestInitReportsAMigration(t *testing.T) {
 	}
 	db.Close()
 
-	result, err := Init(path, testPrefixes())
+	result, err := Init(context.Background(), path, testPrefixes())
 	if err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}

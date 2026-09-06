@@ -588,7 +588,7 @@ func TestSortBeatsAListingsOwnDefault(t *testing.T) {
 func mergePRAt(t *testing.T, db, id, at string) {
 	t.Helper()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
 	}

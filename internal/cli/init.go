@@ -52,7 +52,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	result, err := store.Init(dbPath, requested)
+	result, err := store.Init(cmd.Context(), dbPath, requested)
 	if err != nil {
 		return err
 	}

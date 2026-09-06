@@ -68,7 +68,7 @@ func BackupPath(dbPath string, at time.Time) string {
 // file was replaced underneath it, so a `roz serve` left running alongside
 // this would carry on reading the database that is no longer there.
 func Restore(ctx context.Context, src, dst string, replace bool) (movedAside string, err error) {
-	source, err := OpenStore(src)
+	source, err := OpenStore(ctx, src)
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %w", src, err)
 	}

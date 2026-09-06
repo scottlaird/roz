@@ -16,7 +16,7 @@ import (
 // a test can hold one the way a long-running command does.
 func openTestStore(t *testing.T, db string) *store.Store {
 	t.Helper()
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("OpenStore() returned error: %v", err)
 	}

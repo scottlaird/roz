@@ -30,9 +30,7 @@ const dirPerm = 0o700
 //
 // Seeding is separate from migrating, so a run that migrates but fails to
 // seed leaves a valid schema and seeds on the next attempt.
-func Init(path string, requested map[Entity]string) (InitResult, error) {
-	ctx := context.Background()
-
+func Init(ctx context.Context, path string, requested map[Entity]string) (InitResult, error) {
 	if err := validatePrefixes(requested); err != nil {
 		return InitResult{}, err
 	}
@@ -123,7 +121,7 @@ var ErrNotInitialised = errors.New("database is not initialised")
 // silently creating an empty database and failing later.
 //
 // The caller must Close the result.
-func OpenStore(path string) (*Store, error) {
+func OpenStore(ctx context.Context, path string) (*Store, error) {
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%s: %w", path, ErrNotInitialised)
@@ -136,14 +134,14 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 
-	if err := checkSchemaUpToDate(context.Background(), db, path); err != nil {
+	if err := checkSchemaUpToDate(ctx, db, path); err != nil {
 		db.Close()
 		return nil, err
 	}
 
 	// A verb naming a predicate this build lacks is refused here rather than
 	// discovered later, when an action would quietly stop closing.
-	if err := checkPredicates(context.Background(), db); err != nil {
+	if err := checkPredicates(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}

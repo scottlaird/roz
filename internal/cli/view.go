@@ -1114,7 +1114,7 @@ func listedRows[T any](
 	var where string
 	var args []any
 	if f != nil {
-		where, args = f.SQL()
+		where, args = f.Take()
 	}
 	rows, err := query(where, args, ranking, order)
 	if err != nil {
@@ -1162,7 +1162,7 @@ func savedFilter[T any](ctx context.Context, st *store.Store, name string, set c
 	if err != nil || f == nil {
 		return savedListing{}, false
 	}
-	where, args := f.SQL()
+	where, args := f.Take()
 	if where == "" || f.RunsInGo() {
 		return savedListing{}, false
 	}

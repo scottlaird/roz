@@ -353,7 +353,7 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	var pushed store.SQLWhere
-	pushed.Where, pushed.WhereArgs = cel.SQL()
+	pushed.Where, pushed.WhereArgs = cel.Take()
 	cel.WithLoader(cmd.Context(), storeLoader{st: st})
 
 	repos, err := st.ListGitHubRepos(ctx, sort, pushed)

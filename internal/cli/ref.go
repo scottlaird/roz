@@ -352,7 +352,7 @@ func runRefList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	var pushed store.SQLWhere
-	pushed.Where, pushed.WhereArgs = cel.SQL()
+	pushed.Where, pushed.WhereArgs = cel.Take()
 	cel.WithLoader(cmd.Context(), storeLoader{st: st})
 
 	refs, err := st.ListRefs(cmd.Context(), repo, sort, pushed)

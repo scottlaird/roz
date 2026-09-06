@@ -202,7 +202,7 @@ func watchOptionsFrom(cmd *cobra.Command) (watchOptions, error) {
 	// Taken before the plan is explained, because asking for the SQL is what
 	// records that the query took it: explaining first would report every
 	// filter as having run in Go.
-	query.Where, query.WhereArgs = expr.SQL()
+	query.Where, query.WhereArgs = expr.Take()
 	if err := explainFilter(cmd, expr, nil); err != nil {
 		return watchOptions{}, err
 	}

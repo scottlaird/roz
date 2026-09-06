@@ -54,7 +54,7 @@ func TestTheFiveShapes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile(%q) returned error: %v", tc.expr, err)
 			}
-			where, _ := f.SQL()
+			where, _ := f.Take()
 			if want := "(" + tc.want + ")"; where != want {
 				t.Errorf("SQL =\n  %s\nwant\n  %s", where, want)
 			}
@@ -75,7 +75,7 @@ func TestABareNameInsideAJoinIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	if where, _ := f.SQL(); where != "" {
+	if where, _ := f.Take(); where != "" {
 		t.Errorf("a bare outer reference was pushed down as %q", where)
 	}
 
@@ -84,7 +84,7 @@ func TestABareNameInsideAJoinIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	if where, _ := qualified.SQL(); where == "" {
+	if where, _ := qualified.Take(); where == "" {
 		t.Error("the qualified form did not push down")
 	}
 }
@@ -101,7 +101,7 @@ func TestTheAllowListAppliesInsideAJoinToo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	if where, _ := f.SQL(); where != "" {
+	if where, _ := f.Take(); where != "" {
 		t.Errorf("a regex inside a join was pushed down as %q", where)
 	}
 }
@@ -244,7 +244,7 @@ func TestARefusalIsNotADemotion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a demotion became an error: %v", err)
 	}
-	if where, _ := demoted.SQL(); where != "" {
+	if where, _ := demoted.Take(); where != "" {
 		t.Error("the demoted term was pushed down after all")
 	}
 
@@ -264,7 +264,7 @@ func TestTheJunctionCanBeNarrowed(t *testing.T) {
 		t.Fatalf("Compile returned error: %v", err)
 	}
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if !strings.Contains(where, "j.role = ?") {
 		t.Errorf("SQL does not narrow the junction:\n  %s", where)
 	}
@@ -280,7 +280,7 @@ func TestASetIsOneQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	if where, _ := f.SQL(); where == "" {
+	if where, _ := f.Take(); where == "" {
 		t.Error("a set membership test did not push down")
 	}
 
@@ -290,7 +290,7 @@ func TestASetIsOneQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	if where, _ := mixed.SQL(); where != "" {
+	if where, _ := mixed.Take(); where != "" {
 		t.Errorf("a mixed set was pushed down as %q", where)
 	}
 }
@@ -343,7 +343,7 @@ func TestAChainBecomesNestedExists(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile(%q) returned error: %v", tt.expr, err)
 			}
-			where, _ := f.SQL()
+			where, _ := f.Take()
 			for _, want := range tt.want {
 				if !strings.Contains(where, want) {
 					t.Errorf("SQL is missing %q:\n%s", want, where)
@@ -377,7 +377,7 @@ func TestAChainInGoNeedsSomewhereToRead(t *testing.T) {
 	}
 
 	// Having taken the SQL, there is nothing left for Go and every row stands.
-	f.SQL()
+	f.Take()
 	kept, err := f.Keep(&store.PR{ID: "owner/repo#1"})
 	if err != nil {
 		t.Fatalf("Keep returned error after the query took the clause: %v", err)
@@ -411,7 +411,7 @@ func TestABaseAliasNamesTheOuterRowAsTheQueryDoes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	where, _ := plain.SQL()
+	where, _ := plain.Take()
 	if !strings.Contains(where, "= action.id") {
 		t.Errorf("the default correlation is not by table name:\n%s", where)
 	}
@@ -420,7 +420,7 @@ func TestABaseAliasNamesTheOuterRowAsTheQueryDoes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile with an alias returned error: %v", err)
 	}
-	where, _ = aliased.SQL()
+	where, _ = aliased.Take()
 	if !strings.Contains(where, "= a.id") {
 		t.Errorf("the alias did not reach the correlation:\n%s", where)
 	}
@@ -439,7 +439,7 @@ func TestAnAliasedFilterQualifiesItsColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	where, _ := f.SQL()
+	where, _ := f.Take()
 	if where == "" {
 		t.Skip("nothing was pushed down, so there is no qualification to check")
 	}
@@ -460,7 +460,7 @@ func TestEachLevelGetsItsOwnAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	where, args := f.SQL()
+	where, args := f.Take()
 
 	for _, want := range []string{
 		"FROM project parent WHERE parent.id = project.parent_id",
@@ -484,7 +484,7 @@ func TestEachLevelGetsItsOwnAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	if where, _ := one.SQL(); !strings.Contains(where, "FROM project parent ") {
+	if where, _ := one.Take(); !strings.Contains(where, "FROM project parent ") {
 		t.Errorf("a single hop stopped using the relation's own name:\n%s", where)
 	}
 }
@@ -502,7 +502,7 @@ func TestATraversalCanStartBehindAToOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	where, args := f.SQL()
+	where, args := f.Take()
 
 	for _, want := range []string{
 		"FROM pr subject_pr JOIN action_pr j",

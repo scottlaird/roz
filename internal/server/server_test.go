@@ -19,7 +19,7 @@ import (
 func running(t *testing.T, page Page, log io.Writer) string {
 	t.Helper()
 
-	s := New("127.0.0.1:0", page, nil, log)
+	s := New("127.0.0.1:0", testRoutes, page, nil, log)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
@@ -199,7 +199,7 @@ func (b *lockedBuffer) String() string {
 // TestCancellationIsNotAFailure: the service runner takes an error as a
 // reason to stop everything else, so stopping on request must return nil.
 func TestCancellationIsNotAFailure(t *testing.T) {
-	s := New("127.0.0.1:0", func(context.Context, PageQuery) ([]byte, error) {
+	s := New("127.0.0.1:0", testRoutes, func(context.Context, PageQuery) ([]byte, error) {
 		return []byte("the page"), nil
 	}, nil, nil)
 
@@ -225,7 +225,7 @@ func TestCancellationIsNotAFailure(t *testing.T) {
 }
 
 func TestRunNeedsAPage(t *testing.T) {
-	s := New("127.0.0.1:0", nil, nil, nil)
+	s := New("127.0.0.1:0", testRoutes, nil, nil, nil)
 	if err := s.Run(context.Background()); err == nil {
 		t.Error("Run() with no page returned nil, want an error")
 	}
@@ -238,7 +238,7 @@ func TestAddressInUseIsReported(t *testing.T) {
 	base := running(t, page, nil)
 	addr := strings.TrimPrefix(base, "http://")
 
-	second := New(addr, page, nil, nil)
+	second := New(addr, testRoutes, page, nil, nil)
 	if err := second.Run(context.Background()); err == nil {
 		t.Error("the second server started on a taken address, want an error")
 	}
@@ -249,7 +249,7 @@ func runningLive(t *testing.T, changes Changes, log io.Writer) string {
 	t.Helper()
 
 	page := func(context.Context, PageQuery) ([]byte, error) { return []byte("the page"), nil }
-	s := New("127.0.0.1:0", page, changes, log)
+	s := New("127.0.0.1:0", testRoutes, page, changes, log)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
@@ -270,6 +270,18 @@ func runningLive(t *testing.T, changes Changes, log io.Writer) string {
 		t.Fatalf("Addr() returned error: %v", err)
 	}
 	return "http://" + addr.String()
+}
+
+// testRoutes are the pages these tests fetch -- the six the server used to
+// register itself. The real list is the cli package's now; the server only
+// registers what it is handed.
+var testRoutes = []Route{
+	{Kind: "", Pattern: "/{$}"},
+	{Kind: "projects", Pattern: "/projects"},
+	{Kind: "actions", Pattern: "/actions"},
+	{Kind: "dependencygraph", Pattern: "/dependencygraph"},
+	{Kind: "project", Pattern: "/project/{id}", Wildcard: "id"},
+	{Kind: "action", Pattern: "/action/{id}", Wildcard: "id"},
 }
 
 // version is a change source a test can move.
@@ -507,7 +519,7 @@ func TestStoppingWithAStreamOpenIsPrompt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := New("127.0.0.1:0",
+	s := New("127.0.0.1:0", testRoutes,
 		func(context.Context, PageQuery) ([]byte, error) { return []byte("page"), nil },
 		func(context.Context) (int64, error) { return 1, nil },
 		nil)

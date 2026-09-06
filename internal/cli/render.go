@@ -47,14 +47,13 @@ var favicon = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeT
 // same "body" block, which is what lets the shell be written once and know
 // nothing about who fills it. Parsed at startup, so a broken template is a
 // build-adjacent failure rather than a surprise at request time.
-var pages = map[string]*template.Template{
-	pageIndex:    parsePage("index"),
-	pageProjects: parsePage("projects"),
-	pageActions:  parsePage("actions"),
-	pageProject:  parsePage("project"),
-	pageAction:   parsePage("action"),
-	pageGraph:    parsePage("dependencygraph"),
-}
+var pages = func() map[string]*template.Template {
+	parsed := make(map[string]*template.Template, len(pageTable))
+	for _, p := range pageTable {
+		parsed[p.kind] = parsePage(p.template)
+	}
+	return parsed
+}()
 
 // The pages, named by the route that reaches them.
 const (

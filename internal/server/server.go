@@ -73,6 +73,7 @@ const keepalive = 30 * time.Second
 // serve` runs it beside the syncer and the log tailer.
 type Server struct {
 	addr    string
+	routes  []Route
 	page    Page
 	changes Changes
 	log     io.Writer
@@ -101,17 +102,31 @@ type Server struct {
 	streams context.Context
 }
 
+// Route is one page the server answers for: the mux pattern, in net/http's
+// syntax, and the name of the path value that carries the entity's
+// identifier, empty for a listing. Kind is what the page function is asked
+// for when the pattern matches.
+//
+// The list comes from the caller, which owns the pages, so the server has no
+// list of its own to fall out of step with it. Adding a page used to mean
+// editing this package as well as the one that drew it.
+type Route struct {
+	Kind     string
+	Pattern  string
+	Wildcard string
+}
+
 // New returns a server.
 //
 // An empty addr means DefaultAddr, and log may be nil. changes may be nil
 // too, in which case there is no event stream and a page served from here
 // does not know when to reload.
-func New(addr string, page Page, changes Changes, log io.Writer) *Server {
+func New(addr string, routes []Route, page Page, changes Changes, log io.Writer) *Server {
 	if addr == "" {
 		addr = DefaultAddr
 	}
 	return &Server{
-		addr: addr, page: page, changes: changes, log: log,
+		addr: addr, routes: routes, page: page, changes: changes, log: log,
 		ready: make(chan struct{}),
 	}
 }
@@ -154,12 +169,9 @@ func (s *Server) Run(ctx context.Context) error {
 	// identifier as a wildcard, which is what makes /project/SL7 and
 	// /project/ different requests rather than one with a trailing empty
 	// segment.
-	mux.HandleFunc("GET /{$}", s.pageHandler("", ""))
-	mux.HandleFunc("GET /projects", s.pageHandler("projects", ""))
-	mux.HandleFunc("GET /actions", s.pageHandler("actions", ""))
-	mux.HandleFunc("GET /dependencygraph", s.pageHandler("dependencygraph", ""))
-	mux.HandleFunc("GET /project/{id}", s.pageHandler("project", "id"))
-	mux.HandleFunc("GET /action/{id}", s.pageHandler("action", "id"))
+	for _, r := range s.routes {
+		mux.HandleFunc("GET "+r.Pattern, s.pageHandler(r.Kind, r.Wildcard))
+	}
 	mux.HandleFunc("/events", s.handleEvents)
 	// Served from the same listener as the page, which is loopback and
 	// unauthenticated. That is the right trade here and worth saying: what

@@ -116,6 +116,15 @@ func runServe(cmd *cobra.Command, _ []string) error {
 // renderer rather than two, since two would eventually disagree.
 //
 // Live, because this one has a server behind it to tell it when to reload.
+// pageRoutes is the page table as the server registers it.
+func pageRoutes() []server.Route {
+	routes := make([]server.Route, len(pageTable))
+	for i, p := range pageTable {
+		routes[i] = server.Route{Kind: p.kind, Pattern: p.pattern, Wildcard: p.wildcard}
+	}
+	return routes
+}
+
 func pageFor(st *store.Store) server.Page {
 	return func(ctx context.Context, at server.PageQuery) ([]byte, error) {
 		body, err := renderRoute(ctx, st, time.Now(), true,
@@ -202,7 +211,7 @@ func (t *tailer) Run(ctx context.Context) error {
 // a browser being turned into a client and does nothing about a local process,
 // so the honest default is off.
 func httpServer(cmd *cobra.Command, st *store.Store, options serveOptions) (service.Service, error) {
-	srv := server.New(options.addr, pageFor(st), st.LatestEventSeq, cmd.ErrOrStderr())
+	srv := server.New(options.addr, pageRoutes(), pageFor(st), st.LatestEventSeq, cmd.ErrOrStderr())
 	if !options.mcp {
 		return srv, nil
 	}

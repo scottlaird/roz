@@ -193,7 +193,7 @@ func TestDependentsAndHiding(t *testing.T) {
 		t.Fatalf("Dependents() returned error: %v", err)
 	}
 	if len(dependents) != 1 || dependents[0].ID != dependent.ID {
-		t.Errorf("Dependents() = %v, want [%s]", ids(dependents), dependent.ID)
+		t.Errorf("Dependents() = %v, want [%s]", IDs(dependents), dependent.ID)
 	}
 
 	hiding, err := tx.Hiding(ctx, blocker.ID)
@@ -201,16 +201,8 @@ func TestDependentsAndHiding(t *testing.T) {
 		t.Fatalf("Hiding() returned error: %v", err)
 	}
 	if len(hiding) != 1 || hiding[0].ID != hidden.ID {
-		t.Errorf("Hiding() = %v, want [%s]", ids(hiding), hidden.ID)
+		t.Errorf("Hiding() = %v, want [%s]", IDs(hiding), hidden.ID)
 	}
-}
-
-func ids(actions []*Action) []string {
-	out := make([]string, len(actions))
-	for i, a := range actions {
-		out[i] = a.ID
-	}
-	return out
 }
 
 // TestOneSubjectPR is the partial unique index the sketch calls the most
@@ -295,7 +287,7 @@ func TestLinkedActions(t *testing.T) {
 		t.Fatalf("LinkedActions() returned error: %v", err)
 	}
 	if len(linked) != 1 || linked[0].ID != subject.ID {
-		t.Errorf("LinkedActions() = %v, want only the subject, %s", ids(linked), subject.ID)
+		t.Errorf("LinkedActions() = %v, want only the subject, %s", IDs(linked), subject.ID)
 	}
 }
 

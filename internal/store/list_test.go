@@ -30,14 +30,6 @@ func snoozeProject(t *testing.T, st *Store, p *Project, until string) {
 	}
 }
 
-func projectIDs(projects []*Project) []string {
-	ids := make([]string, len(projects))
-	for i, p := range projects {
-		ids[i] = p.ID
-	}
-	return ids
-}
-
 func TestListProjectsOrdersByNumber(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
@@ -53,7 +45,7 @@ func TestListProjectsOrdersByNumber(t *testing.T) {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
 	want := []string{"SL1", "SL2", "SL3", "SL4", "SL5", "SL6", "SL7", "SL8", "SL9", "SL10"}
-	if got := projectIDs(got); !equalStrings(got, want) {
+	if got := IDs(got); !equalStrings(got, want) {
 		t.Errorf("ListProjects() = %v, want %v", got, want)
 	}
 }
@@ -66,7 +58,7 @@ func TestListProjectsEmpty(t *testing.T) {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
 	if len(got) != 0 {
-		t.Errorf("ListProjects() on an empty database = %v, want none", projectIDs(got))
+		t.Errorf("ListProjects() on an empty database = %v, want none", IDs(got))
 	}
 }
 
@@ -82,8 +74,8 @@ func TestListProjectsByStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
-	if want := []string{snoozed.ID}; !equalStrings(projectIDs(got), want) {
-		t.Errorf("ListProjects(status=snoozed) = %v, want %v", projectIDs(got), want)
+	if want := []string{snoozed.ID}; !equalStrings(IDs(got), want) {
+		t.Errorf("ListProjects(status=snoozed) = %v, want %v", IDs(got), want)
 	}
 }
 
@@ -107,8 +99,8 @@ func TestListProjectsExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
-	if want := []string{past.ID}; !equalStrings(projectIDs(got), want) {
-		t.Errorf("ListProjects(expired) = %v, want %v", projectIDs(got), want)
+	if want := []string{past.ID}; !equalStrings(IDs(got), want) {
+		t.Errorf("ListProjects(expired) = %v, want %v", IDs(got), want)
 	}
 }
 
@@ -124,8 +116,8 @@ func TestListProjectsOrphaned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
-	if want := []string{orphan.ID}; !equalStrings(projectIDs(got), want) {
-		t.Errorf("ListProjects(orphaned) = %v, want %v", projectIDs(got), want)
+	if want := []string{orphan.ID}; !equalStrings(IDs(got), want) {
+		t.Errorf("ListProjects(orphaned) = %v, want %v", IDs(got), want)
 	}
 }
 

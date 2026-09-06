@@ -13,6 +13,26 @@ type Record interface {
 	subjectID() string
 }
 
+// IDs is the identifiers of a slice of records, in order.
+//
+// The one body for a loop that had been written six times under five names
+// across two packages, which is the sign that nobody could find the one to
+// reuse. Here, on the Record contract, because every store type satisfies it
+// and the CLI reads them all.
+func IDs[R Record](rows []R) []string {
+	return IDsOf(rows, func(r R) string { return r.subjectID() })
+}
+
+// IDsOf is IDs for a slice of something that carries an identifier without
+// being a record — a graph node, a settlement wrapping the action it closed.
+func IDsOf[T any](rows []T, id func(T) string) []string {
+	ids := make([]string, len(rows))
+	for i, row := range rows {
+		ids[i] = id(row)
+	}
+	return ids
+}
+
 // keyed is implemented by a record whose primary key column is not called id.
 //
 // An optional interface rather than a method on Record: one table out of ten

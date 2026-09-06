@@ -87,7 +87,7 @@ func TestCloseFreesDependents(t *testing.T) {
 	// One of two blockers closing is not enough.
 	result := closeIt(t, st, CloseRequest{ID: first.ID})
 	if len(result.Unblocked) != 0 {
-		t.Errorf("Unblocked = %v after one of two blockers, want none", ids(result.Unblocked))
+		t.Errorf("Unblocked = %v after one of two blockers, want none", IDs(result.Unblocked))
 	}
 	if got := stateOf(t, st, dependent.ID); got != ActionBlocked {
 		t.Errorf("state = %q, want it still %q", got, ActionBlocked)
@@ -96,7 +96,7 @@ func TestCloseFreesDependents(t *testing.T) {
 	// The last one is.
 	result = closeIt(t, st, CloseRequest{ID: second.ID})
 	if len(result.Unblocked) != 1 || result.Unblocked[0].ID != dependent.ID {
-		t.Fatalf("Unblocked = %v, want [%s]", ids(result.Unblocked), dependent.ID)
+		t.Fatalf("Unblocked = %v, want [%s]", IDs(result.Unblocked), dependent.ID)
 	}
 	if got := stateOf(t, st, dependent.ID); got != ActionReady {
 		t.Errorf("state = %q, want %q", got, ActionReady)
@@ -135,7 +135,7 @@ func TestCloseUnhides(t *testing.T) {
 
 	result := closeIt(t, st, CloseRequest{ID: blocker.ID})
 	if len(result.Unhidden) != 1 || result.Unhidden[0].ID != hidden.ID {
-		t.Fatalf("Unhidden = %v, want [%s]", ids(result.Unhidden), hidden.ID)
+		t.Fatalf("Unhidden = %v, want [%s]", IDs(result.Unhidden), hidden.ID)
 	}
 	if result.Unhidden[0].HiddenBehind.Valid {
 		t.Error("hidden_behind is still set")
@@ -293,7 +293,7 @@ func TestOnlyPipelineStartingVerbsInstantiate(t *testing.T) {
 
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
 	if len(result.Created) != 0 {
-		t.Errorf("created %v, want nothing", ids(result.Created))
+		t.Errorf("created %v, want nothing", IDs(result.Created))
 	}
 }
 
@@ -309,7 +309,7 @@ func TestNoPipelineInstantiatesNothing(t *testing.T) {
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID})
 	if len(result.Created) != 0 || result.Pipeline != "" {
 		t.Errorf("created %v for pipeline %q, want nothing",
-			ids(result.Created), result.Pipeline)
+			IDs(result.Created), result.Pipeline)
 	}
 }
 
@@ -429,7 +429,7 @@ func TestAbandoningWorkInstantiatesNothing(t *testing.T) {
 
 	result := closeIt(t, st, CloseRequest{ID: a.ID, PR: pr.ID, Reason: ClosedDropped})
 	if len(result.Created) != 0 {
-		t.Errorf("dropping the work created %v, want nothing", ids(result.Created))
+		t.Errorf("dropping the work created %v, want nothing", IDs(result.Created))
 	}
 }
 
@@ -462,8 +462,8 @@ func TestCloseProjectDropsItsActions(t *testing.T) {
 	if result.Project.Status != ProjectRetired {
 		t.Errorf("status = %q, want %q", result.Project.Status, ProjectRetired)
 	}
-	if !equalStrings(ids(result.Dropped), []string{first.ID, second.ID}) {
-		t.Fatalf("dropped %v, want both of the project's actions", ids(result.Dropped))
+	if !equalStrings(IDs(result.Dropped), []string{first.ID, second.ID}) {
+		t.Fatalf("dropped %v, want both of the project's actions", IDs(result.Dropped))
 	}
 
 	for _, a := range result.Dropped {
@@ -491,8 +491,8 @@ func TestCloseProjectFreesWhatItsActionsBlocked(t *testing.T) {
 	blockOn(t, st, waiting, blocker)
 
 	result := closeProject(t, st, p.ID, ProjectDone)
-	if !equalStrings(ids(result.Freed), []string{waiting.ID}) {
-		t.Errorf("freed %v, want [%s]", ids(result.Freed), waiting.ID)
+	if !equalStrings(IDs(result.Freed), []string{waiting.ID}) {
+		t.Errorf("freed %v, want [%s]", IDs(result.Freed), waiting.ID)
 	}
 	if got := stateOf(t, st, waiting.ID); got != ActionReady {
 		t.Errorf("state = %q, want %q", got, ActionReady)
@@ -516,10 +516,10 @@ func TestFreedThenDroppedIsNotReported(t *testing.T) {
 
 	result := closeProject(t, st, p.ID, ProjectRetired)
 	if len(result.Freed) != 0 {
-		t.Errorf("Freed = %v, want nothing: both were dropped", ids(result.Freed))
+		t.Errorf("Freed = %v, want nothing: both were dropped", IDs(result.Freed))
 	}
-	if !equalStrings(ids(result.Dropped), []string{blocker.ID, dependent.ID}) {
-		t.Errorf("dropped %v, want both", ids(result.Dropped))
+	if !equalStrings(IDs(result.Dropped), []string{blocker.ID, dependent.ID}) {
+		t.Errorf("dropped %v, want both", IDs(result.Dropped))
 	}
 }
 

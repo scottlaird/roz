@@ -418,7 +418,7 @@ func blockingIDs(ctx context.Context, tx *Tx, id string) (any, error) {
 	if err != nil || len(dependents) == 0 {
 		return nil, err
 	}
-	return actionIDs(dependents), nil
+	return IDs(dependents), nil
 }
 
 // The subject and the context links are two relations rather than one list
@@ -501,7 +501,7 @@ func actionsAboutPR(ctx context.Context, tx *Tx, id string) (any, error) {
 	if err != nil || len(actions) == 0 {
 		return nil, err
 	}
-	return actionIDs(actions), nil
+	return IDs(actions), nil
 }
 
 // checkStates renders the checks as name to state, which is the shape the old
@@ -517,14 +517,6 @@ func checkStates(ctx context.Context, tx *Tx, id string) (any, error) {
 		byName[c.Name] = c.State
 	}
 	return byName, nil
-}
-
-func actionIDs(actions []*Action) []string {
-	ids := make([]string, len(actions))
-	for i, a := range actions {
-		ids[i] = a.ID
-	}
-	return ids
 }
 
 // ReadRelated reads the far side of a join for one record, as column maps.

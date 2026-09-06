@@ -227,8 +227,8 @@ func TestABlockedProjectIsStillOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProjects() returned error: %v", err)
 	}
-	if !equalStrings(projectIDs(found), []string{blocker.ID, blocked.ID}) {
-		t.Errorf("open projects = %v, want both", projectIDs(found))
+	if !equalStrings(IDs(found), []string{blocker.ID, blocked.ID}) {
+		t.Errorf("open projects = %v, want both", IDs(found))
 	}
 }
 

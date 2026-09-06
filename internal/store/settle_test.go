@@ -59,11 +59,7 @@ func TestSettleClosesTheStepGitHubFinished(t *testing.T) {
 }
 
 func settledIDs(settled []Settled) []string {
-	out := make([]string, len(settled))
-	for i, s := range settled {
-		out[i] = s.Action.ID
-	}
-	return out
+	return IDsOf(settled, func(s Settled) string { return s.Action.ID })
 }
 
 // TestSettleAdvancesTheChain: closing a step frees the next, and if that one
@@ -104,8 +100,8 @@ func TestSettleFreesWhatTheStepBlocked(t *testing.T) {
 	}
 	// The next step of the chain is freed too, so what matters is that the
 	// unrelated action waiting on the same step is among them.
-	if !contains(ids(settled[0].Result.Unblocked), waiting.ID) {
-		t.Errorf("freed %v, want it to include %s", ids(settled[0].Result.Unblocked), waiting.ID)
+	if !contains(IDs(settled[0].Result.Unblocked), waiting.ID) {
+		t.Errorf("freed %v, want it to include %s", IDs(settled[0].Result.Unblocked), waiting.ID)
 	}
 	if got := stateOf(t, st, waiting.ID); got != ActionReady {
 		t.Errorf("state = %q, want %q", got, ActionReady)

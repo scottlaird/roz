@@ -26,14 +26,13 @@ import (
 // measured, against a 960px column. The same nodes as three diagrams came to
 // 759, 664 and 848 wide, all of which fit, because stacking them spends the
 // axis the page has rather than the one it does not.
-func mermaid(g *dependencyGraph) []string {
+// ids is the one map for the whole graph, the same one mermaidLinks is given:
+// per-diagram numbering would collide across panels, and a map of its own
+// here would agree with the navigation's only by coincidence.
+func mermaid(g *dependencyGraph, ids map[string]string) []string {
 	if g.Empty() {
 		return nil
 	}
-	// One id map for the whole graph, not one per diagram. The client binds
-	// navigation by the drawn node's id, from a single map keyed the same way,
-	// and per-diagram numbering would collide across panels.
-	ids := mermaidIDs(g.Nodes)
 	var out []string
 	for _, panel := range mermaidPanels(g) {
 		out = append(out, mermaidDiagram(g, panel, ids))
@@ -197,8 +196,7 @@ func mermaidComponents(g *dependencyGraph) [][]string {
 // empty diagram -- so the navigation is bound to the drawn nodes instead, from
 // this. It also means the page no longer needs mermaid's "loose" security
 // level, which existed only to let click statements navigate.
-func mermaidLinks(g *dependencyGraph) map[string]string {
-	ids := mermaidIDs(g.Nodes)
+func mermaidLinks(g *dependencyGraph, ids map[string]string) map[string]string {
 	links := map[string]string{}
 	for _, n := range g.Nodes {
 		if n.Href != "" {

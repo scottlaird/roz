@@ -36,11 +36,7 @@ func graphFor(t *testing.T, db string) *dependencyGraph {
 }
 
 func nodeIDs(g *dependencyGraph) []string {
-	ids := make([]string, len(g.Nodes))
-	for i, n := range g.Nodes {
-		ids[i] = n.ID
-	}
-	return ids
+	return store.IDsOf(g.Nodes, func(n graphNode) string { return n.ID })
 }
 
 func hasNode(g *dependencyGraph, id string) bool {

@@ -267,6 +267,15 @@ func validateSeverity(severity string) error {
 	}
 }
 
+// watchFollowing is called once the tail has taken its starting cursor — the
+// moment after which a new event cannot be missed, and before which it can.
+//
+// For the tests, which need to write an event the tail is guaranteed to see
+// and had no way to know when that became true except by sleeping and hoping
+// the scheduler agreed. Nothing is printed at that moment, so there was
+// nothing to wait for. A no-op outside tests.
+var watchFollowing = func() {}
+
 // watchEvents prints the selected backlog and then polls for more until the
 // context is cancelled.
 func watchEvents(ctx context.Context, out io.Writer, st *store.Store, options watchOptions) error {
@@ -279,6 +288,7 @@ func watchEvents(ctx context.Context, out io.Writer, st *store.Store, options wa
 	if err != nil {
 		return err
 	}
+	watchFollowing()
 
 	if options.backlog {
 		printedTo, err := printEvents(ctx, out, st, query, options)

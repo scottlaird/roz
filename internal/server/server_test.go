@@ -278,15 +278,40 @@ type version struct {
 	at int64
 	// failing makes the next read fail, standing in for a busy database.
 	failing bool
+	// failed counts the reads that did, which is how a test knows the poller
+	// has actually met the failure rather than hoping it did within some
+	// number of intervals.
+	failed int
 }
 
 func (v *version) read(context.Context) (int64, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.failing {
+		v.failed++
 		return 0, errors.New("busy")
 	}
 	return v.at, nil
+}
+
+func (v *version) failures() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.failed
+}
+
+// waitFor polls a condition until it holds or a generous deadline passes.
+// The alternative -- sleeping for some multiple of the interval -- is a bet
+// on the scheduler that #251 lost twice in one afternoon.
+func waitFor(condition func() bool) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return errors.New("timed out")
 }
 
 func (v *version) move() {
@@ -367,7 +392,9 @@ func TestEventsSurviveAFailedRead(t *testing.T) {
 	defer resp.Body.Close()
 
 	v.fail(true)
-	time.Sleep(2 * pollInterval)
+	if err := waitFor(func() bool { return v.failures() >= 1 }); err != nil {
+		t.Fatalf("the poller never read while the database was busy: %v", err)
+	}
 	v.fail(false)
 	v.move()
 

@@ -38,7 +38,7 @@ func compile(t *testing.T, expr string) *Filter {
 func TestTheExampleIsOneQuery(t *testing.T) {
 	f := compile(t, `state == "CLOSED" || state == "MERGED"`)
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if want := "(state = ? OR state = ?)"; where != want {
 		t.Errorf("SQL = %q, want %q", where, want)
 	}
@@ -55,7 +55,7 @@ func TestTheExampleIsOneQuery(t *testing.T) {
 func TestValuesAreParameters(t *testing.T) {
 	f := compile(t, `title.contains("' OR 1=1 --")`)
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if strings.Contains(where, "OR 1=1") {
 		t.Errorf("a value was inlined into the SQL: %q", where)
 	}
@@ -71,7 +71,7 @@ func TestOneAwkwardTermDoesNotCostTheRest(t *testing.T) {
 	// the natural example of a term that has to run in Go.
 	f := compile(t, `state == "MERGED" && title.matches("^A ")`)
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if want := "(state = ?)"; where != want {
 		t.Errorf("SQL = %q, want the convertible half %q", where, want)
 	}
@@ -123,7 +123,7 @@ func TestAFilterNobodyPushedDownStillRuns(t *testing.T) {
 	// Taking the SQL changes the answer, because now the query is the thing
 	// that excluded it.
 	pushed := compile(t, `state == "MERGED"`)
-	pushed.SQL()
+	pushed.Take()
 	if keep, _ := pushed.Keep(&row{State: sql.NullString{String: "OPEN", Valid: true}}); !keep {
 		t.Error("a row was filtered twice: the query already excluded it")
 	}
@@ -193,7 +193,7 @@ func TestTheEnginesAgreeAboutNull(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.expr, func(t *testing.T) {
 			f := compile(t, tc.expr)
-			where, _ := f.SQL()
+			where, _ := f.Take()
 			if pushed := where != ""; pushed != tc.pushed {
 				t.Errorf("pushed down = %v, want %v (%s): SQL was %q",
 					pushed, tc.pushed, tc.why, where)
@@ -218,7 +218,7 @@ func TestTheEnginesAgreeAboutNull(t *testing.T) {
 func TestADemotedTermDoesNotCostTheOthers(t *testing.T) {
 	f := compile(t, `state != "OPEN" && merged_at != null`)
 
-	where, _ := f.SQL()
+	where, _ := f.Take()
 	if want := "(merged_at IS NOT NULL)"; where != want {
 		t.Errorf("SQL = %q, want only the equivalent term %q", where, want)
 	}
@@ -232,7 +232,7 @@ func TestADemotedTermDoesNotCostTheOthers(t *testing.T) {
 // value in the other. Being wrong in this direction costs a pushdown.
 func TestTwoNullableColumnsAreNotPushedDown(t *testing.T) {
 	f := compile(t, `state != merged_at`)
-	if where, _ := f.SQL(); where != "" {
+	if where, _ := f.Take(); where != "" {
 		t.Errorf("a term over two nullable columns was pushed down as %q", where)
 	}
 }
@@ -265,7 +265,7 @@ func TestARowCELCannotAnswerDoesNotMatch(t *testing.T) {
 func TestAJSONTermPushesDown(t *testing.T) {
 	f := compile(t, `approvals.exists(a, a == "alice")`)
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if where == "" {
 		t.Fatal("a JSON term was held back, and the upstream fix is in")
 	}
@@ -285,7 +285,7 @@ func TestAJSONTermPushesDown(t *testing.T) {
 // So the fragment is run against real SQLite rather than pattern-matched.
 func TestTheJSONTermMeansWhatItSays(t *testing.T) {
 	f := compile(t, `approvals.exists(a, a == "alice")`)
-	where, args := f.SQL()
+	where, args := f.Take()
 	if where == "" {
 		t.Fatal("nothing was pushed down, so there is nothing to run")
 	}
@@ -482,7 +482,7 @@ func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.expr, func(t *testing.T) {
 			f := compile(t, tc.expr)
-			where, _ := f.SQL()
+			where, _ := f.Take()
 			if pushed := where != ""; pushed != tc.pushed {
 				t.Errorf("pushed down = %v, want %v (%s): SQL was %q",
 					pushed, tc.pushed, tc.why, where)
@@ -503,7 +503,7 @@ func TestTheAllowListDecidesWhatIsTried(t *testing.T) {
 func TestStartsWithMatchesCaseInBothEngines(t *testing.T) {
 	f := compile(t, `title.startsWith("fix")`)
 
-	where, _ := f.SQL()
+	where, _ := f.Take()
 	if where == "" {
 		t.Fatal("startsWith did not push down")
 	}
@@ -539,7 +539,7 @@ func TestStartsWithMatchesCaseInBothEngines(t *testing.T) {
 func TestTheClockBecomesALiteral(t *testing.T) {
 	f := compile(t, `merged_at < now`)
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if want := "(merged_at < ?)"; where != want {
 		t.Fatalf("SQL = %q, want %q", where, want)
 	}
@@ -557,7 +557,7 @@ func TestTheClockBecomesALiteral(t *testing.T) {
 func TestOneFilterHasOneNow(t *testing.T) {
 	f := compile(t, `merged_at < now && created_at < now`)
 
-	_, args := f.SQL()
+	_, args := f.Take()
 	if len(args) != 2 {
 		t.Fatalf("args = %v, want one per term", args)
 	}
@@ -572,7 +572,7 @@ func TestOneFilterHasOneNow(t *testing.T) {
 func TestOnlyTheIdentifierIsAClock(t *testing.T) {
 	f := compile(t, `title == "now or never" && merged_at < now`)
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if want := "(title = ?) AND (merged_at < ?)"; where != want {
 		t.Fatalf("SQL = %q, want %q", where, want)
 	}
@@ -592,7 +592,7 @@ func TestOnlyTheIdentifierIsAClock(t *testing.T) {
 func TestAColumnNameInAStringIsNotAColumn(t *testing.T) {
 	f := compile(t, `title == "approvals"`)
 
-	where, args := f.SQL()
+	where, args := f.Take()
 	if want := "(title = ?)"; where != want {
 		t.Errorf("SQL = %q, want %q", where, want)
 	}
@@ -613,7 +613,7 @@ func TestOnlyTheCheckedJSONShapeIsPushed(t *testing.T) {
 	} {
 		t.Run(tt.expr, func(t *testing.T) {
 			f := compile(t, tt.expr)
-			if where, _ := f.SQL(); where != "" {
+			if where, _ := f.Take(); where != "" {
 				t.Errorf("pushed down as %q, but %s", where, tt.why)
 			}
 		})

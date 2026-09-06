@@ -517,14 +517,29 @@ func withClock(env *cel.Env, expr string, at string) (string, error) {
 // timestamps as text.
 const timeFormat = "2006-01-02T15:04:05.000Z"
 
-// SQL is what the query should carry: a WHERE fragment and its arguments,
+// SQL is what the query would carry: a WHERE fragment and its arguments,
 // both empty when nothing could be pushed down.
 //
-// Taking it is a promise to run it. A caller that reads this and then does not
-// put it in its query would get every row, and Keep would filter only the part
-// SQL was supposed to have handled — so calling this is what tells the filter
-// the query did its half.
+// A read, and only a read. Looking at the fragment commits the filter to
+// nothing; Keep goes on evaluating the whole expression until Take says the
+// query ran this half. It used to be otherwise — reading the SQL was the
+// promise to run it — and a caller that read it for another reason (to
+// explain the plan, in #200) silently switched every listing to the residual,
+// so Keep passed rows the query was supposed to have removed.
 func (f *Filter) SQL() (string, []any) {
+	if f == nil {
+		return "", nil
+	}
+	return f.where, f.args
+}
+
+// Take is SQL plus the promise to run it.
+//
+// A caller that takes this and then does not put it in its query would get
+// every row, and Keep would filter only the part the query was supposed to
+// have handled — so calling this, and nothing else, is what tells the filter
+// the query did its half. Read with SQL when that is not what is happening.
+func (f *Filter) Take() (string, []any) {
 	if f == nil {
 		return "", nil
 	}

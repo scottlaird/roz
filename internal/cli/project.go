@@ -680,7 +680,7 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	query.Where, query.WhereArgs = cel.SQL()
+	query.Where, query.WhereArgs = cel.Take()
 	// Whatever the query could not take runs in Go, and a traversal there
 	// needs somewhere to read the far side from.
 	cel.WithLoader(ctx, storeLoader{st: st})

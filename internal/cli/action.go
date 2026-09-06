@@ -748,7 +748,7 @@ func runActionList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	filter.Where, filter.WhereArgs = cel.SQL()
+	filter.Where, filter.WhereArgs = cel.Take()
 	// Whatever the query could not take runs in Go, and a traversal there
 	// needs somewhere to read the far side from.
 	cel.WithLoader(ctx, storeLoader{st: st})

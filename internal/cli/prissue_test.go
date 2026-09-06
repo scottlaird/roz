@@ -105,7 +105,7 @@ func linkBySync(t *testing.T, db, prID, key string) {
 	t.Helper()
 	ctx := context.Background()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("opening %s: %v", db, err)
 	}

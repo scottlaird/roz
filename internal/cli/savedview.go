@@ -415,7 +415,7 @@ func applyView(cmd *cobra.Command, entity string) error {
 	if err != nil {
 		return err
 	}
-	st, err := store.OpenStore(dbPath)
+	st, err := store.OpenStore(cmd.Context(), dbPath)
 	if err != nil {
 		return err
 	}

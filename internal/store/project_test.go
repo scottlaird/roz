@@ -715,7 +715,7 @@ func initFromTemplate(t *testing.T) string {
 			return
 		}
 		path := filepath.Join(dir, "template.db")
-		if _, err := Init(path, testPrefixes()); err != nil {
+		if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 			templateErr = err
 			return
 		}

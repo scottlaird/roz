@@ -42,7 +42,7 @@ func TestBackupIsAReadableDatabase(t *testing.T) {
 
 	// Through OpenStore rather than Open: a backup that is not a database
 	// this build would agree to open is not a backup.
-	restored, err := OpenStore(dest)
+	restored, err := OpenStore(context.Background(), dest)
 	if err != nil {
 		t.Fatalf("opening the backup: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestBackupIsAReadableDatabase(t *testing.T) {
 func newStoreAt(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 	db, err := Open(path)
@@ -133,7 +133,7 @@ func backupOf(t *testing.T, title string) (path, wantTitle string) {
 // the two a file is.
 func titleOf(t *testing.T, path string) string {
 	t.Helper()
-	st, err := OpenStore(path)
+	st, err := OpenStore(context.Background(), path)
 	if err != nil {
 		t.Fatalf("opening %s: %v", path, err)
 	}

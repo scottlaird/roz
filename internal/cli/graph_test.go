@@ -15,7 +15,7 @@ func graphFor(t *testing.T, db string) *dependencyGraph {
 	t.Helper()
 	ctx := context.Background()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("OpenStore() returned error: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestTheGraphPageAndTheIndexDrawTheSame(t *testing.T) {
 	db := renderedFixture(t)
 	ctx := context.Background()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("OpenStore() returned error: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestAPageAboutOneThingBuildsNoGraph(t *testing.T) {
 	db := renderedFixture(t)
 	ctx := context.Background()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("OpenStore() returned error: %v", err)
 	}
@@ -680,7 +680,7 @@ func observePR(t *testing.T, db, key, state string) {
 	t.Helper()
 	ctx := context.Background()
 
-	st, err := store.OpenStore(db)
+	st, err := store.OpenStore(context.Background(), db)
 	if err != nil {
 		t.Fatalf("OpenStore() returned error: %v", err)
 	}

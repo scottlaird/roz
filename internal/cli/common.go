@@ -167,7 +167,7 @@ func openStore(cmd *cobra.Command) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.OpenStore(dbPath)
+	st, err := store.OpenStore(cmd.Context(), dbPath)
 	if err != nil {
 		if errors.Is(err, store.ErrNotInitialised) {
 			return nil, fmt.Errorf("%w; run `roz init` first", err)
@@ -298,4 +298,13 @@ func dateCell(v sql.NullString) string {
 		return ""
 	}
 	return shortDate(v.String)
+}
+
+// notFoundOr turns a missing row into a message naming the identifier, since
+// sql.ErrNoRows on its own says nothing about what was being looked for.
+func notFoundOr(err error, id string) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("no such item: %s", id)
+	}
+	return err
 }

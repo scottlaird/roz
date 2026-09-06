@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -79,7 +80,7 @@ func TestInitSeedsSequences(t *testing.T) {
 	path := newDBPath(t)
 	want := map[Entity]string{EntityProject: "PRJ", EntityAction: "ACT"}
 
-	result, err := Init(path, want)
+	result, err := Init(context.Background(), path, want)
 	if err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
@@ -114,11 +115,11 @@ func TestInitIgnoresRequestedPrefixesOnRerun(t *testing.T) {
 	path := newDBPath(t)
 	first := map[Entity]string{EntityProject: "SL", EntityAction: "NA"}
 
-	if _, err := Init(path, first); err != nil {
+	if _, err := Init(context.Background(), path, first); err != nil {
 		t.Fatalf("first Init() returned error: %v", err)
 	}
 
-	result, err := Init(path, map[Entity]string{EntityProject: "XX", EntityAction: "YY"})
+	result, err := Init(context.Background(), path, map[Entity]string{EntityProject: "XX", EntityAction: "YY"})
 	if err != nil {
 		t.Fatalf("second Init() returned error: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestInitIgnoresRequestedPrefixesOnRerun(t *testing.T) {
 func TestInitRejectsInvalidPrefixes(t *testing.T) {
 	path := newDBPath(t)
 
-	_, err := Init(path, map[Entity]string{EntityProject: "SL", EntityAction: "N4"})
+	_, err := Init(context.Background(), path, map[Entity]string{EntityProject: "SL", EntityAction: "N4"})
 	if err == nil {
 		t.Fatal("Init() with an invalid prefix returned nil, want an error")
 	}
@@ -148,7 +149,7 @@ func TestInitRejectsInvalidPrefixes(t *testing.T) {
 // next_n.
 func TestPrefixImmutability(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 
@@ -189,7 +190,7 @@ func TestPrefixImmutability(t *testing.T) {
 
 func TestLoadPrefixesRejectsMissingRow(t *testing.T) {
 	path := newDBPath(t)
-	if _, err := Init(path, testPrefixes()); err != nil {
+	if _, err := Init(context.Background(), path, testPrefixes()); err != nil {
 		t.Fatalf("Init() returned error: %v", err)
 	}
 

@@ -15,12 +15,71 @@ const (
 	SeverityException = "exception"
 )
 
-// Event kinds written by this package. The vocabulary is open — sync sources
-// and monitors add their own — which is why severity is a separate column.
+// Event kinds written by this package, in one place so that the set of
+// things that can appear in the log is written down where a reader of the
+// log -- or of `roz watch --filter` -- would look. The vocabulary is open:
+// sync sources and monitors add their own, which is why severity is a
+// separate column. The exported ones are those a caller outside the store
+// filters on.
+//
+// Created, changed and note are the diff's own; Update and Note write them.
+// The rest are written through Info, Exception and Changed, each with the
+// kind that names what happened.
 const (
 	eventCreated = "created"
 	eventChanged = "changed"
 	eventNote    = "note"
+
+	// Event kinds for the edges. They are written by hand rather than diffed,
+	// which is the exception to the rule and the reason for it: an edge lives in
+	// its own table, so there is no column on the action for diffing to catch.
+	//
+	// There is no unblocked event to match. Unblocking is a change to
+	// action.state, which the diff already logs; a second event saying the same
+	// thing would only be a second thing to keep true.
+	eventBlocked = "blocked"
+	// eventUnblocked is the edge being removed, not the state changing. A
+	// blocker closing shows up as the ordinary state diff; this is somebody
+	// deciding the dependency was wrong rather than satisfied.
+	eventUnblocked = "unblocked"
+	eventLinked    = "linked"
+	eventUnlinked  = "unlinked"
+
+	// EventWaitedTooLong is the exception kind raised when a wait has gone on
+	// longer than its verb allows.
+	//
+	// An exception rather than a new alerting path: severity = 'exception' is
+	// what a monitor already filters on, and inventing a second channel for the
+	// second thing worth shouting about is how a system ends up with five.
+	EventWaitedTooLong = "waited_too_long"
+
+	// EventWaitingUnannounced is raised when an action is waiting for a review
+	// that nobody was asked for.
+	//
+	// Its own kind rather than a variant of waited_too_long, because the two want
+	// different responses: a slow review is chased, and a review nobody requested
+	// is announced. Sending somebody to chase reviewers who were never asked is
+	// the failure this exists to prevent, and it is what the timeout would
+	// eventually have said.
+	EventWaitingUnannounced = "waiting_unannounced"
+
+	// EventLeftMergeQueue is raised when a pull request leaves the merge queue
+	// without merging.
+	EventLeftMergeQueue = "pr_left_merge_queue"
+
+	// EventSnoozeExpired is logged when a deferral's date arrives and the action
+	// or project comes back into play.
+	//
+	// Its own kind rather than the bare state change, because #264 asks for the
+	// two ways a wait can end to be distinguishable. A wait handed to somebody
+	// else has two independent ends — the tracker issue closes, or enough time
+	// passes that it is worth asking how it is going — and they lead to different
+	// next steps. Collapsing them into one `closed` event throws that away.
+	//
+	// info rather than an exception. A deferred action reaching its date is the
+	// deferral working, not a problem; the reader wanted to be asked about it
+	// today and now is being asked.
+	EventSnoozeExpired = "snooze_expired"
 )
 
 // Event is one row of the log, as read back.
@@ -241,6 +300,22 @@ func (t *Tx) Exception(ctx context.Context, r Record, kind, note string) error {
 		severity: SeverityException,
 		note:     note,
 	})
+}
+
+// Info records an event that is a kind of its own and not a problem: a
+// deferral running out, say. Exception's counterpart at the ordinary
+// severity, so a caller with something to log neither reaches past the named
+// writers for emit nor reports a mechanism working as an exception.
+func (t *Tx) Info(ctx context.Context, r Record, kind, note string) error {
+	return t.emit(ctx, r, event{kind: kind, note: note})
+}
+
+// Changed records one column moving, for a change Update could not see: a
+// value kept outside the record's own row -- a pipeline's steps, a check's
+// state, a gate's resolved wait -- or a row nothing diffs. Update writes its
+// own through this too, so every changed event in the log has one shape.
+func (t *Tx) Changed(ctx context.Context, r Record, field, from, to string) error {
+	return t.emit(ctx, r, event{kind: eventChanged, field: field, oldValue: from, newValue: to})
 }
 
 // ExceptionInterval is how long a standing condition stays quiet after it has

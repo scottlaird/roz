@@ -6,10 +6,6 @@ import (
 	"strings"
 )
 
-// EventLeftMergeQueue is raised when a pull request leaves the merge queue
-// without merging.
-const EventLeftMergeQueue = "pr_left_merge_queue"
-
 // Ejected is one pull request that left the merge queue unmerged.
 type Ejected struct {
 	PR string

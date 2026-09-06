@@ -6,20 +6,6 @@ import (
 	"fmt"
 )
 
-// EventSnoozeExpired is logged when a deferral's date arrives and the action
-// or project comes back into play.
-//
-// Its own kind rather than the bare state change, because #264 asks for the
-// two ways a wait can end to be distinguishable. A wait handed to somebody
-// else has two independent ends — the tracker issue closes, or enough time
-// passes that it is worth asking how it is going — and they lead to different
-// next steps. Collapsing them into one `closed` event throws that away.
-//
-// info rather than an exception. A deferred action reaching its date is the
-// deferral working, not a problem; the reader wanted to be asked about it
-// today and now is being asked.
-const EventSnoozeExpired = "snooze_expired"
-
 // Woken is what one WakeExpired sweep brought back into play.
 type Woken struct {
 	Actions  []*Action
@@ -89,12 +75,9 @@ func (s *Store) WakeExpired(ctx context.Context, actor Actor) (Woken, error) {
 		if err := tx.applyBlockedState(ctx, after); err != nil {
 			return Woken{}, err
 		}
-		// emit rather than Note or Exception: this needs a kind of its own so
+		// Info rather than Note or Exception: this needs a kind of its own so
 		// the two endings can be told apart, and it is not a problem.
-		if err := tx.emit(ctx, after, event{
-			kind: EventSnoozeExpired,
-			note: expiredNote(a.SnoozeUntil.String, a.SnoozeReason),
-		}); err != nil {
+		if err := tx.Info(ctx, after, EventSnoozeExpired, expiredNote(a.SnoozeUntil.String, a.SnoozeReason)); err != nil {
 			return Woken{}, err
 		}
 		woken.Actions = append(woken.Actions, after)
@@ -117,10 +100,7 @@ func (s *Store) WakeExpired(ctx context.Context, actor Actor) (Woken, error) {
 		if err := tx.applyProjectBlockedState(ctx, after); err != nil {
 			return Woken{}, err
 		}
-		if err := tx.emit(ctx, after, event{
-			kind: EventSnoozeExpired,
-			note: expiredNote(p.SnoozeUntil.String, p.SnoozeReason),
-		}); err != nil {
+		if err := tx.Info(ctx, after, EventSnoozeExpired, expiredNote(p.SnoozeUntil.String, p.SnoozeReason)); err != nil {
 			return Woken{}, err
 		}
 		woken.Projects = append(woken.Projects, after)

@@ -8,14 +8,6 @@ import (
 	"time"
 )
 
-// EventWaitedTooLong is the exception kind raised when a wait has gone on
-// longer than its verb allows.
-//
-// An exception rather than a new alerting path: severity = 'exception' is
-// what a monitor already filters on, and inventing a second channel for the
-// second thing worth shouting about is how a system ends up with five.
-const EventWaitedTooLong = "waited_too_long"
-
 // Overdue is one action that has been waiting longer than it should.
 type Overdue struct {
 	Action *Action

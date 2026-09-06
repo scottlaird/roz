@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -117,7 +118,7 @@ func (s *Store) SaveView(ctx context.Context, actor Actor, v *View) ([]Change, e
 	var changes []Change
 	before, err := tx.LoadView(ctx, v.Name)
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		if err := tx.Insert(ctx, v); err != nil {
 			return nil, err
 		}
@@ -154,9 +155,7 @@ func (s *Store) DropView(ctx context.Context, actor Actor, name string) error {
 	if _, err := tx.tx.ExecContext(ctx, "DELETE FROM view WHERE name = ?", name); err != nil {
 		return fmt.Errorf("dropping view %s: %w", name, err)
 	}
-	if err := tx.emit(ctx, before, event{
-		kind: eventChanged, field: "view", oldValue: before.Entity, newValue: "",
-	}); err != nil {
+	if err := tx.Changed(ctx, before, "view", before.Entity, ""); err != nil {
 		return err
 	}
 	return tx.Commit()

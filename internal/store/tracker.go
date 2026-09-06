@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -213,7 +214,7 @@ func (t *Tx) applyTrackerObservation(ctx context.Context, o TrackerObservation) 
 
 	before, err := t.LoadTrackerIssue(ctx, o.ID())
 	if err != nil {
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
 		issue := NewTrackerIssue(o.Tracker, o.Key)
@@ -297,7 +298,7 @@ func (t *Tx) LinkProjectIssue(ctx context.Context, projectID, tracker, key strin
 	}
 	id := IssueID(tracker, key)
 	if _, err := t.LoadTrackerIssue(ctx, id); err != nil {
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err := t.Insert(ctx, NewTrackerIssue(tracker, key)); err != nil {

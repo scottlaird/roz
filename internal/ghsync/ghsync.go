@@ -32,6 +32,12 @@ type Fetcher interface {
 }
 
 // Result reports what one sync did.
+//
+// Fields are in the order reportSync prints them, and every exported field
+// is printed: TestEveryResultFieldIsReported fails on one that is not, so a
+// field added here without a line in the report is caught before a cycle's
+// work goes unmentioned. A field that deliberately has no line is named
+// there, with why.
 type Result struct {
 	// Polled is how many pull requests were asked about.
 	Polled int
@@ -42,7 +48,49 @@ type Result struct {
 	// event is logged for each, since a tracked pull request going invisible
 	// is something a person should hear about.
 	Missing map[string]string
+	// Backfilled counts what a first poll recorded, keyed "repo kind".
+	Backfilled map[string]int
 
+	// IssuesPolled is how many tracked issues were asked about. Counted apart
+	// from Polled because "polled 0" over a database of nothing but issues
+	// would otherwise read as though the sync had done nothing.
+	IssuesPolled int
+	// Issues lists the tracked issues whose state moved this poll.
+	Issues []store.TrackerApplied
+	// IssuesClosedWithWork lists the issues that closed while actions against
+	// them were still open, as the note each was reported with.
+	IssuesClosedWithWork []string
+
+	// Owners lists the pull requests whose required reviewers changed, worked
+	// out from the files they touch against the repository's CODEOWNERS.
+	Owners []Owners
+	// Resolved lists the release gates given a concrete version this poll.
+	// A gate instantiates without one, since working it out needs the
+	// repository's tags read first.
+	Resolved []store.Resolved
+	// Truncated lists the ref filters too broad to read to the end. An
+	// exception is logged for each, and an action raised: a filter that cannot
+	// be read through is a wait that may never close, which is worse than one
+	// that closes late.
+	Truncated []github.RefTruncation
+	// NewRefs lists the branches and tags that appeared since the last poll.
+	// A release being cut is news whether or not it satisfied anything.
+	//
+	// Refs recorded by a repository's *first* poll are not here: see
+	// Backfilled. Everything roz knows about a repository arrives at once
+	// that time, and none of it appeared in any sense a person means.
+	NewRefs []*store.GitRef
+	// RefsPolled is how many repository-and-kind pairs were asked about,
+	// which is zero whenever nothing is waiting for a ref.
+	RefsPolled int
+
+	// Settled lists the actions closed because what was observed satisfied
+	// their predicate, with whatever each closure cascaded into.
+	Settled []store.Settled
+	// Ejected lists the pull requests that left the merge queue without
+	// merging. An exception is logged for each, and an action created unless
+	// something open already covered merging it.
+	Ejected []store.Ejected
 	// Overdue lists the actions that have been waiting longer than their verb
 	// allows. Reported, not changed: what to do about one is a judgement.
 	Overdue []store.Overdue
@@ -55,66 +103,9 @@ type Result struct {
 	// -- arrives through Settle and is reported as a close, which is what
 	// makes the two distinguishable.
 	Woken store.Woken
-	// Settled lists the actions closed because what was observed satisfied
-	// their predicate, with whatever each closure cascaded into.
-	Settled []store.Settled
-	// Ejected lists the pull requests that left the merge queue without
-	// merging. An exception is logged for each, and an action created unless
-	// something open already covered merging it.
-	Ejected []store.Ejected
-
-	// IssuesPolled is how many tracked issues were asked about. Counted apart
-	// from Polled because "polled 0" over a database of nothing but issues
-	// would otherwise read as though the sync had done nothing.
-	IssuesPolled int
-	// Issues lists the tracked issues whose state moved this poll.
-	Issues []store.TrackerApplied
-	// IssuesClosedWithWork lists the issues that closed while actions against
-	// them were still open, as the note each was reported with.
-	IssuesClosedWithWork []string
-	// Owners lists the pull requests whose required reviewers changed, worked
-	// out from the files they touch against the repository's CODEOWNERS.
-	Owners []Owners
-	// Resolved lists the release gates given a concrete version this poll.
-	// A gate instantiates without one, since working it out needs the
-	// repository's tags read first.
-	Resolved []store.Resolved
-	// NewRefs lists the branches and tags that appeared since the last poll.
-	// A release being cut is news whether or not it satisfied anything.
-	//
-	// Refs recorded by a repository's *first* poll are not here: see
-	// Backfilled. Everything roz knows about a repository arrives at once
-	// that time, and none of it appeared in any sense a person means.
-	NewRefs []*store.GitRef
-	// Backfilled counts what a first poll recorded, keyed "repo kind".
-	Backfilled map[string]int
-	// Truncated lists the ref filters too broad to read to the end. An
-	// exception is logged for each, and an action raised: a filter that cannot
-	// be read through is a wait that may never close, which is worse than one
-	// that closes late.
-	Truncated []github.RefTruncation
-	// RefsPolled is how many repository-and-kind pairs were asked about,
-	// which is zero whenever nothing is waiting for a ref.
-	RefsPolled int
-
-	// RateLimit is what GitHub last said about the budget, so a caller
-	// polling on a loop can pace itself.
-	RateLimit github.RateLimit
-
-	// asked counts the requests this cycle actually made, as opposed to the
-	// reads it considered making. A read with nothing to poll makes no
-	// request and is neither a success nor a failure — counting it as one
-	// would decide "did anything work" on a read that never happened.
-	asked int
-
 	// Stacked lists the pull requests whose stacked_on moved this cycle,
 	// either onto a parent or off one.
 	Stacked []*store.PR
-
-	// Teams counts the team memberships refreshed this cycle, which is zero
-	// unless a step is waiting for a group and its answer had gone stale.
-	Teams int
-
 	// Failed lists the reads that did not happen this cycle. Empty is the
 	// ordinary case.
 	//
@@ -122,6 +113,18 @@ type Result struct {
 	// so "the sync worked" is no longer a yes or no. What did succeed is
 	// applied and reported; this is how the rest is not lost with it.
 	Failed []ReadFailure
+
+	// Teams counts the team memberships refreshed this cycle, which is zero
+	// unless a step is waiting for a group and its answer had gone stale.
+	Teams int
+	// RateLimit is what GitHub last said about the budget, so a caller
+	// polling on a loop can pace itself.
+	RateLimit github.RateLimit
+	// asked counts the requests this cycle actually made, as opposed to the
+	// reads it considered making. A read with nothing to poll makes no
+	// request and is neither a success nor a failure — counting it as one
+	// would decide "did anything work" on a read that never happened.
+	asked int
 }
 
 // ReadFailure is one read a cycle could not make.

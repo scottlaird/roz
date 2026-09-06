@@ -114,6 +114,18 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 	for _, p := range result.Woken.Projects {
 		fmt.Fprintf(out, "%s is back: the deferral ran out\n", p.ID)
 	}
+	for _, pr := range result.Stacked {
+		if pr.StackedOn.Valid {
+			fmt.Fprintf(out, "%s is stacked on %s\n", pr.ID, pr.StackedOn.String)
+		} else {
+			fmt.Fprintf(out, "%s is no longer stacked on anything\n", pr.ID)
+		}
+	}
+	// Last, and never under --quiet: what this cycle did not read is the one
+	// thing a reader cannot infer from what it did.
+	for _, f := range result.Failed {
+		fmt.Fprintf(out, "%s were not read this cycle: %v\n", f.Read, f.Err)
+	}
 
 	if !quiet {
 		fmt.Fprintf(out, "polled %d, %d changed", result.Polled, result.ChangedCount())
@@ -145,6 +157,9 @@ func reportSync(cmd *cobra.Command, result ghsync.Result, quiet bool) error {
 		// happens rather than a permanent column of zero.
 		if result.Teams > 0 {
 			fmt.Fprintf(out, ", %d team memberships read", result.Teams)
+		}
+		if n := len(result.Failed); n > 0 {
+			fmt.Fprintf(out, ", %d reads failed", n)
 		}
 		fmt.Fprintln(out)
 	}

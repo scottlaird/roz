@@ -283,11 +283,51 @@ type ActionFilter struct {
 // today is already past it: "hide this until the 12th" stops hiding on the
 // 12th rather than the 13th.
 //
+// openAction is an action that is neither closed nor folded out of sight
+// behind another. liveAction is that plus ready: the precondition every sweep
+// that asks "is this worth somebody's attention" shares — the queue, the
+// overdue check, the unannounced check.
+//
+// Named because it drifted. #262 fixed the unannounced sweep on the wrong
+// column, and #265 found the state test the overdue sweep had and it lacked;
+// a week of exceptions about steps a chain had not reached came from one
+// clause somebody forgot. With the fragment named, the next divergence has to
+// be a deliberate edit to it rather than an omission nobody sees. liveAction
+// takes one argument, ActionReady, in the position of its placeholder.
+const (
+	openAction = "a.closed_at IS NULL AND a.hidden_behind IS NULL"
+	liveAction = openAction + " AND a.state = ?"
+)
+
 // One definition, shared by the Expired filter, by inPlay below and by
 // WakeExpired. `--expired` is how you ask for these specifically, the queue
 // contains them, and the sweep wakes them, so two spellings of the same idea
 // could put an item in one and not the others.
 const expiredSnooze = "(a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_until < ?)"
+
+// snoozeExpired is expiredSnooze in Go, for a row already in hand.
+//
+// The same comparison, against the same kind of instant, kept next to the SQL
+// so the two are read together. It compares a stored date against a full
+// timestamp as text, which is what the SQL does too: a snooze until a bare
+// date is past as soon as that date begins, because "2026-08-24" sorts before
+// "2026-08-24T00:00:00.000Z". Comparing against the date alone once made an
+// item snoozed until today unexpired here and expired in the query — visible
+// in the queue with nothing marking it. TestSnoozeExpiredAgreesWithTheQuery
+// holds the two together at that boundary.
+//
+// A method rather than a column the query returns because the instant is the
+// store's clock, which every loader would have to be handed; a generated
+// column cannot see a clock at all.
+func snoozeExpired(state, snoozedState string, until sql.NullString, now string) bool {
+	return state == snoozedState && until.Valid && until.String != "" && until.String < now
+}
+
+// SnoozeExpired reports whether the action is snoozed until a date that has
+// arrived — the rows `--expired` lists and WakeExpired wakes — as of now.
+func (a *Action) SnoozeExpired(now string) bool {
+	return snoozeExpired(a.State, ActionSnoozed, a.SnoozeUntil, now)
+}
 
 // inPlay are the conditions an action meets to be worth listing at all: open,
 // not folded out of the queue behind something else, and either ready or past
@@ -307,11 +347,7 @@ const expiredSnooze = "(a.state = ? AND a.snooze_until IS NOT NULL AND a.snooze_
 // branch is the fallback, not the rule. It used to be the rule, and refused
 // to wake; the reasons it gave are answered in WakeExpired's comment.
 func inPlay(now string) ([]string, []any) {
-	return []string{
-			"a.closed_at IS NULL",
-			"a.hidden_behind IS NULL",
-			"(a.state = ? OR " + expiredSnooze + ")",
-		},
+	return []string{openAction, "(a.state = ? OR " + expiredSnooze + ")"},
 		[]any{ActionReady, ActionSnoozed, now}
 }
 

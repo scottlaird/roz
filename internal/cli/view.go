@@ -594,7 +594,7 @@ func buildRoute(ctx context.Context, st *store.Store, now time.Time, live bool, 
 			Snooze:   nullText(p.SnoozeUntil),
 			Actions:  openPerProject[p.ID],
 			Issues:   issueViews(issuesByProject[p.ID], text),
-			Expired:  expired(p.SnoozeUntil, stamp),
+			Expired:  p.SnoozeExpired(stamp),
 		})
 	}
 
@@ -760,7 +760,7 @@ func projectRow(p *store.Project, node store.TreeNode, openPerProject map[string
 		Snoozed:  nullText(p.SnoozeUntil),
 		Actions:  openPerProject[p.ID],
 		Issues:   issueViews(issuesByProject[p.ID], text),
-		Expired:  expired(p.SnoozeUntil, stamp),
+		Expired:  p.SnoozeExpired(stamp),
 	}
 }
 
@@ -787,7 +787,7 @@ func actionRow(a *store.Action, rank map[string]string, prs map[string][]store.A
 		RankClass: rank[a.Verb],
 		Project:   projectLink(a.ProjectID, text),
 		Age:       age(a, now),
-		Expired:   expired(a.SnoozeUntil, now),
+		Expired:   a.SnoozeExpired(now),
 		Late:      lateLabel(late, a.ID),
 		Closed:    !a.IsOpen(),
 		// The reason rather than the state: state says done or dropped, and
@@ -926,7 +926,7 @@ func projectLink(id sql.NullString, text *prose) template.HTML {
 // looked.
 func age(a *store.Action, now string) string {
 	if a.SnoozeUntil.Valid {
-		if expired(a.SnoozeUntil, now) {
+		if a.SnoozeExpired(now) {
 			return "due " + a.SnoozeUntil.String
 		}
 		return "until " + a.SnoozeUntil.String
@@ -957,16 +957,6 @@ func windowRange(w *store.CalendarWindow) string {
 		return w.StartsOn
 	}
 	return w.StartsOn + " → " + w.EndsOn
-}
-
-// expired reports that a snooze date has arrived or passed.
-//
-// Against a timestamp, not a date, so this agrees with the queue query: a
-// snooze until a bare date is past as soon as that date begins. Comparing
-// against the date alone made an item snoozed until today unexpired here and
-// expired there — visible in the queue with nothing marking it.
-func expired(until sql.NullString, now string) bool {
-	return until.Valid && until.String != "" && until.String < now
 }
 
 func jsonList(raw string) []string {

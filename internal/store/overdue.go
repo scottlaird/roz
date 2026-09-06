@@ -126,9 +126,7 @@ SELECT %s,
   JOIN actionverb v ON v.verb = a.verb
   LEFT JOIN action_pr ap ON ap.action_id = a.id AND ap.role = 'subject'
   LEFT JOIN pr p ON p.id = ap.pr_id
- WHERE a.closed_at IS NULL
-   AND a.state = ?
-   AND a.hidden_behind IS NULL
+ WHERE ` + liveAction + `
    AND (v.wait_days IS NOT NULL OR a.okay_to_wait_until IS NOT NULL)
    AND deadline < datetime(?)
 %s

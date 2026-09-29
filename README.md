@@ -359,6 +359,32 @@ ask, in order
 
 Roz's review preferences are treated as advisory; it will skip teams that can't meaningfully move PRs closer to final approval.  If `@example/backend`'s approval covers all files, then there's no need to bother `@example/serverinfra`.
 
+### Alice's team wants a daily list of the reviews it owes
+
+GitHub's review requests are a poor guide to a team's queue. A
+CODEOWNERS request stays on a PR after the files that caused it have
+left the diff, and a team named only by a catch-all rule is asked about
+changes nobody on it needs to see. `roz review-queue` goes by the
+current diff instead, and groups what's left by who has the next move:
+
+```console
+$ roz review-queue --team example/backend --repo example/server
+*Pull requests for @example/backend in example/server* (3)
+
+*Not yet reviewed by @example/backend* (1)
+• #812 Rate-limit the public API (@carol) — waiting on @example/backend (review requested) · idle 2d
+
+*Waiting on a member of @example/backend* (1)
+• #804 Retry the upstream fetch (@dave) — waiting on @alice (updated since review) · idle 5h
+
+*Waiting on the author* (1)
+• #790 Cache the session lookup (@erin) — waiting on @erin (changes requested by @bob) · idle 6d
+```
+
+`--format blocks` renders the same thing as Slack tables, and `--post`
+sends it to the incoming webhook in `ROZ_SLACK_WEBHOOK_URL`, so a daily
+cron job is enough to replace GitHub's scheduled reminder.
+
 ### Alice wants a list of all her open PRs across every repo
 
 ```console
@@ -494,7 +520,7 @@ directory.
 | **setting up** | `roz init` · `roz config show`/`set` · `roz db backup`/`restore` |
 | **planning** | `roz project add`/`show`/`list`/`set`/`snooze`/`wake`/`close`/`supersede` · `roz project block`/`unblock` · `roz project link-issue`/`unlink-issue` |
 | **doing** | `roz action add`/`show`/`list`/`set`/`snooze`/`wake`/`close` · `roz action add-blocker`/`hide-behind`/`link-pr` · `roz action wait-ref`/`wait-issue` |
-| **GitHub** | `roz repo track`/`show`/`list`/`set`/`prefer` · `roz pr track`/`show`/`list`/`set`/`announce`/`chain` · `roz sync github` · `roz codeowners` · `roz ref list` |
+| **GitHub** | `roz repo track`/`show`/`list`/`set`/`prefer` · `roz pr track`/`show`/`list`/`set`/`announce`/`chain` · `roz sync github` · `roz codeowners` · `roz review-queue` · `roz ref list` |
 | **issues** | `roz issue show`/`list`/`observe` |
 | **views** | `roz view add`/`show`/`list`/`drop` |
 | **reading** | `roz serve` · `roz watch` · `roz note` · `roz exception` · `roz verify` |

@@ -381,6 +381,10 @@ $ roz review-queue --team example/backend --repo example/server
 • #790 Cache the session lookup (@erin) — waiting on @erin (changes requested by @bob) · idle 6d
 ```
 
+A pull request stacked on others is held back until everything under it
+is approved, and listed on one line at the end with the base to review
+first.
+
 `--format blocks` renders the same thing as Slack tables, and `--post`
 sends it to the incoming webhook in `ROZ_SLACK_WEBHOOK_URL`, so a daily
 cron job is enough to replace GitHub's scheduled reminder.

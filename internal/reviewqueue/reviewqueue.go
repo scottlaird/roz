@@ -37,6 +37,10 @@ type Config struct {
 	// JiraPrefixes restricts Jira keys to these projects. Empty accepts any
 	// key-shaped string that isn't a known standard.
 	JiraPrefixes []string
+	// Branches is every open pull request in the repository, drafts and
+	// approved ones included, for finding stacks. Nil means no stack
+	// checking.
+	Branches []github.PRBranch
 }
 
 // Section groups items by who has the next move.
@@ -66,6 +70,17 @@ type Item struct {
 	Section   Section
 	// Jira is the issue keys the pull request refers to.
 	Jira []string
+	// StackedOn is the chain of open pull requests this one is built on,
+	// nearest first. Empty when it targets a branch no open pull request
+	// owns.
+	StackedOn []github.PRBranch
+	// Held is set when anything in StackedOn is not yet approved. Reviewing
+	// it now would be reviewing code that may still change underneath it.
+	Held bool
+	// Blocks is the held pull requests anywhere above this one in its stack.
+	// Set only on pull requests that aren't approved themselves: those are
+	// what the stack is waiting for.
+	Blocks []github.OpenPR
 }
 
 // Skipped is a pull request the team is requested on that is not the team's.
@@ -81,6 +96,11 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 	members := make(map[string]bool, len(cfg.Members))
 	for _, m := range cfg.Members {
 		members[strings.ToLower(m)] = true
+	}
+
+	byHead := make(map[string]github.PRBranch, len(cfg.Branches))
+	for _, b := range cfg.Branches {
+		byHead[b.HeadRef] = b
 	}
 
 	var items []Item
@@ -105,13 +125,73 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 			Section: section(pr, waitingOn, why, cfg.Team, members),
 			Jira:    JiraKeys(pr, cfg.JiraPrefixes),
 		})
+		it := &items[len(items)-1]
+		it.StackedOn = stackOf(pr, byHead)
+		for _, base := range it.StackedOn {
+			if base.ReviewDecision != "APPROVED" {
+				it.Held = true
+			}
+		}
 	}
+
+	markBlockers(items)
 
 	// Longest-idle first: those are the ones a daily message exists to surface.
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].PR.LastActivity.Before(items[j].PR.LastActivity)
 	})
 	return items, skipped
+}
+
+// markBlockers records, on each unapproved pull request in the queue, the
+// held pull requests stacked above it. A base outside the queue -- another
+// team's, or a draft -- has no row to mark, and shows only in the held line.
+func markBlockers(items []Item) {
+	index := make(map[string]int, len(items))
+	for i, it := range items {
+		index[it.PR.Key] = i
+	}
+	for _, it := range items {
+		if !it.Held {
+			continue
+		}
+		for _, base := range it.StackedOn {
+			if base.ReviewDecision == "APPROVED" {
+				continue
+			}
+			if i, ok := index[base.Key]; ok {
+				items[i].Blocks = append(items[i].Blocks, it.PR)
+			}
+		}
+	}
+	for i := range items {
+		sort.Slice(items[i].Blocks, func(a, b int) bool {
+			return items[i].Blocks[a].Key < items[i].Blocks[b].Key
+		})
+	}
+}
+
+// maxStackDepth bounds the walk down a stack, against a cycle of branches
+// that GitHub would not normally allow but that nothing here should loop on.
+const maxStackDepth = 20
+
+// stackOf follows a pull request's base branch down through the open pull
+// requests whose head branches they are, nearest first. It stops at a branch
+// no open pull request owns: the default branch, a release branch, or a base
+// that has already merged.
+func stackOf(pr github.OpenPR, byHead map[string]github.PRBranch) []github.PRBranch {
+	var chain []github.PRBranch
+	seen := map[string]bool{pr.HeadRef: true}
+	for base := pr.BaseRef; len(chain) < maxStackDepth && !seen[base]; {
+		seen[base] = true
+		parent, ok := byHead[base]
+		if !ok {
+			break
+		}
+		chain = append(chain, parent)
+		base = parent.BaseRef
+	}
+	return chain
 }
 
 const teamReasonPrefix = "owns "
@@ -422,7 +502,7 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 		return b.String()
 	}
 
-	groups, stale := group(team, items, opts)
+	groups, stale, held := group(team, items, opts)
 	for _, g := range groups {
 		fmt.Fprintf(&b, "\n*%s* (%d)\n", g.title, len(g.items))
 		for _, it := range g.items {
@@ -436,6 +516,13 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 			}
 			fmt.Fprintf(&b, " — waiting on %s (%s) · idle %s",
 				strings.Join(it.WaitingOn, ", "), it.Why, age(lastActivity(it.PR), opts.Now))
+			if len(it.Blocks) > 0 {
+				blocked := make([]string, len(it.Blocks))
+				for i, pr := range it.Blocks {
+					blocked[i] = link(pr)
+				}
+				fmt.Fprintf(&b, " · *blocks %s*", strings.Join(blocked, ", "))
+			}
 			if opts.ShowReasons {
 				fmt.Fprintf(&b, " · _%s_", strings.Join(it.Reasons, "; "))
 			}
@@ -450,7 +537,26 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 		}
 		fmt.Fprintf(&b, "\n_%d idle over %s:_ %s\n", len(stale), days(opts.StaleAfter), strings.Join(links, " "))
 	}
+	if len(held) > 0 {
+		fmt.Fprintf(&b, "\n_%d waiting on their base pull requests:_ %s\n", len(held), heldList(held))
+	}
 	return b.String()
+}
+
+// heldList names each held pull request and the unapproved base it waits on,
+// the nearest one: that is the one to review first.
+func heldList(held []Item) string {
+	parts := make([]string, len(held))
+	for i, it := range held {
+		parts[i] = link(it.PR)
+		for _, base := range it.StackedOn {
+			if base.ReviewDecision != "APPROVED" {
+				parts[i] += fmt.Sprintf(" (on <%s|#%d>)", base.URL, base.Number)
+				break
+			}
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 type itemGroup struct {
@@ -458,12 +564,17 @@ type itemGroup struct {
 	items []Item
 }
 
-// group splits items into the non-empty sections, in display order, and the
-// stale tail.
-func group(team codeowners.Owner, items []Item, opts Options) ([]itemGroup, []Item) {
-	var stale []Item
+// group splits items into the non-empty sections, in display order; the
+// stale tail; and the stacked pull requests held until their bases are
+// approved.
+func group(team codeowners.Owner, items []Item, opts Options) ([]itemGroup, []Item, []Item) {
+	var stale, held []Item
 	bySection := map[Section][]Item{}
 	for _, it := range items {
+		if it.Held {
+			held = append(held, it)
+			continue
+		}
 		if opts.StaleAfter > 0 && opts.Now.Sub(lastActivity(it.PR)) > opts.StaleAfter {
 			stale = append(stale, it)
 			continue
@@ -484,7 +595,7 @@ func group(team codeowners.Owner, items []Item, opts Options) ([]itemGroup, []It
 			groups = append(groups, itemGroup{title: s.title, items: list})
 		}
 	}
-	return groups, stale
+	return groups, stale, held
 }
 
 // Blocks renders the queue as a Slack message payload: a header per section
@@ -494,7 +605,7 @@ func Blocks(repo string, team codeowners.Owner, items []Item, opts Options) map[
 	blocks := []any{
 		map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": title}},
 	}
-	groups, stale := group(team, items, opts)
+	groups, stale, held := group(team, items, opts)
 	if len(items) == 0 {
 		blocks = append(blocks, mrkdwnSection("Nothing waiting."))
 	}
@@ -526,6 +637,13 @@ func Blocks(repo string, team codeowners.Owner, items []Item, opts Options) map[
 				"text": fmt.Sprintf("%d idle over %s: %s", len(stale), days(opts.StaleAfter), strings.Join(links, " "))}},
 		})
 	}
+	if len(held) > 0 {
+		blocks = append(blocks, map[string]any{
+			"type": "context",
+			"elements": []any{map[string]any{"type": "mrkdwn",
+				"text": fmt.Sprintf("%d waiting on their base pull requests: %s", len(held), heldList(held))}},
+		})
+	}
 	return map[string]any{"text": title, "blocks": blocks}
 }
 
@@ -533,7 +651,7 @@ func Blocks(repo string, team codeowners.Owner, items []Item, opts Options) map[
 //
 // Slack won't be told how wide to make a column, and it gives them room
 // evenly, so every column taken from the title's share shows. The number and
-// title therefore share one link cell, and why goes in brackets after who.
+// title therefore share one cell, and why goes in brackets after who.
 func tableRows(items []Item, opts Options) [][]any {
 	header := []any{rawCell("Pull request"), rawCell("Jira"), rawCell("Waiting on"), rawCell("Idle")}
 	if opts.ShowReasons {
@@ -543,7 +661,7 @@ func tableRows(items []Item, opts Options) [][]any {
 	for _, it := range items {
 		number := it.PR.Key[strings.LastIndex(it.PR.Key, "#"):]
 		row := []any{
-			linksCell([]cellLink{{url: it.PR.URL, text: number + " " + titleWithAuthor(it.PR)}}),
+			prCell(it, number),
 			jiraCell(it.Jira, opts),
 			rawCell(fmt.Sprintf("%s (%s)", strings.Join(it.WaitingOn, ", "), it.Why)),
 			idleCell(lastActivity(it.PR), opts),
@@ -554,6 +672,31 @@ func tableRows(items []Item, opts Options) [][]any {
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// prCell links the pull request's number, then its title and author as text,
+// then the held pull requests it blocks, so whoever reads the row sees that
+// reviewing it frees others.
+func prCell(it Item, number string) map[string]any {
+	elements := []any{
+		map[string]any{"type": "link", "url": it.PR.URL, "text": number},
+		map[string]any{"type": "text", "text": " " + titleWithAuthor(it.PR)},
+	}
+	if len(it.Blocks) > 0 {
+		elements = append(elements, map[string]any{"type": "text", "text": " — blocks ", "style": map[string]any{"bold": true}})
+		for i, pr := range it.Blocks {
+			if i > 0 {
+				elements = append(elements, map[string]any{"type": "text", "text": ", "})
+			}
+			elements = append(elements, map[string]any{
+				"type": "link", "url": pr.URL, "text": pr.Key[strings.LastIndex(pr.Key, "#"):],
+			})
+		}
+	}
+	return map[string]any{
+		"type":     "rich_text",
+		"elements": []any{map[string]any{"type": "rich_text_section", "elements": elements}},
+	}
 }
 
 // columnSettings wraps the plain table's text columns and right-aligns Idle.

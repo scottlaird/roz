@@ -355,7 +355,7 @@ func TestBlocks(t *testing.T) {
 	for _, want := range []string{
 		`"text":"Pull requests for @org/storage in org/repo (2)"`,
 		`"type":"table"`,
-		`{"text":"#101 a change (@carol)","type":"link","url":"https://example.com/101"}`,
+		`{"text":"#101","type":"link","url":"https://example.com/101"},{"text":" a change (@carol)","type":"text"}`,
 		`{"text":"@bob (review requested)","type":"raw_text"}`,
 		`{"text":"ABC-1","type":"link","url":"https://example.atlassian.net/browse/ABC-1"},{"text":", ","type":"text"},{"text":"ABC-2"`,
 		`{"text":"–","type":"raw_text"}`,
@@ -399,7 +399,7 @@ func TestDataTables(t *testing.T) {
 		`"page_size":10`,
 		`{"text":"2d","type":"raw_number","value":50}`,
 		`{"text":"Pull request","type":"raw_text"},{"text":"Jira","type":"raw_text"},{"text":"Waiting on","type":"raw_text"},{"text":"Idle","type":"raw_text"}`,
-		`{"text":"#101 a change (@carol)","type":"link","url":"https://example.com/101"}`,
+		`{"text":"#101","type":"link","url":"https://example.com/101"},{"text":" a change (@carol)","type":"text"}`,
 		`{"text":"@bob (review requested)","type":"raw_text"}`,
 	} {
 		if !strings.Contains(got, want) {
@@ -408,5 +408,121 @@ func TestDataTables(t *testing.T) {
 	}
 	if strings.Contains(got, "column_settings") || strings.Contains(got, `"type":"section"`) {
 		t.Errorf("a data table needs no column settings or separate heading: %s", got)
+	}
+}
+
+func TestStacks(t *testing.T) {
+	branch := func(n int64, head, base, decision string) github.PRBranch {
+		return github.PRBranch{
+			Key: fmt.Sprintf("org/repo#%d", n), URL: fmt.Sprintf("https://example.com/%d", n),
+			Number: n, HeadRef: head, BaseRef: base, ReviewDecision: decision,
+		}
+	}
+	cfg := config()
+	cfg.Branches = []github.PRBranch{
+		branch(10, "a", "main", "APPROVED"),
+		branch(11, "b", "a", "REVIEW_REQUIRED"),
+		branch(12, "c", "b", "REVIEW_REQUIRED"),
+		branch(20, "x", "main", "APPROVED"),
+		branch(21, "y", "x", "REVIEW_REQUIRED"),
+		// A cycle GitHub wouldn't allow, which must still not loop.
+		branch(30, "p", "q", ""),
+		branch(31, "q", "p", ""),
+	}
+	stacked := func(n int, head, base string) github.OpenPR {
+		return pr(n, func(p *github.OpenPR) {
+			p.HeadRef, p.BaseRef = head, base
+			p.Files = []string{"storage/engine.go"}
+		})
+	}
+	owners := mustOwners(t)
+	for _, base := range []string{"b", "x", "release", "q"} {
+		owners[base] = owners["main"]
+	}
+	items, _ := Select([]github.OpenPR{
+		stacked(1, "c", "b"),       // on #11 (unapproved) on #10 (approved): held
+		stacked(2, "y", "x"),       // on #20, approved: shown
+		stacked(3, "r", "release"), // on a branch no pull request owns: shown
+		stacked(4, "p", "q"),       // in a cycle: held, and terminates
+	}, owners, cfg)
+
+	byKey := map[string]Item{}
+	for _, it := range items {
+		byKey[it.PR.Key] = it
+	}
+	check := func(key string, held bool, chain ...int64) {
+		t.Helper()
+		it := byKey[key]
+		if it.Held != held {
+			t.Errorf("%s held = %v, want %v", key, it.Held, held)
+		}
+		var got []int64
+		for _, b := range it.StackedOn {
+			got = append(got, b.Number)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(chain) {
+			t.Errorf("%s stacked on %v, want %v", key, got, chain)
+		}
+	}
+	check(pr(1, func(*github.OpenPR) {}).Key, true, 11, 10)
+	check(pr(2, func(*github.OpenPR) {}).Key, false, 20)
+	check(pr(3, func(*github.OpenPR) {}).Key, false)
+	check(pr(4, func(*github.OpenPR) {}).Key, true, 31)
+
+	// #11 isn't in the queue, so #1 only shows in the held line; nothing is
+	// marked as blocking it.
+	for _, it := range items {
+		if len(it.Blocks) > 0 {
+			t.Errorf("%s blocks %v, but none of its dependants' bases are in the queue", it.PR.Key, it.Blocks)
+		}
+	}
+
+	now := t0.Add(24 * time.Hour)
+	got := Format("org/repo", team, items, Options{Now: now})
+	if !strings.Contains(got, "_2 waiting on their base pull requests:_") ||
+		!strings.Contains(got, "(on <https://example.com/11|#11>)") {
+		t.Errorf("held pull requests should be listed with their nearest unapproved base:\n%s", got)
+	}
+	if strings.Count(got, "https://example.com/1|") != 1 {
+		t.Errorf("a held pull request belongs only in the held line:\n%s", got)
+	}
+}
+
+func TestBlockers(t *testing.T) {
+	cfg := config()
+	cfg.Branches = []github.PRBranch{
+		{Key: pr(1, func(*github.OpenPR) {}).Key, Number: 1, HeadRef: "a", BaseRef: "main"},
+		{Key: pr(2, func(*github.OpenPR) {}).Key, Number: 2, HeadRef: "b", BaseRef: "a"},
+		{Key: pr(3, func(*github.OpenPR) {}).Key, Number: 3, HeadRef: "c", BaseRef: "b"},
+	}
+	stacked := func(n int, head, base string) github.OpenPR {
+		return pr(n, func(p *github.OpenPR) {
+			p.HeadRef, p.BaseRef = head, base
+			p.URL = fmt.Sprintf("https://example.com/%d", n)
+			p.Files = []string{"storage/engine.go"}
+		})
+	}
+	owners := mustOwners(t)
+	owners["a"], owners["b"] = owners["main"], owners["main"]
+	items, _ := Select([]github.OpenPR{stacked(1, "a", "main"), stacked(2, "b", "a"), stacked(3, "c", "b")}, owners, cfg)
+
+	var base Item
+	for _, it := range items {
+		if it.PR.Key == pr(1, func(*github.OpenPR) {}).Key {
+			base = it
+		}
+	}
+	if base.Held || len(base.Blocks) != 2 {
+		t.Fatalf("the base of a, b, c should be shown and block both: held=%v blocks=%v", base.Held, base.Blocks)
+	}
+
+	opts := Options{Now: t0.Add(24 * time.Hour)}
+	text := Format("org/repo", team, items, opts)
+	if !strings.Contains(text, "*blocks <https://example.com/2|#2>, <https://example.com/3|#3>*") {
+		t.Errorf("the base's row should say what it blocks:\n%s", text)
+	}
+	body, _ := json.Marshal(Blocks("org/repo", team, items, opts))
+	if !strings.Contains(string(body), `{"style":{"bold":true},"text":" — blocks ","type":"text"},{"text":"#2","type":"link","url":"https://example.com/2"}`) {
+		t.Errorf("the table's pull request cell should list what it blocks: %s", body)
 	}
 }

@@ -23,6 +23,7 @@ func TestOpenPRDecode(t *testing.T) {
 		]},
 		"latestOpinionatedReviews": {"nodes": [
 			{"state": "CHANGES_REQUESTED", "author": {"login": "dave", "__typename": "User"}},
+			{"state": "APPROVED", "author": {"login": "grace", "__typename": "User"}},
 			{"state": "CHANGES_REQUESTED", "author": {"login": "ci", "__typename": "Bot"}}
 		]},
 		"commits": {"nodes": [{"commit": {"committedDate": "2026-09-03T00:00:00Z", "author": {"user": {"login": "carol"}}}}]},
@@ -55,6 +56,9 @@ func TestOpenPRDecode(t *testing.T) {
 	}
 	if len(pr.ChangesRequestedBy) != 1 || pr.ChangesRequestedBy[0] != "dave" {
 		t.Errorf("changes requested by = %v, want dave and no bots", pr.ChangesRequestedBy)
+	}
+	if len(pr.Approvers) != 1 || pr.Approvers[0] != "grace" {
+		t.Errorf("approvers = %v, want grace", pr.Approvers)
 	}
 	if len(pr.Commenters) != 1 || pr.Commenters[0] != "erin" {
 		t.Errorf("commenters = %v, want erin once and no bots", pr.Commenters)

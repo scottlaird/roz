@@ -49,6 +49,10 @@ const (
 	// itself — but every one of its members belongs to an owner that is
 	// outstanding, so asking it produces an approval that counts.
 	ReasonStandsFor = "preferred, and its members all belong to an owner"
+	// ReasonCoversAndStandsFor: this owner covers outstanding files, and its
+	// members all belong to another outstanding owner, so its approval
+	// settles that owner's files too.
+	ReasonCoversAndStandsFor = "covers outstanding files, and its members all belong to an owner"
 )
 
 // Tier is one ask, and why.
@@ -147,9 +151,16 @@ func nextTier(o *Ownership, have OwnerSet, useful []Coverage, hints []Owner, mem
 		}
 	}
 
-	// Useful is sorted most-files-first, then by name, so the head is both the
-	// best ask and a stable choice.
-	return Tier{Owner: useful[0].Owner, Files: useful[0].Files, Reason: ReasonCoverage}, true
+	// Reach is sorted most-files-first, then by name, so the head is both the
+	// best ask and a stable choice. It counts what an approval would settle,
+	// so a team nested inside another is credited with both teams' files.
+	best := o.Reach(have, members)[0]
+	tier := Tier{Owner: best.Owner, Files: best.Files, Reason: ReasonCoverage}
+	if len(best.StandsFor) > 0 {
+		tier.Reason = ReasonCoversAndStandsFor
+		tier.StandsFor = best.StandsFor
+	}
+	return tier, true
 }
 
 // standsFor returns the outstanding owners an approval from candidate would

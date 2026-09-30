@@ -193,7 +193,7 @@ func TestWaitingOn(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, why := waitingOn(tc.pr, team, tc.teamOwns)
+			got, why := waitingOn(tc.pr, team, tc.teamOwns, nil, nil, config())
 			if strings.Join(got, ", ") != tc.want || why != tc.why {
 				t.Errorf("got %v (%s), want %s (%s)", got, why, tc.want, tc.why)
 			}
@@ -524,5 +524,62 @@ func TestBlockers(t *testing.T) {
 	body, _ := json.Marshal(Blocks("org/repo", team, items, opts))
 	if !strings.Contains(string(body), `{"style":{"bold":true},"text":" — blocks ","type":"text"},{"text":"#2","type":"link","url":"https://example.com/2"}`) {
 		t.Errorf("the table's pull request cell should list what it blocks: %s", body)
+	}
+}
+
+// GitHub requests every owning team, but one approval can satisfy several.
+// Waiting-on shows only what CODEOWNERS still needs.
+func TestWaitingOnFewestApprovals(t *testing.T) {
+	cfg := config()
+	cfg.TeamMembers = map[string][]string{
+		"org/storage": {"alice", "bob"},
+		"org/core":    {"alice", "bob", "carol"},
+		"org/api":     {"dave"},
+	}
+	// Two storage files, and two files any of core, api or platform may
+	// approve. Every storage member is in core, so storage covers all four.
+	files := []string{"storage/a.go", "storage/b.go", "cmd/x.go", "cmd/y.go"}
+	base := func(mutate func(*github.OpenPR)) github.OpenPR {
+		return pr(1, func(p *github.OpenPR) {
+			p.Files = files
+			p.RequestedTeams = []string{"org/storage", "org/core", "org/api", "org/platform"}
+			if mutate != nil {
+				mutate(p)
+			}
+		})
+	}
+	f, err := codeowners.ParseString("* @org/core @org/api @org/platform\n/storage/ @org/storage\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		pr   github.OpenPR
+		want string
+	}{
+		{name: "one nested team covers everything", pr: base(nil), want: "@org/storage"},
+		{
+			name: "a member asked by name stands for their team",
+			pr:   base(func(p *github.OpenPR) { p.RequestedUsers = []string{"Alice"} }),
+			want: "@Alice",
+		},
+		{
+			name: "a team no rule names was asked for another reason, and stays",
+			pr:   base(func(p *github.OpenPR) { p.RequestedTeams = append(p.RequestedTeams, "org/deploy-gate") }),
+			want: "@org/storage, @org/deploy-gate",
+		},
+		{
+			name: "a core approval leaves only storage's files",
+			pr:   base(func(p *github.OpenPR) { p.Approvers = []string{"carol"} }),
+			want: "@org/storage",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			needed := neededOwners(tc.pr, f, cfg)
+			got, why := waitingOn(tc.pr, team, true, needed, namedTeams(f), cfg)
+			if strings.Join(got, ", ") != tc.want || why != "review requested" {
+				t.Errorf("got %v (%s), want %s", got, why, tc.want)
+			}
+		})
 	}
 }

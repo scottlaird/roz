@@ -55,33 +55,36 @@ func (o *Ownership) Owners() []Owner {
 }
 
 // SoleApprovers lists the owners who could each approve the entire change
-// alone — the intersection of the owner sets over every owned file.
+// alone: every owned file has, among its owners, either that owner or a team
+// its members all belong to (see Reach).
 //
 // This is the first question worth asking and the one a flat owner list cannot
 // answer. A change touching two directories may mention five teams and still
-// have one person who covers all of it, or mention two and have nobody.
+// have one person who covers all of it, or mention two and have nobody. With
+// membership, a team nested wholly inside another counts for both: asking it
+// produces an approval that satisfies either.
 //
 // A change with no owned files at all returns nothing rather than everybody:
 // nobody is required, so nobody is a sole approver, and saying otherwise would
 // invent an approval that is not needed.
-func (o *Ownership) SoleApprovers() []Owner {
-	var candidates OwnerSet
+func (o *Ownership) SoleApprovers(members Membership) []Owner {
+	owned := 0
 	for _, path := range o.Files {
-		owners := o.owners[path]
-		if len(owners) == 0 {
-			continue // cannot block, so cannot narrow
-		}
-		if candidates == nil {
-			candidates = OwnerSet{}
-			candidates.Add(owners...)
-			continue
-		}
-		candidates = candidates.Intersect(owners)
-		if len(candidates) == 0 {
-			return nil
+		if len(o.owners[path]) > 0 {
+			owned++
 		}
 	}
-	return candidates.Sorted()
+	if owned == 0 {
+		return nil
+	}
+	var sole []Owner
+	for _, r := range o.Reach(OwnerSet{}, members) {
+		if r.Files == owned {
+			sole = append(sole, r.Owner)
+		}
+	}
+	sort.Slice(sole, func(i, j int) bool { return sole[i] < sole[j] })
+	return sole
 }
 
 // Remaining lists the paths still needing an approval, given who has approved.
@@ -143,24 +146,78 @@ func (o *Ownership) Enough(approved OwnerSet) bool {
 	return len(o.Remaining(approved)) == 0
 }
 
-// Plan suggests approvers to ask for, greedily taking the one covering the
-// most outstanding files until nothing is left.
+// Reach is what asking one owner would settle: the outstanding files it owns
+// directly, plus those owned by any owner it stands for.
+type Reach struct {
+	Owner Owner
+	Files int
+	// StandsFor are the other owners in the change an approval from this one
+	// would also satisfy, because every one of its members belongs to them.
+	StandsFor []Owner
+}
+
+// Reach lists, for each owner in the change, how many outstanding files asking
+// it would settle, most first. Owners that would settle nothing are left out.
+//
+// It differs from Useful when teams nest. If every member of @org/storage is
+// also in @org/core, an approval from @org/storage satisfies @org/core too, so
+// asking @org/storage settles @org/core's files as well as its own. Useful
+// counts names; Reach counts what an approval from that team would actually
+// do. With no membership the two agree.
+func (o *Ownership) Reach(approved OwnerSet, members Membership) []Reach {
+	if members == nil {
+		members = NoMembership{}
+	}
+	remaining := o.Remaining(approved)
+	candidates := o.Owners()
+
+	out := make([]Reach, 0, len(candidates))
+	for _, candidate := range candidates {
+		if approved.Contains(candidate) {
+			continue
+		}
+		stands := standsFor(candidate, candidates, members)
+		satisfies := OwnerSet{}
+		satisfies.Add(candidate)
+		satisfies.Add(stands...)
+		n := 0
+		for _, path := range remaining {
+			if satisfies.ContainsAny(o.owners[path]) {
+				n++
+			}
+		}
+		if n > 0 {
+			out = append(out, Reach{Owner: candidate, Files: n, StandsFor: stands})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Files != out[j].Files {
+			return out[i].Files > out[j].Files
+		}
+		return out[i].Owner < out[j].Owner
+	})
+	return out
+}
+
+// Plan suggests approvers to ask for, greedily taking the one that would
+// settle the most outstanding files until nothing is left.
 //
 // Greedy rather than exact. Minimum set cover is NP-hard, the inputs here are
 // a handful of owners over a few dozen files, and being one approver off
 // optimal costs a review request. Exactness would cost more to explain than it
 // would ever save.
-func (o *Ownership) Plan(approved OwnerSet) []Owner {
+func (o *Ownership) Plan(approved OwnerSet, members Membership) []Owner {
 	have := approved.Clone()
 	var plan []Owner
 
 	for {
-		useful := o.Useful(have)
-		if len(useful) == 0 {
+		reach := o.Reach(have, members)
+		if len(reach) == 0 {
 			return plan
 		}
-		next := useful[0].Owner
-		plan = append(plan, next)
-		have.Add(next)
+		next := reach[0]
+		plan = append(plan, next.Owner)
+		have.Add(next.Owner)
+		have.Add(next.StandsFor...)
 	}
 }

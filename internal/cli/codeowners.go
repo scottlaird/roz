@@ -79,9 +79,11 @@ func runCodeowners(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	// A pull request can say who is in which team; a local file cannot, so
-	// --team stays the answer there.
+	// --team stays the answer there. The same membership also says which
+	// teams nest inside which, for planning.
+	var named codeowners.Membership = codeowners.NoMembership{}
 	if f.Changed(flagForPR) && !f.Changed(flagTeam) {
-		teams = resolveTeams(cmd, owners, teams)
+		teams, named = resolveTeams(cmd, owners, teams)
 	}
 	// --approved adds to whatever the pull request already reports, rather
 	// than replacing it: naming somebody by hand should not quietly discard
@@ -103,10 +105,11 @@ func runCodeowners(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(out, "owners  %s\n", source)
 	ownership := owners.Of(paths)
 	approved := codeowners.Approval(approvedBy, teams)
-	if err := reportOwnership(out, ownership, approved, len(approvedBy) > 0); err != nil {
+	membership := mergeMembership(named, members)
+	if err := reportOwnership(out, ownership, approved, len(approvedBy) > 0, membership); err != nil {
 		return err
 	}
-	return reportRoute(out, ownership, approved, hints, members)
+	return reportRoute(out, ownership, approved, hints, membership)
 }
 
 // preferencesFor reads a repository's preferred owners, and the team
@@ -293,10 +296,10 @@ type changeReader interface {
 // failed would be the wrong trade. It is said out loud rather than absorbed,
 // since silently under-resolving membership makes a change look less approved
 // than it is. A token without read:org is the common way to land here.
-func resolveTeams(cmd *cobra.Command, owners *codeowners.File, byHand codeowners.Teams) codeowners.Teams {
+func resolveTeams(cmd *cobra.Command, owners *codeowners.File, byHand codeowners.Teams) (codeowners.Teams, codeowners.Membership) {
 	named := owners.Teams()
 	if len(named) == 0 {
-		return byHand
+		return byHand, codeowners.NoMembership{}
 	}
 	refs := make([]string, len(named))
 	for i, team := range named {
@@ -308,9 +311,32 @@ func resolveTeams(cmd *cobra.Command, owners *codeowners.File, byHand codeowners
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"note: could not read team membership, so an approval only satisfies "+
 				"the person who gave it; pass --%s to supply it: %v\n", flagTeam, err)
-		return byHand
+		return byHand, codeowners.NoMembership{}
 	}
-	return codeowners.NewStaticTeams(members)
+	return codeowners.NewStaticTeams(members), codeowners.NewStaticMembership(members)
+}
+
+// mergeMembership answers from the CODEOWNERS teams' membership first, then
+// from whatever was read for the repository's preferred teams.
+func mergeMembership(first, second codeowners.Membership) codeowners.Membership {
+	if second == nil {
+		return first
+	}
+	return membershipChain{first, second}
+}
+
+type membershipChain []codeowners.Membership
+
+func (c membershipChain) MembersOf(team codeowners.Owner) []codeowners.Owner {
+	for _, m := range c {
+		if m == nil {
+			continue
+		}
+		if people := m.MembersOf(team); len(people) > 0 {
+			return people
+		}
+	}
+	return nil
 }
 
 // readPaths takes the file list off stdin, one per line.
@@ -347,7 +373,7 @@ func teamsFrom(cmd *cobra.Command) (codeowners.Teams, error) {
 }
 
 func reportOwnership(out io.Writer, o *codeowners.Ownership,
-	approved codeowners.OwnerSet, anyApproved bool) error {
+	approved codeowners.OwnerSet, anyApproved bool, members codeowners.Membership) error {
 
 	remaining := o.Remaining(approved)
 	unowned := o.Unowned()
@@ -369,7 +395,7 @@ func reportOwnership(out io.Writer, o *codeowners.Ownership,
 		fmt.Fprintf(w, "required\t-\tno rule matches any of these files\n")
 	// The cheap answer next: it is often the only one needed.
 	default:
-		if sole := o.SoleApprovers(); len(sole) > 0 {
+		if sole := o.SoleApprovers(members); len(sole) > 0 {
 			fmt.Fprintf(w, "any one of\t%s\n", joinOwners(sole))
 		} else if !anyApproved {
 			fmt.Fprintf(w, "any one of\t-\tno single owner covers every file\n")
@@ -395,14 +421,18 @@ func reportOwnership(out io.Writer, o *codeowners.Ownership,
 	// list of the owners a change mentions cannot tell you.
 	fmt.Fprintln(out, "\nwould cover")
 	w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	for _, c := range o.Useful(approved) {
-		fmt.Fprintf(w, "  %s\t%d of %d\n", c.Owner, c.Files, len(remaining))
+	for _, r := range o.Reach(approved, members) {
+		also := ""
+		if len(r.StandsFor) > 0 {
+			also = "\talso satisfies " + joinOwners(r.StandsFor)
+		}
+		fmt.Fprintf(w, "  %s\t%d of %d%s\n", r.Owner, r.Files, len(remaining), also)
 	}
 	if err := w.Flush(); err != nil {
 		return err
 	}
 
-	if plan := o.Plan(approved); len(plan) > 1 {
+	if plan := o.Plan(approved, members); len(plan) > 1 {
 		fmt.Fprintf(out, "\nfewest approvals: %s\n", joinOwners(plan))
 	}
 	return nil

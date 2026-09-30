@@ -45,6 +45,10 @@ type Config struct {
 	// approved ones included, for finding stacks. Nil means no stack
 	// checking.
 	Branches []github.PRBranch
+	// IgnoreTeams are never named as waited on. GitHub doesn't withdraw a
+	// team's review request when whatever asked for it -- a gate that has
+	// since been retired, say -- stops needing it.
+	IgnoreTeams []codeowners.Owner
 }
 
 // Section groups items by who has the next move.
@@ -97,10 +101,7 @@ type Skipped struct {
 // Select builds the queue. owners holds each base ref's CODEOWNERS; a ref
 // missing from it has none.
 func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config) ([]Item, []Skipped) {
-	members := make(map[string]bool, len(cfg.Members))
-	for _, m := range cfg.Members {
-		members[strings.ToLower(m)] = true
-	}
+	members := memberSet(cfg.Members)
 
 	byHead := make(map[string]github.PRBranch, len(cfg.Branches))
 	for _, b := range cfg.Branches {
@@ -330,6 +331,9 @@ func skipReason(pr github.OpenPR, file *codeowners.File, cfg Config) string {
 func outstandingReviewers(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []codeowners.Owner, named codeowners.OwnerSet, cfg Config) []string {
 	var reviewers []string
 	seen := map[codeowners.Owner]bool{}
+	for _, o := range cfg.IgnoreTeams {
+		seen[o] = true
+	}
 	add := func(o codeowners.Owner, display string) {
 		if !seen[o] {
 			seen[o] = true
@@ -379,6 +383,10 @@ const NoReviewer = "no reviewer requested"
 // one that has been reviewed or commented on is back with those people if the
 // author moved last, and the author's if not.
 //
+// A request left only on the team itself, once a member has reviewed or
+// commented, is decided the same way: that member is the team's reviewer, and
+// the open request says nothing about whose turn it is.
+//
 // The team's own request is dropped when the team does not own anything in
 // the diff: that request is stale, and naming it would send people to a pull
 // request that does not need them.
@@ -392,7 +400,10 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []
 	}
 
 	if len(pr.RequestedUsers) > 0 || len(pr.RequestedTeams) > 0 {
-		if reviewers := outstandingReviewers(pr, team, teamOwns, needed, named, cfg); len(reviewers) > 0 {
+		reviewers := outstandingReviewers(pr, team, teamOwns, needed, named, cfg)
+		onlyTeam := len(reviewers) == 1 && codeowners.NormalizeOwner(reviewers[0]) == team
+		teamHasLooked := onlyTeam && engaged(pr, memberSet(cfg.Members))
+		if len(reviewers) > 0 && !teamHasLooked {
 			return reviewers, "review requested"
 		}
 	}
@@ -455,6 +466,15 @@ func section(pr github.OpenPR, waitingOn []string, why string, team codeowners.O
 		return NotYetReviewed
 	}
 	return OnOthers
+}
+
+// memberSet keys logins by their lower case.
+func memberSet(logins []string) map[string]bool {
+	members := make(map[string]bool, len(logins))
+	for _, m := range logins {
+		members[strings.ToLower(m)] = true
+	}
+	return members
 }
 
 // engaged reports whether a member other than the author has reviewed or

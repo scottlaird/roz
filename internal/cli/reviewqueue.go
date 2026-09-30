@@ -32,6 +32,7 @@ const (
 	flagQueueJiraURL       = "jira-url"
 	flagQueueTable         = "table"
 	flagQueuePageSize      = "page-size"
+	flagQueueIgnoreTeam    = "ignore-team"
 
 	// envSlackWebhook is where --post finds its Slack incoming webhook. An
 	// environment variable rather than a flag, so the URL stays out of shell
@@ -55,6 +56,9 @@ func newReviewQueueCmd() *cobra.Command {
 			"A pull request stacked on others -- its base branch is another open pull\n" +
 			"request's head -- is held back, listed on one line at the end, until every\n" +
 			"pull request under it is approved.\n\n" +
+			"A pull request can carry review requests that no longer apply: GitHub never\n" +
+			"withdraws one. --ignore-team leaves a team out of \"waiting on\" everywhere,\n" +
+			"for a gate that has been retired.\n\n" +
 			"Jira keys in titles, and issue links in descriptions, are linked using\n" +
 			"roz's jira_base_url and limited to its jira_prefixes, as on the pages.\n\n" +
 			"Prints Slack mrkdwn. --post sends it to the incoming webhook in\n" +
@@ -76,6 +80,7 @@ func newReviewQueueCmd() *cobra.Command {
 	f.String(flagQueueJiraURL, "", "Jira base to link issue keys to, e.g. https://example.atlassian.net/browse (default: roz's jira_base_url)")
 	f.String(flagQueueTable, "simple", `with --format blocks: "simple" tables, or "data" for Slack's paginated, sortable data tables`)
 	f.Int(flagQueuePageSize, 10, "rows per page in a data table")
+	f.StringSlice(flagQueueIgnoreTeam, nil, "team never to show as waited on, org/slug (repeatable)")
 	f.String(flagQueueFormat, "mrkdwn", `"mrkdwn" for a text message, or "blocks" for a Block Kit payload with tables (paste into Block Kit Builder to preview)`)
 	_ = cmd.MarkFlagRequired(flagQueueRepo)
 	_ = cmd.MarkFlagRequired(flagQueueTeam)
@@ -96,6 +101,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	jiraURL, _ := f.GetString(flagQueueJiraURL)
 	table, _ := f.GetString(flagQueueTable)
 	pageSize, _ := f.GetInt(flagQueuePageSize)
+	ignoreRefs, _ := f.GetStringSlice(flagQueueIgnoreTeam)
 	if table != "simple" && table != "data" {
 		return fmt.Errorf(`--table must be "simple" or "data", not %q`, table)
 	}
@@ -111,6 +117,14 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	team := codeowners.NormalizeOwner(teamRef)
 	if !team.IsTeam() {
 		return fmt.Errorf("--team %q is not org/slug", teamRef)
+	}
+	var ignore []codeowners.Owner
+	for _, ref := range ignoreRefs {
+		o := codeowners.NormalizeOwner(ref)
+		if !o.IsTeam() {
+			return fmt.Errorf("--%s %q is not org/slug", flagQueueIgnoreTeam, ref)
+		}
+		ignore = append(ignore, o)
 	}
 	webhook := os.Getenv(envSlackWebhook)
 	if post && webhook == "" {
@@ -134,7 +148,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	logf("%s has %d members", team, len(members[string(team)]))
 	cfg := reviewqueue.Config{
 		Team: team, Members: members[string(team)], MaxRuleOwners: maxRuleOwners,
-		JiraPrefixes: jira.prefixes,
+		JiraPrefixes: jira.prefixes, IgnoreTeams: ignore,
 	}
 
 	var message, diagnostics strings.Builder

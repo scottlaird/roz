@@ -216,6 +216,16 @@ func TestWaitingOn(t *testing.T) {
 			want:     "@org/storage", why: "review requested",
 		},
 		{
+			name: "a member commented, and another team still owes a review",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedTeams = []string{"org/storage", "org/gate"}
+				p.Reviews = []github.Review{{Author: "bob", State: "COMMENTED", At: t0}}
+				p.LastActor, p.LastActivity = "bob", t0
+			}),
+			teamOwns: true,
+			want:     "@carol, @org/gate", why: AuthorsTurn,
+		},
+		{
 			name: "an ignored team is never waited on",
 			pr: pr(1, func(p *github.OpenPR) {
 				p.RequestedTeams = []string{"org/storage", "org/retired-gate"}

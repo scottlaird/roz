@@ -178,7 +178,7 @@ func Compile(blank any, expr string, opts ...Option) (*Filter, error) {
 		if err != nil && !errors.Is(err, errNotAJoin) && !errors.Is(err, errNotEquivalent) {
 			return nil, err
 		}
-		if err == errNotAJoin {
+		if errors.Is(err, errNotAJoin) {
 			scalar := ast
 			if settings.alias != "" {
 				// Qualified with the listing's alias, so a bare column name

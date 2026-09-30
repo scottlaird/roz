@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -77,7 +78,7 @@ func (s *Store) SetOwnerChannel(ctx context.Context, actor Actor, owner, channel
 	var changes []Change
 	before, err := tx.LoadOwnerChannel(ctx, owner)
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		if err := tx.Insert(ctx, &OwnerChannel{Owner: owner, Channel: channel}); err != nil {
 			return nil, err
 		}
@@ -113,9 +114,7 @@ func (s *Store) ClearOwnerChannel(ctx context.Context, actor Actor, owner string
 		"DELETE FROM owner_channel WHERE owner = ?", owner); err != nil {
 		return fmt.Errorf("clearing the channel for %s: %w", owner, err)
 	}
-	if err := tx.emit(ctx, before, event{
-		kind: eventChanged, field: "channel", oldValue: before.Channel, newValue: "",
-	}); err != nil {
+	if err := tx.Changed(ctx, before, "channel", before.Channel, ""); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -225,7 +224,7 @@ func (s *Store) ChannelFor(ctx context.Context, prKey string) (*AnnounceTarget, 
 	for _, c := range candidates {
 		channel, err := tx.LoadOwnerChannel(ctx, c.owner)
 		switch {
-		case err == sql.ErrNoRows:
+		case errors.Is(err, sql.ErrNoRows):
 			continue
 		case err != nil:
 			return nil, nil, err
@@ -245,7 +244,7 @@ func (s *Store) ChannelFor(ctx context.Context, prKey string) (*AnnounceTarget, 
 	// distinguish a storage change from a docs one.
 	repo, err := tx.LoadGitHubRepo(ctx, pr.Repo)
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
 		return nil, nil, err
 	default:

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -404,7 +405,7 @@ func (t *Tx) ancestry(ctx context.Context, id string) ([]string, error) {
 		var parent sql.NullString
 		err := t.tx.QueryRowContext(ctx,
 			"SELECT parent_id FROM project WHERE id = ?", id).Scan(&parent)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return chain, nil
 		}
 		if err != nil {

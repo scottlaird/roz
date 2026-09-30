@@ -6,16 +6,6 @@ import (
 	"strings"
 )
 
-// EventWaitingUnannounced is raised when an action is waiting for a review
-// that nobody was asked for.
-//
-// Its own kind rather than a variant of waited_too_long, because the two want
-// different responses: a slow review is chased, and a review nobody requested
-// is announced. Sending somebody to chase reviewers who were never asked is
-// the failure this exists to prevent, and it is what the timeout would
-// eventually have said.
-const EventWaitingUnannounced = "waiting_unannounced"
-
 // unannouncedWaits finds open waits on a review that was never announced.
 //
 // Structural rather than timed. The fact is knowable the moment the action

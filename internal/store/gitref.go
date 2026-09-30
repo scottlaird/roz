@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -304,7 +305,7 @@ func globMatch(pattern, name string) bool {
 // head is a change to an observed column, which the diff logs on its own.
 func (t *Tx) ObserveRef(ctx context.Context, ref *GitRef) (bool, error) {
 	before, err := t.LoadGitRef(ctx, ref.ID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		if err := t.Insert(ctx, ref); err != nil {
 			return false, err
 		}
@@ -492,7 +493,7 @@ func (t *Tx) RefWaitFor(ctx context.Context, actionID string) (*RefWait, error) 
 		SELECT action_id, repo_id, kind, path_prefix, matcher
 		FROM action_ref_wait WHERE action_id = ?`, actionID).
 		Scan(&w.ActionID, &w.RepoID, &w.Kind, &w.PathPrefix, &w.Matcher)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

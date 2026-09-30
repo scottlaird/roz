@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -181,7 +182,7 @@ func (t *Tx) ShortNameHolder(ctx context.Context, short string) (string, bool, e
 	var id string
 	err := t.tx.QueryRowContext(ctx,
 		"SELECT id FROM github_repo WHERE short_name = ?", short).Scan(&id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -265,7 +266,5 @@ func (t *Tx) SetOwnerHints(ctx context.Context, r *GitHubRepo, hints []string) e
 	if from == to {
 		return nil
 	}
-	return t.emit(ctx, r, event{
-		kind: eventChanged, field: "owner_hints", oldValue: from, newValue: to,
-	})
+	return t.Changed(ctx, r, "owner_hints", from, to)
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -91,7 +92,7 @@ func (s *Store) SetPageNote(ctx context.Context, actor Actor, key, body string) 
 	var changes []Change
 	before, err := tx.LoadPageNote(ctx, key)
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		if err := tx.Insert(ctx, &PageNote{Key: key, Body: body}); err != nil {
 			return nil, err
 		}

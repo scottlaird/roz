@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -24,7 +25,7 @@ func (t *Tx) WaitOnIssue(ctx context.Context, actionID, tracker, key string) err
 	}
 	id := IssueID(tracker, key)
 	if _, err := t.LoadTrackerIssue(ctx, id); err != nil {
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err := t.Insert(ctx, NewTrackerIssue(tracker, key)); err != nil {
@@ -49,7 +50,7 @@ func (t *Tx) IssueWaitedOnBy(ctx context.Context, actionID string) (string, erro
 	var id string
 	err := t.tx.QueryRowContext(ctx,
 		"SELECT issue_id FROM action_tracker_issue WHERE action_id = ?", actionID).Scan(&id)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {

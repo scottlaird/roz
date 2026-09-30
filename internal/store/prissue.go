@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -179,7 +180,7 @@ func (t *Tx) ReconcileClosingIssues(ctx context.Context, prID string, keys []str
 // — so this is what makes the link point at something that will ever update.
 func (t *Tx) ensureIssue(ctx context.Context, id, tracker, key string) error {
 	if _, err := t.LoadTrackerIssue(ctx, id); err != nil {
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		return t.Insert(ctx, NewTrackerIssue(tracker, key))

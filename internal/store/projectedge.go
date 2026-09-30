@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -140,7 +141,7 @@ func (t *Tx) projectBlocks(ctx context.Context, from, to string) (bool, error) {
 
 	var found int
 	err := t.tx.QueryRowContext(ctx, query, from, to).Scan(&found)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {

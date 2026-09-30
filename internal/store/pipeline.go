@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -325,7 +326,7 @@ func (e *PipelineStepError) Error() string {
 func (t *Tx) CheckPipelineSteps(ctx context.Context, steps []PipelineStep) error {
 	for _, step := range steps {
 		v, err := t.LoadVerb(ctx, step.Verb)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return &PipelineStepError{Verb: step.Verb, Reason: "there is no such verb"}
 		}
 		if err != nil {
@@ -432,9 +433,7 @@ func (t *Tx) SetSteps(ctx context.Context, p *Pipeline, steps []PipelineStep) er
 	// than one per row: what a reader wants is what it runs now.
 	before, after := StepsText(p.Steps), StepsText(steps)
 	if before != after {
-		if err := t.emit(ctx, p, event{
-			kind: eventChanged, field: "steps", oldValue: before, newValue: after,
-		}); err != nil {
+		if err := t.Changed(ctx, p, "steps", before, after); err != nil {
 			return err
 		}
 	}

@@ -153,12 +153,7 @@ func (t *Tx) deleteCheck(ctx context.Context, prID, name string) error {
 // does — `checks/build: "SUCCESS" → "FAILURE"` — and `roz watch` needs to
 // know nothing new to print it.
 func (t *Tx) logCheck(ctx context.Context, prID, name, from, to string) error {
-	return t.emit(ctx, &PR{ID: prID}, event{
-		kind:     eventChanged,
-		field:    "checks/" + name,
-		oldValue: from,
-		newValue: to,
-	})
+	return t.Changed(ctx, &PR{ID: prID}, "checks/"+name, from, to)
 }
 
 func sortedNames(checks map[string]string) []string {

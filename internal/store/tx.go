@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -92,7 +93,7 @@ func (t *Tx) Commit() error {
 // works as a deferred cleanup.
 func (t *Tx) Rollback() error {
 	err := t.tx.Rollback()
-	if err == nil || err == sql.ErrTxDone {
+	if err == nil || errors.Is(err, sql.ErrTxDone) {
 		return nil
 	}
 	return fmt.Errorf("rolling back transaction: %w", err)
@@ -205,13 +206,7 @@ func (t *Tx) Update(ctx context.Context, before, after Record) ([]Change, error)
 	}
 
 	for _, change := range changes {
-		err := t.emit(ctx, after, event{
-			kind:     eventChanged,
-			field:    change.Column,
-			oldValue: change.Old,
-			newValue: change.New,
-		})
-		if err != nil {
+		if err := t.Changed(ctx, after, change.Column, change.Old, change.New); err != nil {
 			return nil, err
 		}
 	}

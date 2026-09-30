@@ -280,7 +280,7 @@ func (m *mcpTools) Call(ctx context.Context, name string, arguments map[string]a
 		// Cobra has usually printed something useful already; the error is
 		// the summary, and both are worth returning.
 		if out.Len() > 0 {
-			return "", fmt.Errorf("%s\n%s", err, strings.TrimSpace(out.String()))
+			return "", fmt.Errorf("%w\n%s", err, strings.TrimSpace(out.String()))
 		}
 		return "", err
 	}

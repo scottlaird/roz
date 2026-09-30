@@ -1,6 +1,6 @@
 # golangci-lint v2 configuration.
 #
-# Two linters, and the config is mostly about what they may not say.
+# Three linters, and the config is mostly about what they may not say.
 #
 # staticcheck is here for its dead-code check above all: nine unused functions
 # sat in the tree for weeks, two of them carrying paragraphs of rationale for
@@ -13,6 +13,11 @@
 # nothing to say after the reads succeeded, and `fmt.Fprint*` to a writer the
 # command already owns. Without these exclusions errcheck reports about fifty
 # of those and the real one is on page three.
+#
+# errorlint is here for one comparison: `err == sql.ErrNoRows`. Nineteen sites
+# had it and thirteen had errors.Is, and the first query error anybody wrapped
+# with %w would have turned the nineteen "not found" branches into nineteen
+# unexpected errors. It is all errors.Is now, and this is what keeps it so.
 version: "2"
 
 linters:
@@ -21,6 +26,7 @@ linters:
     - errcheck
     - staticcheck
     - govet
+    - errorlint
   settings:
     errcheck:
       exclude-functions:

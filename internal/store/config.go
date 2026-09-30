@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -105,7 +106,7 @@ func scanConfig(ctx context.Context, q queryRower) (*Config, error) {
 
 	query := fmt.Sprintf("SELECT %s FROM config WHERE id = ?", strings.Join(columns, ", "))
 	switch err := q.QueryRowContext(ctx, query, ConfigID).Scan(dest...); {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		// The migration seeds the row, so this means someone deleted it.
 		// Saying that is more use than an empty struct that reads as "nothing
 		// is configured".

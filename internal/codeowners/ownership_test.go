@@ -55,7 +55,7 @@ func TestLastMatchWins(t *testing.T) {
 func TestSoleApproverExists(t *testing.T) {
 	o := ownershipOf(t, overlapping, "README.md", "cmd/main.go", "docs/a.md")
 
-	if got, want := o.SoleApprovers(), []Owner{"org/platform"}; !reflect.DeepEqual(got, want) {
+	if got, want := o.SoleApprovers(nil), []Owner{"org/platform"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("SoleApprovers() = %v, want %v", got, want)
 	}
 }
@@ -66,7 +66,7 @@ func TestNoSoleApprover(t *testing.T) {
 	o := ownershipOf(t, overlapping,
 		"README.md", "storage/engine.go", "storage/schema.proto")
 
-	if got := o.SoleApprovers(); len(got) != 0 {
+	if got := o.SoleApprovers(nil); len(got) != 0 {
 		t.Errorf("SoleApprovers() = %v, want nobody", got)
 	}
 	if got, want := len(o.Owners()), 3; got != want {
@@ -115,7 +115,7 @@ func TestEnoughAndPlan(t *testing.T) {
 		t.Error("one approval was called enough for three owners")
 	}
 
-	plan := o.Plan(OwnerSet{})
+	plan := o.Plan(OwnerSet{}, nil)
 	if len(plan) != 3 {
 		t.Errorf("Plan() = %v, want all three owners", plan)
 	}
@@ -124,7 +124,7 @@ func TestEnoughAndPlan(t *testing.T) {
 	}
 
 	// A plan from a partial approval only asks for what is missing.
-	rest := o.Plan(NewOwnerSet("@org/platform"))
+	rest := o.Plan(NewOwnerSet("@org/platform"), nil)
 	if len(rest) != 2 {
 		t.Errorf("Plan(platform approved) = %v, want the other two", rest)
 	}
@@ -147,7 +147,7 @@ func TestUnownedFilesDoNotBlock(t *testing.T) {
 	if got, want := o.Unowned(), []string{"README.md"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Unowned() = %v, want %v", got, want)
 	}
-	if got, want := o.SoleApprovers(), []Owner{"org/storage"}; !reflect.DeepEqual(got, want) {
+	if got, want := o.SoleApprovers(nil), []Owner{"org/storage"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("SoleApprovers() = %v, want %v", got, want)
 	}
 	if o.Remaining(NewOwnerSet("@org/storage")) != nil {
@@ -160,7 +160,7 @@ func TestUnownedFilesDoNotBlock(t *testing.T) {
 func TestNothingOwnedHasNoSoleApprover(t *testing.T) {
 	o := ownershipOf(t, "/storage/ @org/storage\n", "README.md", "cmd/main.go")
 
-	if got := o.SoleApprovers(); len(got) != 0 {
+	if got := o.SoleApprovers(nil); len(got) != 0 {
 		t.Errorf("SoleApprovers() = %v, want nobody", got)
 	}
 	if !o.Enough(OwnerSet{}) {
@@ -186,5 +186,60 @@ func TestEmptyOwnersRemoveOwnership(t *testing.T) {
 	// no rule matching, and the caller can tell them apart.
 	if _, ok := file.Match("vendor/lib/x.go"); !ok {
 		t.Error("the vendor rule did not match, so nothing carved it out")
+	}
+}
+
+// A team wholly inside another: asking it produces an approval that satisfies
+// both, so it covers both teams' files.
+func TestNestedTeams(t *testing.T) {
+	file, err := ParseString(`
+* @org/core @org/api @org/platform
+/storage/ @org/storage
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := file.Of([]string{"storage/a.go", "storage/b.go", "api/x.go", "cmd/y.go"})
+	nested := NewStaticMembership(map[string][]string{
+		"org/storage": {"alice", "bob"},
+		"org/core":    {"alice", "bob", "carol"},
+		"org/api":     {"dave"},
+	})
+
+	reach := o.Reach(OwnerSet{}, nested)
+	if reach[0].Owner != "org/storage" || reach[0].Files != 4 || len(reach[0].StandsFor) != 1 || reach[0].StandsFor[0] != "org/core" {
+		t.Errorf("storage should reach all 4 files as a member of core; got %+v", reach[0])
+	}
+	if got := o.Plan(OwnerSet{}, nested); len(got) != 1 || got[0] != "org/storage" {
+		t.Errorf("one storage approval is enough; plan = %v", got)
+	}
+	if got := o.SoleApprovers(nested); len(got) != 1 || got[0] != "org/storage" {
+		t.Errorf("storage alone covers everything; sole = %v", got)
+	}
+
+	// Without membership it takes two approvals, as before.
+	if got := o.Plan(OwnerSet{}, nil); len(got) != 2 {
+		t.Errorf("without membership, plan = %v, want two owners", got)
+	}
+	if got := o.SoleApprovers(nil); len(got) != 0 {
+		t.Errorf("without membership nobody covers everything; sole = %v", got)
+	}
+
+	// A partial overlap is not nesting: whoever answers might not count.
+	partial := NewStaticMembership(map[string][]string{
+		"org/storage": {"alice", "erin"},
+		"org/core":    {"alice", "bob"},
+	})
+	if got := o.Plan(OwnerSet{}, partial); len(got) != 2 {
+		t.Errorf("partial overlap should not merge teams; plan = %v", got)
+	}
+
+	// Once storage has approved, nothing is left.
+	approved := Approval([]string{"alice"}, NewStaticTeams(map[string][]string{
+		"org/storage": {"alice", "bob"},
+		"org/core":    {"alice", "bob", "carol"},
+	}))
+	if got := o.Plan(approved, nested); len(got) != 0 {
+		t.Errorf("after a storage member approves, plan = %v, want nothing", got)
 	}
 }

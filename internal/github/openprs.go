@@ -44,6 +44,8 @@ type OpenPR struct {
 	Assignees      []string
 	// Reviews is each reviewer's latest review, comments included.
 	Reviews []Review
+	// Approvers are the reviewers whose approval still stands.
+	Approvers []string
 	// ChangesRequestedBy are the reviewers whose change request still stands.
 	// Read separately from Reviews: a reviewer who comments after requesting
 	// changes has a comment as their latest review, but the request holds.
@@ -312,8 +314,14 @@ func (w wireOpenPR) decode(owner, name string) OpenPR {
 		pr.noteActivity(login, n.Commit.CommittedDate)
 	}
 	for _, r := range w.LatestOpinionatedReviews.Nodes {
-		if r.State == "CHANGES_REQUESTED" && r.Author != nil && r.Author.TypeName != "Bot" {
+		if r.Author == nil || r.Author.TypeName == "Bot" {
+			continue
+		}
+		switch r.State {
+		case "CHANGES_REQUESTED":
 			pr.ChangesRequestedBy = append(pr.ChangesRequestedBy, r.Author.Login)
+		case "APPROVED":
+			pr.Approvers = append(pr.Approvers, r.Author.Login)
 		}
 	}
 	seen := map[string]bool{}

@@ -30,6 +30,10 @@ type Config struct {
 	Team codeowners.Owner
 	// Members are the team's logins.
 	Members []string
+	// TeamMembers is the membership of the teams CODEOWNERS names, keyed by
+	// org/slug, for working out which approvals are still needed. Without it
+	// a nested team isn't credited for the team it sits inside.
+	TeamMembers map[string][]string
 	// MaxRuleOwners ignores CODEOWNERS rules naming more owners than this: a
 	// rule listing the team among many is a catch-all, not a claim. Zero
 	// means no limit.
@@ -119,7 +123,8 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 			}
 			continue
 		}
-		waitingOn, why := waitingOn(pr, cfg.Team, len(teamReasonsOnly(reasons)) > 0)
+		needed := neededOwners(pr, owners[pr.BaseRef], cfg)
+		waitingOn, why := waitingOn(pr, cfg.Team, len(teamReasonsOnly(reasons)) > 0, needed, namedTeams(owners[pr.BaseRef]), cfg)
 		items = append(items, Item{
 			PR: pr, Reasons: reasons, WaitingOn: waitingOn, Why: why,
 			Section: section(pr, waitingOn, why, cfg.Team, members),
@@ -169,6 +174,27 @@ func markBlockers(items []Item) {
 			return items[i].Blocks[a].Key < items[i].Blocks[b].Key
 		})
 	}
+}
+
+// neededOwners is the fewest CODEOWNERS approvals still outstanding, given the
+// approvals the pull request already has. Nil when the base branch has no
+// CODEOWNERS to plan from.
+func neededOwners(pr github.OpenPR, file *codeowners.File, cfg Config) []codeowners.Owner {
+	if file == nil {
+		return nil
+	}
+	o := file.Of(pr.Files)
+	approved := codeowners.Approval(pr.Approvers, codeowners.NewStaticTeams(cfg.TeamMembers))
+	return o.Plan(approved, codeowners.NewStaticMembership(cfg.TeamMembers))
+}
+
+// namedTeams is every team a CODEOWNERS file names anywhere.
+func namedTeams(file *codeowners.File) codeowners.OwnerSet {
+	named := codeowners.OwnerSet{}
+	if file != nil {
+		named.Add(file.Teams()...)
+	}
+	return named
 }
 
 // maxStackDepth bounds the walk down a stack, against a cycle of branches
@@ -287,6 +313,63 @@ func skipReason(pr github.OpenPR, file *codeowners.File, cfg Config) string {
 	return "requested, but nothing in the current diff is the team's"
 }
 
+// outstandingReviewers says who a pull request with review requests is
+// waiting on. People asked by name always count. Teams count only where
+// CODEOWNERS still needs them: GitHub requests every owning team, never takes
+// a request back, and doesn't know that one approval can satisfy several
+// teams, so its request list overstates what's left. A needed team is left
+// out when someone asked by name already stands for it.
+//
+// A requested team that no CODEOWNERS rule names always counts: something
+// other than CODEOWNERS asked for it, and nothing here knows whether that is
+// satisfied.
+//
+// Without CODEOWNERS to plan from, or when the plan is satisfied but GitHub
+// still wants reviews (a required count above one, say), this falls back to
+// the requested teams, minus the team's own request when it owns nothing.
+func outstandingReviewers(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []codeowners.Owner, named codeowners.OwnerSet, cfg Config) []string {
+	var reviewers []string
+	seen := map[codeowners.Owner]bool{}
+	add := func(o codeowners.Owner, display string) {
+		if !seen[o] {
+			seen[o] = true
+			reviewers = append(reviewers, "@"+display)
+		}
+	}
+	// Logins keep the capitalization GitHub gives them; teams are shown as
+	// CODEOWNERS normalizes them.
+	for _, u := range pr.RequestedUsers {
+		add(codeowners.NormalizeOwner(u), u)
+	}
+
+	if len(needed) > 0 {
+		covered := codeowners.Approval(pr.RequestedUsers, codeowners.NewStaticTeams(cfg.TeamMembers))
+		for _, o := range needed {
+			if !covered.Contains(o) {
+				add(o, string(o))
+			}
+		}
+		// A team no CODEOWNERS rule names was asked for some other reason --
+		// by hand, or by a branch ruleset such as a deployment gate. Nothing
+		// here can tell whether it is still needed, so it stays.
+		for _, t := range pr.RequestedTeams {
+			if o := codeowners.NormalizeOwner(t); !named.Contains(o) {
+				add(o, string(o))
+			}
+		}
+		return reviewers
+	}
+
+	for _, t := range pr.RequestedTeams {
+		o := codeowners.NormalizeOwner(t)
+		if o == team && !teamOwns {
+			continue
+		}
+		add(o, string(o))
+	}
+	return reviewers
+}
+
 // NoReviewer is the Why of a pull request nobody has been asked to review.
 const NoReviewer = "no reviewer requested"
 
@@ -299,7 +382,7 @@ const NoReviewer = "no reviewer requested"
 // The team's own request is dropped when the team does not own anything in
 // the diff: that request is stale, and naming it would send people to a pull
 // request that does not need them.
-func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool) ([]string, string) {
+func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []codeowners.Owner, named codeowners.OwnerSet, cfg Config) ([]string, string) {
 	if len(pr.ChangesRequestedBy) > 0 {
 		changesBy := make([]string, len(pr.ChangesRequestedBy))
 		for i, login := range pr.ChangesRequestedBy {
@@ -308,18 +391,10 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool) ([]string
 		return []string{"@" + pr.Author}, "changes requested by " + strings.Join(changesBy, ", ")
 	}
 
-	var reviewers []string
-	for _, u := range pr.RequestedUsers {
-		reviewers = append(reviewers, "@"+u)
-	}
-	for _, t := range pr.RequestedTeams {
-		if codeowners.NormalizeOwner(t) == team && !teamOwns {
-			continue
+	if len(pr.RequestedUsers) > 0 || len(pr.RequestedTeams) > 0 {
+		if reviewers := outstandingReviewers(pr, team, teamOwns, needed, named, cfg); len(reviewers) > 0 {
+			return reviewers, "review requested"
 		}
-		reviewers = append(reviewers, "@"+t)
-	}
-	if len(reviewers) > 0 {
-		return reviewers, "review requested"
 	}
 
 	// Nobody asked and nobody has reviewed: it needs a reviewer, and naming

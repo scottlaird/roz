@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -168,8 +169,28 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
+		// Membership of every team the CODEOWNERS files name, so the report
+		// can tell when one approval satisfies several teams.
+		teamSet := map[string]bool{string(team): true}
+		for _, file := range owners {
+			for _, t := range file.Teams() {
+				teamSet[string(t)] = true
+			}
+		}
+		refs := make([]string, 0, len(teamSet))
+		for t := range teamSet {
+			refs = append(refs, t)
+		}
+		sort.Strings(refs)
+		logf("%s: reading membership of %d teams", repo, len(refs))
+		teamMembers, err := gh.TeamMembers(ctx, refs)
+		if err != nil {
+			return fmt.Errorf("reading team membership: %w", err)
+		}
+
 		repoCfg := cfg
 		repoCfg.Branches = branches
+		repoCfg.TeamMembers = teamMembers
 
 		items, skipped := reviewqueue.Select(prs, owners, repoCfg)
 		logf("%s: %d for %s, %d requested but not its", repo, len(items), team, len(skipped))

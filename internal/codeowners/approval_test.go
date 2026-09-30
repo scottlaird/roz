@@ -39,7 +39,7 @@ func TestOneReviewerSatisfiesEveryTeamTheyAreIn(t *testing.T) {
 
 	// Two files, two different owning teams, and no sole approver among the
 	// teams themselves.
-	if got := o.SoleApprovers(); len(got) != 0 {
+	if got := o.SoleApprovers(nil); len(got) != 0 {
 		t.Fatalf("SoleApprovers() = %v, want nobody at team granularity", got)
 	}
 

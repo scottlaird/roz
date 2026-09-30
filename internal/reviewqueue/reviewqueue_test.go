@@ -132,6 +132,7 @@ func TestWaitingOn(t *testing.T) {
 		name     string
 		pr       github.OpenPR
 		teamOwns bool
+		ignore   []codeowners.Owner
 		want     string
 		why      string
 	}{
@@ -185,6 +186,45 @@ func TestWaitingOn(t *testing.T) {
 			want: "@carol", why: AuthorsTurn,
 		},
 		{
+			name: "only the team's request left, a member commented, author hasn't answered",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedTeams = []string{"org/storage"}
+				p.Reviews = []github.Review{{Author: "bob", State: "COMMENTED", At: t0}}
+				p.LastActor, p.LastActivity = "bob", t0
+			}),
+			teamOwns: true,
+			want:     "@carol", why: AuthorsTurn,
+		},
+		{
+			name: "only the team's request left, a member commented, author since updated",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedTeams = []string{"org/storage"}
+				p.Reviews = []github.Review{{Author: "bob", State: "COMMENTED", At: t0}}
+				p.LastActor, p.LastActivity = "carol", t0.Add(time.Hour)
+			}),
+			teamOwns: true,
+			want:     "@bob", why: UpdatedSinceReview,
+		},
+		{
+			name: "only the team's request left, and only an outsider commented",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedTeams = []string{"org/storage"}
+				p.Reviews = []github.Review{{Author: "erin", State: "COMMENTED", At: t0}}
+				p.LastActor, p.LastActivity = "erin", t0
+			}),
+			teamOwns: true,
+			want:     "@org/storage", why: "review requested",
+		},
+		{
+			name: "an ignored team is never waited on",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedTeams = []string{"org/storage", "org/retired-gate"}
+			}),
+			teamOwns: true,
+			ignore:   []codeowners.Owner{"org/retired-gate"},
+			want:     "@org/storage", why: "review requested",
+		},
+		{
 			name: "the author's own comments are not a review",
 			pr: pr(1, func(p *github.OpenPR) {
 				p.Reviews = []github.Review{{Author: "carol", State: "COMMENTED", At: t0}}
@@ -193,7 +233,9 @@ func TestWaitingOn(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, why := waitingOn(tc.pr, team, tc.teamOwns, nil, nil, config())
+			cfg := config()
+			cfg.IgnoreTeams = tc.ignore
+			got, why := waitingOn(tc.pr, team, tc.teamOwns, nil, nil, cfg)
 			if strings.Join(got, ", ") != tc.want || why != tc.why {
 				t.Errorf("got %v (%s), want %s (%s)", got, why, tc.want, tc.why)
 			}

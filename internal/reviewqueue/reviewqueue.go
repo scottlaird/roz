@@ -383,9 +383,9 @@ const NoReviewer = "no reviewer requested"
 // one that has been reviewed or commented on is back with those people if the
 // author moved last, and the author's if not.
 //
-// A request left only on the team itself, once a member has reviewed or
-// commented, is decided the same way: that member is the team's reviewer, and
-// the open request says nothing about whose turn it is.
+// Once a member has reviewed or commented, the team's own request is decided
+// the same way: that member is the team's reviewer, and the open request says
+// nothing about whose turn it is. Anyone else still requested is listed after.
 //
 // The team's own request is dropped when the team does not own anything in
 // the diff: that request is stale, and naming it would send people to a pull
@@ -401,9 +401,17 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []
 
 	if len(pr.RequestedUsers) > 0 || len(pr.RequestedTeams) > 0 {
 		reviewers := outstandingReviewers(pr, team, teamOwns, needed, named, cfg)
-		onlyTeam := len(reviewers) == 1 && codeowners.NormalizeOwner(reviewers[0]) == team
-		teamHasLooked := onlyTeam && engaged(pr, memberSet(cfg.Members))
-		if len(reviewers) > 0 && !teamHasLooked {
+		others := make([]string, 0, len(reviewers))
+		for _, r := range reviewers {
+			if codeowners.NormalizeOwner(r) != team {
+				others = append(others, r)
+			}
+		}
+		if len(others) < len(reviewers) && engaged(pr, memberSet(cfg.Members)) {
+			names, why := turn(pr, responders(pr))
+			return append(names, others...), why
+		}
+		if len(reviewers) > 0 {
 			return reviewers, "review requested"
 		}
 	}
@@ -415,9 +423,12 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []
 		return []string{"@" + pr.Author}, NoReviewer
 	}
 
-	// Reviewed or commented on, with nothing outstanding. If the author moved
-	// last, it is back with those who responded; if not, the author has
-	// something to answer.
+	return turn(pr, responded)
+}
+
+// turn says whose move a reviewed or commented-on pull request is: back with
+// those who responded if the author moved last, the author's if not.
+func turn(pr github.OpenPR, responded []string) ([]string, string) {
 	if strings.EqualFold(pr.LastActor, pr.Author) {
 		names := make([]string, len(responded))
 		for i, login := range responded {

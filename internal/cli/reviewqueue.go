@@ -51,6 +51,9 @@ func newReviewQueueCmd() *cobra.Command {
 			"back a CODEOWNERS request when the files that caused it leave the diff.\n" +
 			"Rules naming more than --max-rule-owners owners are catch-alls and don't\n" +
 			"count either.\n\n" +
+			"A pull request stacked on others -- its base branch is another open pull\n" +
+			"request's head -- is held back, listed on one line at the end, until every\n" +
+			"pull request under it is approved.\n\n" +
 			"Jira keys in titles, and issue links in descriptions, are linked using\n" +
 			"roz's jira_base_url and limited to its jira_prefixes, as on the pages.\n\n" +
 			"Prints Slack mrkdwn. --post sends it to the incoming webhook in\n" +
@@ -160,7 +163,15 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 			owners[pr.BaseRef] = file
 		}
 
-		items, skipped := reviewqueue.Select(prs, owners, cfg)
+		logf("%s: listing open pull request branches, for stacks", repo)
+		branches, err := gh.OpenPRBranches(ctx, repo)
+		if err != nil {
+			return err
+		}
+		repoCfg := cfg
+		repoCfg.Branches = branches
+
+		items, skipped := reviewqueue.Select(prs, owners, repoCfg)
 		logf("%s: %d for %s, %d requested but not its", repo, len(items), team, len(skipped))
 		opts := reviewqueue.Options{
 			Now: time.Now(), StaleAfter: staleAfter, ShowReasons: showReasons, JiraURL: jira.base,

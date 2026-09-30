@@ -33,6 +33,7 @@ type OpenPR struct {
 	Author         string
 	Draft          bool
 	BaseRef        string
+	HeadRef        string
 	ReviewDecision string
 	CreatedAt      time.Time
 
@@ -119,6 +120,7 @@ type wireOpenPR struct {
 	Body           string     `json:"body"`
 	IsDraft        bool       `json:"isDraft"`
 	BaseRefName    string     `json:"baseRefName"`
+	HeadRefName    string     `json:"headRefName"`
 	ReviewDecision string     `json:"reviewDecision"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	Author         *wireActor `json:"author"`
@@ -183,7 +185,7 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
     search(query: %q, type: ISSUE, first: %d, after: %s) {
       pageInfo { hasNextPage endCursor }
       nodes { ... on PullRequest {
-        number url title body isDraft baseRefName reviewDecision createdAt
+        number url title body isDraft baseRefName headRefName reviewDecision createdAt
         author { login }
         reviewRequests(first: 50) { nodes { requestedReviewer {
           ... on User { login }
@@ -266,6 +268,7 @@ func (w wireOpenPR) decode(owner, name string) OpenPR {
 		Body:           w.Body,
 		Draft:          w.IsDraft,
 		BaseRef:        w.BaseRefName,
+		HeadRef:        w.HeadRefName,
 		ReviewDecision: w.ReviewDecision,
 		CreatedAt:      w.CreatedAt,
 	}
@@ -336,4 +339,103 @@ func (pr *OpenPR) noteActivity(login string, at time.Time) {
 		return
 	}
 	pr.LastActor, pr.LastActivity = login, at
+}
+
+// PRBranch is where an open pull request sits: enough to find the stack it
+// belongs to and whether the pull requests under it are ready.
+type PRBranch struct {
+	Key            string
+	URL            string
+	Number         int64
+	HeadRef        string
+	BaseRef        string
+	Draft          bool
+	ReviewDecision string
+}
+
+// branchPage is larger than openPRPage because each pull request carries only
+// a few scalars.
+const branchPage = 100
+
+// OpenPRBranches lists every open pull request in a repository, drafts and
+// approved ones included, with its branches and review decision. It is the
+// cheap companion to OpenPullRequests: that one skips the drafts and approved
+// pull requests a stack can be built on.
+func (c *Client) OpenPRBranches(ctx context.Context, repo string) ([]PRBranch, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" {
+		return nil, fmt.Errorf("repository %q is not owner/name", repo)
+	}
+	var out []PRBranch
+	cursor := "null"
+	for page := 0; ; page++ {
+		if page >= openPRMaxPages {
+			return nil, fmt.Errorf("%s still had open pull requests after %d pages", repo, openPRMaxPages)
+		}
+		query := fmt.Sprintf(`query {
+  rateLimit { cost remaining limit resetAt }
+  repository(owner: %q, name: %q) {
+    pullRequests(states: OPEN, first: %d, after: %s) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number url headRefName baseRefName isDraft reviewDecision headRepository { nameWithOwner } }
+    }
+  }
+}
+`, owner, name, branchPage, cursor)
+		body, err := c.request(ctx, ReadOpenPullRequests, query)
+		if err != nil {
+			return nil, err
+		}
+		var decoded struct {
+			Data struct {
+				RateLimit  json.RawMessage `json:"rateLimit"`
+				Repository *struct {
+					PullRequests struct {
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+						Nodes []struct {
+							Number         int64  `json:"number"`
+							URL            string `json:"url"`
+							HeadRefName    string `json:"headRefName"`
+							BaseRefName    string `json:"baseRefName"`
+							IsDraft        bool   `json:"isDraft"`
+							ReviewDecision string `json:"reviewDecision"`
+							HeadRepository *struct {
+								NameWithOwner string `json:"nameWithOwner"`
+							} `json:"headRepository"`
+						} `json:"nodes"`
+					} `json:"pullRequests"`
+				} `json:"repository"`
+			} `json:"data"`
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			return nil, fmt.Errorf("decoding open pull request branches: %w", err)
+		}
+		if decoded.Data.Repository == nil {
+			return nil, fmt.Errorf("%s could not be read: %s", repo, firstMessage(decoded.Errors))
+		}
+		observeRateLimit(decodeRateLimit(decoded.Data.RateLimit))
+		list := decoded.Data.Repository.PullRequests
+		for _, n := range list.Nodes {
+			// A pull request from a fork has a head branch in another
+			// repository, so nothing here can be stacked on it.
+			if n.HeadRepository == nil || !strings.EqualFold(n.HeadRepository.NameWithOwner, repo) {
+				continue
+			}
+			out = append(out, PRBranch{
+				Key: fmt.Sprintf("%s#%d", repo, n.Number), URL: n.URL, Number: n.Number,
+				HeadRef: n.HeadRefName, BaseRef: n.BaseRefName,
+				Draft: n.IsDraft, ReviewDecision: n.ReviewDecision,
+			})
+		}
+		if !list.PageInfo.HasNextPage {
+			return out, nil
+		}
+		cursor = fmt.Sprintf("%q", list.PageInfo.EndCursor)
+	}
 }

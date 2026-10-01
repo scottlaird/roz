@@ -117,7 +117,7 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 			continue
 		}
 		reasons := teamReasons(pr, owners[pr.BaseRef], cfg)
-		reasons = append(reasons, memberReasons(pr, members)...)
+		reasons = append(reasons, memberReasons(pr, members, askedForAnotherOwner(pr, owners[pr.BaseRef], cfg))...)
 		if len(reasons) == 0 {
 			if requested(pr, cfg.Team) {
 				skipped = append(skipped, Skipped{PR: pr, Reason: skipReason(pr, owners[pr.BaseRef], cfg)})
@@ -275,19 +275,52 @@ func countClaimed(pr github.OpenPR, file *codeowners.File, cfg Config) int {
 
 // memberReasons names members asked for by name. An author assigning
 // themselves is not the team being asked for anything.
-func memberReasons(pr github.OpenPR, members map[string]bool) []string {
+//
+// A member who also belongs to another team owning files in the diff was most likely asked as that
+// team's reviewer, so the request doesn't make the pull request this team's. Without that, a team
+// nested inside another would collect every request that names a member the two share.
+func memberReasons(pr github.OpenPR, members, otherOwners map[string]bool) []string {
 	var reasons []string
+	ours := func(login string) bool {
+		key := strings.ToLower(login)
+		return members[key] && !otherOwners[key]
+	}
 	for _, u := range pr.RequestedUsers {
-		if members[strings.ToLower(u)] {
+		if ours(u) {
 			reasons = append(reasons, "review requested from @"+u)
 		}
 	}
 	for _, a := range pr.Assignees {
-		if members[strings.ToLower(a)] && !strings.EqualFold(a, pr.Author) {
+		if ours(a) && !strings.EqualFold(a, pr.Author) {
 			reasons = append(reasons, "assigned to @"+a)
 		}
 	}
 	return reasons
+}
+
+// askedForAnotherOwner is the logins, lower-cased, of every member of a team other than ours that
+// owns a file in the diff. Catch-all rules don't count here any more than they claim a pull
+// request for the team: a team named among many owns nothing in particular.
+func askedForAnotherOwner(pr github.OpenPR, file *codeowners.File, cfg Config) map[string]bool {
+	logins := map[string]bool{}
+	if file == nil {
+		return logins
+	}
+	for _, path := range pr.Files {
+		owners := file.Owners(path)
+		if cfg.MaxRuleOwners > 0 && len(owners) > cfg.MaxRuleOwners {
+			continue
+		}
+		for _, o := range owners {
+			if o == cfg.Team || !o.IsTeam() {
+				continue
+			}
+			for _, login := range cfg.TeamMembers[string(o)] {
+				logins[strings.ToLower(login)] = true
+			}
+		}
+	}
+	return logins
 }
 
 func requested(pr github.OpenPR, team codeowners.Owner) bool {
@@ -342,12 +375,13 @@ func outstandingReviewers(pr github.OpenPR, team codeowners.Owner, teamOwns bool
 	}
 	// Logins keep the capitalization GitHub gives them; teams are shown as
 	// CODEOWNERS normalizes them.
-	for _, u := range pr.RequestedUsers {
+	requestedUsers := stillAwaited(pr)
+	for _, u := range requestedUsers {
 		add(codeowners.NormalizeOwner(u), u)
 	}
 
 	if len(needed) > 0 {
-		covered := codeowners.Approval(pr.RequestedUsers, codeowners.NewStaticTeams(cfg.TeamMembers))
+		covered := codeowners.Approval(requestedUsers, codeowners.NewStaticTeams(cfg.TeamMembers))
 		for _, o := range needed {
 			if !covered.Contains(o) {
 				add(o, string(o))
@@ -372,6 +406,22 @@ func outstandingReviewers(pr github.OpenPR, team codeowners.Owner, teamOwns bool
 		add(o, string(o))
 	}
 	return reviewers
+}
+
+// stillAwaited is the requested reviewers, less whoever made the most recent move. GitHub keeps a
+// request open through a reviewer's comments -- only a submitted review clears it -- so a reviewer
+// who asked a question last is still listed as requested while the answer is the author's to give.
+func stillAwaited(pr github.OpenPR) []string {
+	if pr.LastActor == "" || strings.EqualFold(pr.LastActor, pr.Author) {
+		return pr.RequestedUsers
+	}
+	var out []string
+	for _, u := range pr.RequestedUsers {
+		if !strings.EqualFold(u, pr.LastActor) {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // NoReviewer is the Why of a pull request nobody has been asked to review.
@@ -584,6 +634,27 @@ type Options struct {
 	DataTables bool
 	// PageSize is a data table's rows per page. Zero is Slack's default.
 	PageSize int
+	// SLOWarn and SLOBreach mark a pull request idle longer than each with a yellow or red
+	// circle beside its idle time. Zero leaves that mark off.
+	SLOWarn, SLOBreach time.Duration
+}
+
+// sloMark is the circle, with a trailing space, for a pull request idle for d; empty within both
+// thresholds.
+func (o Options) sloMark(d time.Duration) string {
+	switch {
+	case o.SLOBreach > 0 && d > o.SLOBreach:
+		return "🔴 "
+	case o.SLOWarn > 0 && d > o.SLOWarn:
+		return "🟡 "
+	default:
+		return ""
+	}
+}
+
+// idleText is a pull request's idle time with its SLO mark.
+func (o Options) idleText(since time.Time) string {
+	return o.sloMark(o.Now.Sub(since)) + age(since, o.Now)
 }
 
 func (o Options) jiraLink(key string) string {
@@ -620,8 +691,9 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 					fmt.Fprintf(&b, " %s", k)
 				}
 			}
-			fmt.Fprintf(&b, " — waiting on %s (%s) · idle %s",
-				strings.Join(it.WaitingOn, ", "), it.Why, age(lastActivity(it.PR), opts.Now))
+			since := lastActivity(it.PR)
+			fmt.Fprintf(&b, " — waiting on %s (%s) · %sidle %s",
+				strings.Join(it.WaitingOn, ", "), it.Why, opts.sloMark(opts.Now.Sub(since)), age(since, opts.Now))
 			if len(it.Blocks) > 0 {
 				blocked := make([]string, len(it.Blocks))
 				for i, pr := range it.Blocks {
@@ -824,7 +896,7 @@ type cellLink struct{ url, text string }
 // ("10d" before "2h"), and displays as the same short age a plain table
 // shows.
 func idleCell(since time.Time, opts Options) map[string]any {
-	text := age(since, opts.Now)
+	text := opts.idleText(since)
 	if !opts.DataTables {
 		return rawCell(text)
 	}

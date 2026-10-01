@@ -116,6 +116,49 @@ func TestSelect(t *testing.T) {
 	}
 }
 
+// A member asked for by name on files another team owns, who is in that team too, was asked as its
+// reviewer: the pull request isn't this team's. One who isn't in an owning team still counts, and
+// a catch-all rule naming a team doesn't make its members owners.
+func TestSelectMemberAskedAsAnotherOwner(t *testing.T) {
+	file, err := codeowners.ParseString(testCodeowners + "/core/ @org/core\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]*codeowners.File{"main": file}
+	cfg := config()
+	cfg.TeamMembers = map[string][]string{
+		"org/core": {"Alice"},
+		"org/api":  {"bob"},
+	}
+	prs := []github.OpenPR{
+		// alice is in core, which owns the file.
+		pr(1, func(p *github.OpenPR) {
+			p.Files = []string{"core/engine.go"}
+			p.RequestedUsers = []string{"alice"}
+		}),
+		// Bob isn't in core.
+		pr(2, func(p *github.OpenPR) {
+			p.Files = []string{"core/engine.go"}
+			p.RequestedUsers = []string{"Bob"}
+		}),
+		// Bob is in api, but api is only named by the catch-all.
+		pr(3, func(p *github.OpenPR) {
+			p.Files = []string{"api/handler.go"}
+			p.RequestedUsers = []string{"Bob"}
+		}),
+	}
+
+	items, _ := Select(prs, owners, cfg)
+	var got []string
+	for _, it := range items {
+		got = append(got, it.PR.Key)
+	}
+	want := []string{prs[1].Key, prs[2].Key}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func TestSelectWithoutRuleLimit(t *testing.T) {
 	cfg := config()
 	cfg.MaxRuleOwners = 0
@@ -161,6 +204,24 @@ func TestWaitingOn(t *testing.T) {
 			}),
 			teamOwns: true,
 			want:     "@org/storage", why: "review requested",
+		},
+		{
+			name: "a requested reviewer who moved last is waiting on the author",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedUsers = []string{"Bob"}
+				p.Commenters = []string{"bob"}
+				p.LastActor, p.LastActivity = "bob", t0.Add(time.Hour)
+			}),
+			want: "@carol", why: AuthorsTurn,
+		},
+		{
+			name: "other requested reviewers still count",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedUsers = []string{"bob", "erin"}
+				p.Commenters = []string{"bob"}
+				p.LastActor, p.LastActivity = "bob", t0.Add(time.Hour)
+			}),
+			want: "@erin", why: "review requested",
 		},
 		{
 			name: "nobody asked and nobody reviewed",
@@ -323,6 +384,26 @@ func TestJiraKeys(t *testing.T) {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSLOMarks(t *testing.T) {
+	opts := Options{Now: t0, SLOWarn: 48 * time.Hour, SLOBreach: 7 * 24 * time.Hour}
+	for _, tc := range []struct {
+		idle time.Duration
+		want string
+	}{
+		{47 * time.Hour, "47h"},
+		{49 * time.Hour, "🟡 2d"},
+		{7 * 24 * time.Hour, "🟡 7d"},
+		{8 * 24 * time.Hour, "🔴 8d"},
+	} {
+		if got := opts.idleText(t0.Add(-tc.idle)); got != tc.want {
+			t.Errorf("idle %v: got %q, want %q", tc.idle, got, tc.want)
+		}
+	}
+	if got := (Options{Now: t0}).idleText(t0.Add(-30 * 24 * time.Hour)); got != "30d" {
+		t.Errorf("with no thresholds: got %q", got)
 	}
 }
 

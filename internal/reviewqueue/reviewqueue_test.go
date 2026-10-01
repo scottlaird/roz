@@ -159,6 +159,59 @@ func TestSelectMemberAskedAsAnotherOwner(t *testing.T) {
 	}
 }
 
+// A member's review or comment makes a pull request the team's when nothing else does, unless
+// the member was engaging as another owning team's reviewer; a member author makes it the team's
+// conversation regardless. Nested teams: alice is in core, which owns core/.
+func TestSelectEngagement(t *testing.T) {
+	file, err := codeowners.ParseString(testCodeowners + "/core/ @org/core\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]*codeowners.File{"main": file}
+	cfg := config()
+	cfg.TeamMembers = map[string][]string{"org/core": {"alice"}}
+	prs := []github.OpenPR{
+		// A member reviewed files no team of theirs owns.
+		pr(1, func(p *github.OpenPR) {
+			p.Files = []string{"api/handler.go"}
+			p.Reviews = []github.Review{{Author: "Bob", State: "COMMENTED", At: t0}}
+		}),
+		// alice reviewed as core, for an outside author.
+		pr(2, func(p *github.OpenPR) {
+			p.Files = []string{"core/engine.go"}
+			p.Reviews = []github.Review{{Author: "alice", State: "COMMENTED", At: t0}}
+		}),
+		// The same, but the author is a member: a team conversation.
+		pr(3, func(p *github.OpenPR) {
+			p.Author = "bob"
+			p.Files = []string{"core/engine.go"}
+			p.Reviews = []github.Review{{Author: "alice", State: "COMMENTED", At: t0}}
+			p.LastActor = "alice"
+		}),
+		// Only outsiders engaged.
+		pr(4, func(p *github.OpenPR) {
+			p.Files = []string{"api/handler.go"}
+			p.Commenters = []string{"erin"}
+		}),
+	}
+
+	items, _ := Select(prs, owners, cfg)
+	var got []string
+	for _, it := range items {
+		got = append(got, it.PR.Key)
+	}
+	if want := []string{prs[0].Key, prs[2].Key}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for _, it := range items {
+		if it.PR.Key == prs[2].Key {
+			if strings.Join(it.WaitingOn, ", ") != "@bob" || it.Section != OnAuthor {
+				t.Errorf("member conversation: waiting on %v in section %v, want @bob, OnAuthor", it.WaitingOn, it.Section)
+			}
+		}
+	}
+}
+
 func TestSelectWithoutRuleLimit(t *testing.T) {
 	cfg := config()
 	cfg.MaxRuleOwners = 0
@@ -306,7 +359,7 @@ func TestWaitingOn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config()
 			cfg.IgnoreTeams = tc.ignore
-			got, why := waitingOn(tc.pr, team, tc.teamOwns, nil, nil, cfg)
+			got, why := waitingOn(tc.pr, team, tc.teamOwns, false, nil, nil, cfg)
 			if strings.Join(got, ", ") != tc.want || why != tc.why {
 				t.Errorf("got %v (%s), want %s (%s)", got, why, tc.want, tc.why)
 			}
@@ -709,7 +762,7 @@ func TestWaitingOnFewestApprovals(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			needed := neededOwners(tc.pr, f, cfg)
-			got, why := waitingOn(tc.pr, team, true, needed, namedTeams(f), cfg)
+			got, why := waitingOn(tc.pr, team, true, false, needed, namedTeams(f), cfg)
 			if strings.Join(got, ", ") != tc.want || why != "review requested" {
 				t.Errorf("got %v (%s), want %s", got, why, tc.want)
 			}

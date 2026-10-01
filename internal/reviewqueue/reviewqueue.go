@@ -116,8 +116,14 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 		if pr.Draft || pr.ReviewDecision == "APPROVED" {
 			continue
 		}
+		otherOwners := askedForAnotherOwner(pr, owners[pr.BaseRef], cfg)
 		reasons := teamReasons(pr, owners[pr.BaseRef], cfg)
-		reasons = append(reasons, memberReasons(pr, members, askedForAnotherOwner(pr, owners[pr.BaseRef], cfg))...)
+		reasons = append(reasons, memberReasons(pr, members, otherOwners)...)
+		engagedOnly := false
+		if len(reasons) == 0 {
+			reasons = engagementReasons(pr, members, otherOwners)
+			engagedOnly = len(reasons) > 0
+		}
 		if len(reasons) == 0 {
 			if requested(pr, cfg.Team) {
 				skipped = append(skipped, Skipped{PR: pr, Reason: skipReason(pr, owners[pr.BaseRef], cfg)})
@@ -125,7 +131,7 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 			continue
 		}
 		needed := neededOwners(pr, owners[pr.BaseRef], cfg)
-		waitingOn, why := waitingOn(pr, cfg.Team, len(teamReasonsOnly(reasons)) > 0, needed, namedTeams(owners[pr.BaseRef]), cfg)
+		waitingOn, why := waitingOn(pr, cfg.Team, len(teamReasonsOnly(reasons)) > 0, engagedOnly, needed, namedTeams(owners[pr.BaseRef]), cfg)
 		items = append(items, Item{
 			PR: pr, Reasons: reasons, WaitingOn: waitingOn, Why: why,
 			Section: section(pr, waitingOn, why, cfg.Team, members),
@@ -323,6 +329,25 @@ func askedForAnotherOwner(pr github.OpenPR, file *codeowners.File, cfg Config) m
 	return logins
 }
 
+// engagementReasons names members who have reviewed or commented, for a pull request nothing else
+// makes the team's: a member in the middle of a review has a stake in it whoever owns the files.
+//
+// As with a request by name, engagement by a member who also belongs to a team owning files in
+// the diff is that team's -- unless the author is a member too. A conversation between two
+// members is the team's even on files a parent team owns; without that, nesting credits every
+// such review to the parent.
+func engagementReasons(pr github.OpenPR, members, otherOwners map[string]bool) []string {
+	authorIsMember := members[strings.ToLower(pr.Author)]
+	var reasons []string
+	for _, login := range responders(pr) {
+		key := strings.ToLower(login)
+		if members[key] && (!otherOwners[key] || authorIsMember) {
+			reasons = append(reasons, "@"+login+" reviewed or commented")
+		}
+	}
+	return reasons
+}
+
 func requested(pr github.OpenPR, team codeowners.Owner) bool {
 	for _, t := range pr.RequestedTeams {
 		if codeowners.NormalizeOwner(t) == team {
@@ -433,6 +458,9 @@ const NoReviewer = "no reviewer requested"
 // one that has been reviewed or commented on is back with those people if the
 // author moved last, and the author's if not.
 //
+// A pull request that is the team's only because a member engaged with it is decided the same
+// way, the team's part being that member's conversation with the author.
+//
 // Once a member has reviewed or commented, the team's own request is decided
 // the same way: that member is the team's reviewer, and the open request says
 // nothing about whose turn it is. Anyone else still requested is listed after.
@@ -440,7 +468,7 @@ const NoReviewer = "no reviewer requested"
 // The team's own request is dropped when the team does not own anything in
 // the diff: that request is stale, and naming it would send people to a pull
 // request that does not need them.
-func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []codeowners.Owner, named codeowners.OwnerSet, cfg Config) ([]string, string) {
+func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns, engagedOnly bool, needed []codeowners.Owner, named codeowners.OwnerSet, cfg Config) ([]string, string) {
 	if len(pr.ChangesRequestedBy) > 0 {
 		changesBy := make([]string, len(pr.ChangesRequestedBy))
 		for i, login := range pr.ChangesRequestedBy {
@@ -457,7 +485,7 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns bool, needed []
 				others = append(others, r)
 			}
 		}
-		if len(others) < len(reviewers) && engaged(pr, memberSet(cfg.Members)) {
+		if (len(others) < len(reviewers) || engagedOnly) && engaged(pr, memberSet(cfg.Members)) {
 			names, why := turn(pr, responders(pr))
 			return append(names, others...), why
 		}

@@ -33,6 +33,8 @@ const (
 	flagQueueTable         = "table"
 	flagQueuePageSize      = "page-size"
 	flagQueueIgnoreTeam    = "ignore-team"
+	flagQueueSLOWarn       = "slo-warn"
+	flagQueueSLOBreach     = "slo-breach"
 
 	// envSlackWebhook is where --post finds its Slack incoming webhook. An
 	// environment variable rather than a flag, so the URL stays out of shell
@@ -81,6 +83,8 @@ func newReviewQueueCmd() *cobra.Command {
 	f.String(flagQueueTable, "simple", `with --format blocks: "simple" tables, or "data" for Slack's paginated, sortable data tables`)
 	f.Int(flagQueuePageSize, 10, "rows per page in a data table")
 	f.StringSlice(flagQueueIgnoreTeam, nil, "team never to show as waited on, org/slug (repeatable)")
+	f.Duration(flagQueueSLOWarn, 48*time.Hour, "mark pull requests idle longer than this with a yellow circle; 0 marks none")
+	f.Duration(flagQueueSLOBreach, 7*24*time.Hour, "mark pull requests idle longer than this with a red circle; 0 marks none")
 	f.String(flagQueueFormat, "mrkdwn", `"mrkdwn" for a text message, or "blocks" for a Block Kit payload with tables (paste into Block Kit Builder to preview)`)
 	_ = cmd.MarkFlagRequired(flagQueueRepo)
 	_ = cmd.MarkFlagRequired(flagQueueTeam)
@@ -102,6 +106,8 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	table, _ := f.GetString(flagQueueTable)
 	pageSize, _ := f.GetInt(flagQueuePageSize)
 	ignoreRefs, _ := f.GetStringSlice(flagQueueIgnoreTeam)
+	sloWarn, _ := f.GetDuration(flagQueueSLOWarn)
+	sloBreach, _ := f.GetDuration(flagQueueSLOBreach)
 	if table != "simple" && table != "data" {
 		return fmt.Errorf(`--table must be "simple" or "data", not %q`, table)
 	}
@@ -211,6 +217,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 		opts := reviewqueue.Options{
 			Now: time.Now(), StaleAfter: staleAfter, ShowReasons: showReasons, JiraURL: jira.base,
 			DataTables: table == "data", PageSize: pageSize,
+			SLOWarn: sloWarn, SLOBreach: sloBreach,
 		}
 		message.WriteString(reviewqueue.Format(repo, team, items, opts))
 		payload := reviewqueue.Blocks(repo, team, items, opts)

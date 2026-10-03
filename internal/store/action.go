@@ -243,8 +243,9 @@ type ActionFilter struct {
 	// Open keeps everything not closed.
 	Open bool
 	// Unblocked keeps what could be worked on right now: open, ready, not
-	// folded out of the queue behind something else, and not waiting on
-	// somebody. It is the queue.
+	// folded out of the queue behind something else, not waiting on
+	// somebody, and not on a project that is blocked or inactive. It is the
+	// queue.
 	//
 	// It reads state rather than counting blockers, because state is
 	// recomputed from the open blockers wherever an edge or a closure moves
@@ -382,6 +383,22 @@ const waitVerbs = "(SELECT verb FROM actionverb WHERE rank_class = ?)"
 const notHeldByItsProject = `(a.rank_pin IS NOT NULL OR NOT EXISTS (
 		SELECT 1 FROM project p WHERE p.id = a.project_id AND p.status = ?))`
 
+// notOnAnInactiveProject keeps out the actions on a project whose priority is
+// at or past config.inactive_priority: "maybe someday" work, still true and
+// still listed everywhere else, but not an answer to "what do I do now".
+//
+// The same shape as notHeldByItsProject, for the same reasons: derived at
+// query time so reprioritising a project brings its actions straight back
+// with nothing to release, and rank_pin is the escape for the one action that
+// matters anyway. A project with no priority is never inactive -- unset says
+// nothing about whether anybody is working on it -- and neither is an action
+// with no project. Read from config in the query rather than passed in, so
+// every caller of the queue agrees without being handed the setting.
+const notOnAnInactiveProject = `(a.rank_pin IS NOT NULL OR NOT EXISTS (
+		SELECT 1 FROM project p JOIN config c ON c.id = 'config'
+		WHERE p.id = a.project_id AND c.inactive_priority > 0
+		  AND p.priority IS NOT NULL AND p.priority >= c.inactive_priority))`
+
 // staleSubjects matches actions whose subject pull request is still open.
 //
 // A pull request nobody has synced has no state, and is not matched: absence
@@ -491,7 +508,7 @@ func (f ActionFilter) clauses(now string) ([]string, []any) {
 	if f.Unblocked {
 		clauses, inPlayArgs := inPlay(now)
 		where = append(where, clauses...)
-		where = append(where, "a.verb NOT IN "+waitVerbs, notHeldByItsProject)
+		where = append(where, "a.verb NOT IN "+waitVerbs, notHeldByItsProject, notOnAnInactiveProject)
 		args = append(args, inPlayArgs...)
 		args = append(args, RankWait, ProjectBlocked)
 	}

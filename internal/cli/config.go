@@ -17,12 +17,13 @@ const (
 	flagWeekStart   = "week-start"
 	flagReviewDay   = "review-day"
 	flagJiraPrefix  = "jira-prefix"
+	flagInactive    = "inactive-priority"
 )
 
 // configFieldFlags are the settable columns. All authored: there is nothing
 // here for sync to write.
 var configFieldFlags = []string{flagOwner, flagJiraBaseURL, flagJiraPrefix, flagPollWindow,
-	flagWeekStart, flagReviewDay}
+	flagWeekStart, flagReviewDay, flagInactive}
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -141,6 +142,9 @@ func newConfigSetCmd() *cobra.Command {
 		"the day the review is done, which ends the window; a window definition, not a schedule")
 	f.Int64(flagPollWindow, 14,
 		"how many days after a pull request ends to keep polling it; 0 polls only what is open")
+	f.Int64(flagInactive, 0,
+		"the project priority at which work stops being active: the queue leaves out actions on "+
+			"projects at this priority or higher, e.g. 5; 0 for no cutoff")
 	addActorFlag(cmd)
 	return cmd
 }
@@ -261,6 +265,14 @@ func applyConfigFlags(cmd *cobra.Command, cfg *store.Config) error {
 			return fmt.Errorf("--%s cannot be negative", flagPollWindow)
 		}
 		cfg.PollWindowDays = v
+	}
+	if f.Changed(flagInactive) {
+		v, err := f.GetInt64(flagInactive)
+		if err != nil {
+			return err
+		}
+		// Range-checked by Config.Validate, which SaveConfig runs.
+		cfg.InactivePriority = v
 	}
 	return nil
 }

@@ -462,7 +462,10 @@ arrives in it the poll after the release is tagged.
 Four things, and the rest is detail.
 
 **Projects** (`ROZ1`) are what you plan from. They have a priority, an effort,
-optionally a parent, and links to tracker issues.
+optionally a parent, and links to tracker issues. If low-priority projects
+mean "maybe someday", say where that starts with `roz config set
+--inactive-priority 5`, and their actions stay out of the queue until the
+project is reprioritised.
 
 **Actions** (`NA5`) are what you do. Each has a **verb**, and the verb
 decides how it closes:

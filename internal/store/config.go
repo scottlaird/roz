@@ -56,6 +56,15 @@ type Config struct {
 	// it; the report is run when somebody runs it.
 	WeekStart string `db:"week_start"`
 	ReviewDay string `db:"review_day"`
+
+	// InactivePriority is the project priority at which work stops being
+	// active: the queue leaves out actions whose project is at this priority
+	// or higher. 0 is no cutoff.
+	//
+	// A property of the queue rather than of a project, because it is what
+	// the numbers mean -- "P5 is maybe someday" -- and that is said once, not
+	// per project.
+	InactivePriority int64 `db:"inactive_priority"`
 }
 
 func (c *Config) table() string       { return "config" }
@@ -138,6 +147,10 @@ func (t *Tx) SaveConfig(ctx context.Context, before, after *Config) ([]Change, e
 func (c *Config) Validate() error {
 	if err := ValidateJiraBaseURL(c.JiraBaseURL); err != nil {
 		return err
+	}
+	if c.InactivePriority < 0 || c.InactivePriority > 9 {
+		return fmt.Errorf("inactive priority %d is not a priority: 1 to 9, or 0 for no cutoff",
+			c.InactivePriority)
 	}
 	prefixes, err := c.Prefixes()
 	if err != nil {

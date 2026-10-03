@@ -88,7 +88,10 @@ CREATE TABLE config (
   -- last one is covered exactly once. A window definition, not a schedule:
   -- nothing fires on it. See 0041.
   review_day    TEXT NOT NULL DEFAULT 'friday'
-                  CHECK (review_day IN ('monday','tuesday','wednesday','thursday','friday','saturday','sunday'))
+                  CHECK (review_day IN ('monday','tuesday','wednesday','thursday','friday','saturday','sunday')),
+  -- Projects at this priority or higher are not active work, and their actions
+  -- leave the queue. 0 is no cutoff. See 0043.
+  inactive_priority INTEGER NOT NULL DEFAULT 0 CHECK (inactive_priority BETWEEN 0 AND 9)
 ) STRICT;
 
 INSERT INTO config (id, created_at, updated_at)

@@ -275,6 +275,7 @@ func (a *Action) relations() []Relation {
 			},
 		},
 		{Name: "held_by", Load: heldByIDs},
+		{Name: "inactive", Load: inactiveReason},
 	}
 }
 
@@ -411,6 +412,28 @@ func heldByIDs(ctx context.Context, tx *Tx, id string) (any, error) {
 		return nil, err
 	}
 	return blockers, nil
+}
+
+// inactiveReason says why an action on an inactive project is out of the
+// queue: the project, its priority and the cutoff. The same gap heldByIDs
+// fills -- nothing on the action explains it, since it is derived -- so
+// `action show` would otherwise say ready about something the queue will not
+// offer. Nil when the action is not affected, or is pinned back in.
+func inactiveReason(ctx context.Context, tx *Tx, id string) (any, error) {
+	a, err := tx.LoadAction(ctx, id)
+	if err != nil || !a.ProjectID.Valid || a.ProjectID.String == "" || a.RankPin.Valid {
+		return nil, err
+	}
+	cfg, err := tx.LoadConfig(ctx)
+	if err != nil || cfg.InactivePriority == 0 {
+		return nil, err
+	}
+	project, err := tx.LoadProject(ctx, a.ProjectID.String)
+	if err != nil || !project.Priority.Valid || project.Priority.Int64 < cfg.InactivePriority {
+		return nil, err
+	}
+	return fmt.Sprintf("%s is P%d; the queue leaves out P%d and below",
+		project.ID, project.Priority.Int64, cfg.InactivePriority), nil
 }
 
 func blockingIDs(ctx context.Context, tx *Tx, id string) (any, error) {

@@ -62,6 +62,10 @@ type PullRequest struct {
 	HumanCommentReview string
 	// Assignees are the logins assigned, capped at ten.
 	Assignees []string
+	// BotReviewedAt, BotReviewer and BotReviewState describe the newest
+	// submitted review by a bot, such as an AI code reviewer, which the
+	// human fields above deliberately leave out. Empty when there is none.
+	BotReviewedAt, BotReviewer, BotReviewState string
 
 	// MergedAt is GitHub's own timestamp, empty for anything not merged. It
 	// is what a week in review is ordered by — the poll that noticed is a
@@ -261,6 +265,7 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 	for _, a := range p.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, a.Login)
 	}
+	pr.BotReviewedAt, pr.BotReviewer, pr.BotReviewState = latestBotReview(p)
 	pr.ChecksState, pr.Checks = checks(p)
 	pr.UnresolvedThreads = unresolvedThreads(p)
 
@@ -426,6 +431,19 @@ func lastHumanActivity(p *wirePullRequest) (at, login, reviewState string) {
 		consider(r.CreatedAt, r.Author, r.State)
 	}
 	return at, login, reviewState
+}
+
+// latestBotReview is the newest submitted review by a bot. Kept apart from
+// lastHumanActivity, whose exclusion of bots is what makes it mean "a person
+// has read this".
+func latestBotReview(p *wirePullRequest) (at, login, state string) {
+	for _, r := range p.Reviews.Nodes {
+		if r.State == pendingReview || r.Author == nil || r.Author.TypeName != botType || r.CreatedAt <= at {
+			continue
+		}
+		at, login, state = r.CreatedAt, r.Author.Login, r.State
+	}
+	return at, login, state
 }
 
 // isSomebodyElse reports whether an actor is a person other than the pull

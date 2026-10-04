@@ -175,3 +175,23 @@ func TestLastHumanActivity(t *testing.T) {
 		t.Errorf("a null actor counts with no login: %q %q", at, who)
 	}
 }
+
+func TestLatestBotReview(t *testing.T) {
+	var p wirePullRequest
+	review := func(at, login, kind, state string) {
+		p.Reviews.Nodes = append(p.Reviews.Nodes, struct {
+			CreatedAt string     `json:"createdAt"`
+			State     string     `json:"state"`
+			Author    *wireActor `json:"author"`
+		}{CreatedAt: at, State: state, Author: &wireActor{Login: login, TypeName: kind}})
+	}
+	review("2026-10-05T09:00:00Z", "copilot-pull-request-reviewer", botType, "COMMENTED")
+	review("2026-10-05T10:00:00Z", "bob", "User", "APPROVED")
+	review("2026-10-05T11:00:00Z", "copilot-pull-request-reviewer", botType, pendingReview)
+	if at, who, state := latestBotReview(&p); at != "2026-10-05T09:00:00Z" || who != "copilot-pull-request-reviewer" || state != "COMMENTED" {
+		t.Errorf("latest bot review = %q %q %q; a person's review and a pending one don't count", at, who, state)
+	}
+	if at, _, _ := lastHumanActivity(&p); at != "2026-10-05T10:00:00Z" {
+		t.Errorf("the bot's review moved the human activity to %q", at)
+	}
+}

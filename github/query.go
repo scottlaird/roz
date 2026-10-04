@@ -32,6 +32,7 @@ const prFields = `
     number title url state isDraft baseRefName headRefName headRefOid isInMergeQueue
     reviewDecision mergeStateStatus mergedAt closedAt
     author { login }
+    assignees(first: 10) { nodes { login } }
     reviewRequests(first: 20) {
       nodes { requestedReviewer { __typename ... on Team { slug } ... on User { login } } }
     }

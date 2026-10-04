@@ -20,6 +20,7 @@ const (
 	ReadTeams        = "teams"
 	ReadChange       = "change"
 	ReadCodeowners   = "codeowners"
+	ReadSearch       = "search"
 )
 
 // request runs a query and records how it went.

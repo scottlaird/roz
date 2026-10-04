@@ -133,7 +133,8 @@ func New() *Client {
 	return &Client{run: runGH}
 }
 
-// NewWithRunner returns a Client backed by a custom Runner, for tests.
+// NewWithRunner returns a Client backed by a custom Runner: a test double, or
+// a transport other than gh.
 func NewWithRunner(run Runner) *Client {
 	return &Client{run: run}
 }

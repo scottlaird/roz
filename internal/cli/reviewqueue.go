@@ -7,16 +7,15 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/scottlaird/roz/internal/codeowners"
-	"github.com/scottlaird/roz/internal/github"
-	"github.com/scottlaird/roz/internal/reviewqueue"
+	"github.com/scottlaird/roz/codeowners"
+	"github.com/scottlaird/roz/github"
 	"github.com/scottlaird/roz/internal/store"
+	"github.com/scottlaird/roz/reviewqueue"
 )
 
 const (
@@ -145,75 +144,17 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 
 	ctx := cmd.Context()
 	gh := github.New()
-
-	logf("reading %s's members", team)
-	members, err := gh.TeamMembers(ctx, []string{string(team)})
-	if err != nil {
-		return fmt.Errorf("reading %s's members: %w", team, err)
-	}
-	logf("%s has %d members", team, len(members[string(team)]))
 	cfg := reviewqueue.Config{
-		Team: team, Members: members[string(team)], MaxRuleOwners: maxRuleOwners,
-		JiraPrefixes: jira.prefixes, IgnoreTeams: ignore,
+		Team: team, MaxRuleOwners: maxRuleOwners, JiraPrefixes: jira.prefixes, IgnoreTeams: ignore,
 	}
 
 	var message, diagnostics strings.Builder
 	var blocks []any
 	for _, repo := range repos {
-		logf("%s: listing open pull requests", repo)
-		prs, err := gh.OpenPullRequests(ctx, repo, func(read int) {
-			logf("%s: %d read", repo, read)
-		})
+		items, skipped, err := reviewqueue.Build(ctx, gh, repo, cfg, logf)
 		if err != nil {
 			return err
 		}
-		owners := map[string]*codeowners.File{}
-		for _, pr := range prs {
-			if _, seen := owners[pr.BaseRef]; seen || pr.Draft {
-				continue
-			}
-			logf("%s: reading CODEOWNERS on %s", repo, pr.BaseRef)
-			text, _, err := gh.Codeowners(ctx, repo, pr.BaseRef)
-			if err != nil {
-				return fmt.Errorf("reading %s CODEOWNERS on %s: %w", repo, pr.BaseRef, err)
-			}
-			file, err := codeowners.ParseString(text)
-			if err != nil {
-				return fmt.Errorf("parsing %s CODEOWNERS on %s: %w", repo, pr.BaseRef, err)
-			}
-			owners[pr.BaseRef] = file
-		}
-
-		logf("%s: listing open pull request branches, for stacks", repo)
-		branches, err := gh.OpenPRBranches(ctx, repo)
-		if err != nil {
-			return err
-		}
-		// Membership of every team the CODEOWNERS files name, so the report
-		// can tell when one approval satisfies several teams.
-		teamSet := map[string]bool{string(team): true}
-		for _, file := range owners {
-			for _, t := range file.Teams() {
-				teamSet[string(t)] = true
-			}
-		}
-		refs := make([]string, 0, len(teamSet))
-		for t := range teamSet {
-			refs = append(refs, t)
-		}
-		sort.Strings(refs)
-		logf("%s: reading membership of %d teams", repo, len(refs))
-		teamMembers, err := gh.TeamMembers(ctx, refs)
-		if err != nil {
-			return fmt.Errorf("reading team membership: %w", err)
-		}
-
-		repoCfg := cfg
-		repoCfg.Branches = branches
-		repoCfg.TeamMembers = teamMembers
-
-		items, skipped := reviewqueue.Select(prs, owners, repoCfg)
-		logf("%s: %d for %s, %d requested but not its", repo, len(items), team, len(skipped))
 		opts := reviewqueue.Options{
 			Now: time.Now(), StaleAfter: staleAfter, ShowReasons: showReasons, JiraURL: jira.base,
 			DataTables: table == "data", PageSize: pageSize,

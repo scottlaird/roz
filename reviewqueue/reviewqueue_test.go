@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scottlaird/roz/internal/codeowners"
-	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/codeowners"
+	"github.com/scottlaird/roz/github"
 )
 
 const testCodeowners = `

@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scottlaird/roz/internal/codeowners"
-	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/codeowners"
+	"github.com/scottlaird/roz/github"
 )
 
 // Config says whose queue to build.

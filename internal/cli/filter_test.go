@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/github"
 )
 
 // observeStates records what GitHub says about several pull requests at once,

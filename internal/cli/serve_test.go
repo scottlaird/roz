@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/github"
 )
 
 // TestServeServesTheRenderedPage is the join: what the server hands out is

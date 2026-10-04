@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ const (
 	flagQueueIgnoreTeam    = "ignore-team"
 	flagQueueSLOWarn       = "slo-warn"
 	flagQueueSLOBreach     = "slo-breach"
+	flagQueueSection       = "section"
 
 	// envSlackWebhook is where --post finds its Slack incoming webhook. An
 	// environment variable rather than a flag, so the URL stays out of shell
@@ -83,6 +85,7 @@ func newReviewQueueCmd() *cobra.Command {
 	f.Int(flagQueuePageSize, 10, "rows per page in a data table")
 	f.StringSlice(flagQueueIgnoreTeam, nil, "team never to show as waited on, org/slug (repeatable)")
 	f.Duration(flagQueueSLOWarn, 48*time.Hour, "mark pull requests idle longer than this with a yellow circle; 0 marks none")
+	f.StringSlice(flagQueueSection, nil, "sections to show, in order, comma-separated or repeated: "+sectionList()+" (default: "+strings.Join(reviewqueue.DefaultSections, ",")+")")
 	f.Duration(flagQueueSLOBreach, 7*24*time.Hour, "mark pull requests idle longer than this with a red circle; 0 marks none")
 	f.String(flagQueueFormat, "mrkdwn", `"mrkdwn" for a text message, or "blocks" for a Block Kit payload with tables (paste into Block Kit Builder to preview)`)
 	_ = cmd.MarkFlagRequired(flagQueueRepo)
@@ -107,6 +110,10 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	ignoreRefs, _ := f.GetStringSlice(flagQueueIgnoreTeam)
 	sloWarn, _ := f.GetDuration(flagQueueSLOWarn)
 	sloBreach, _ := f.GetDuration(flagQueueSLOBreach)
+	sections, _ := f.GetStringSlice(flagQueueSection)
+	if err := reviewqueue.ValidateSections(sections); err != nil {
+		return fmt.Errorf("--%s: %w", flagQueueSection, err)
+	}
 	if table != "simple" && table != "data" {
 		return fmt.Errorf(`--table must be "simple" or "data", not %q`, table)
 	}
@@ -146,6 +153,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	gh := github.New()
 	cfg := reviewqueue.Config{
 		Team: team, MaxRuleOwners: maxRuleOwners, JiraPrefixes: jira.prefixes, IgnoreTeams: ignore,
+		IncludeMemberAuthored: slices.Contains(sections, reviewqueue.SectionMemberAuthored),
 	}
 
 	var message, diagnostics strings.Builder
@@ -158,7 +166,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 		opts := reviewqueue.Options{
 			Now: time.Now(), StaleAfter: staleAfter, ShowReasons: showReasons, JiraURL: jira.base,
 			DataTables: table == "data", PageSize: pageSize,
-			SLOWarn: sloWarn, SLOBreach: sloBreach,
+			SLOWarn: sloWarn, SLOBreach: sloBreach, Sections: sections,
 		}
 		message.WriteString(reviewqueue.Format(repo, team, items, opts))
 		payload := reviewqueue.Blocks(repo, team, items, opts)
@@ -208,6 +216,15 @@ type jiraConfig struct {
 // way the rendered pages do: roz's config, then ROZ_JIRA_BASE_URL and
 // ROZ_JIRA_PREFIXES, then --jira-url. A database that isn't there is not an
 // error -- the queue needs nothing else from it -- it just means no config.
+// sectionList names every section for the flag's help.
+func sectionList() string {
+	var names []string
+	for _, s := range reviewqueue.SectionNames() {
+		names = append(names, s.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
 func jiraSettings(cmd *cobra.Command, override string) (jiraConfig, error) {
 	var resolved jiraConfig
 	if st, err := openStore(cmd); err == nil {

@@ -16,6 +16,7 @@ package reviewqueue
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +50,10 @@ type Config struct {
 	// team's review request when whatever asked for it -- a gate that has
 	// since been retired, say -- stops needing it.
 	IgnoreTeams []codeowners.Owner
+	// IncludeMemberAuthored also selects pull requests the team only wrote,
+	// for the member_authored section. They are marked AuthoredOnly, and no
+	// other section shows them.
+	IncludeMemberAuthored bool
 }
 
 // Section groups items by who has the next move.
@@ -89,6 +94,11 @@ type Item struct {
 	// Set only on pull requests that aren't approved themselves: those are
 	// what the stack is waiting for.
 	Blocks []github.OpenPR
+	// ByMember is set when a member of the team wrote it.
+	ByMember bool
+	// AuthoredOnly is set when writing it is the team's only claim: selected
+	// only through Config.IncludeMemberAuthored.
+	AuthoredOnly bool
 }
 
 // Skipped is a pull request the team is requested on that is not the team's.
@@ -124,6 +134,12 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 			reasons = engagementReasons(pr, members, otherOwners)
 			engagedOnly = len(reasons) > 0
 		}
+		byMember := members[strings.ToLower(pr.Author)]
+		authoredOnly := false
+		if len(reasons) == 0 && byMember && cfg.IncludeMemberAuthored {
+			reasons = []string{"written by @" + pr.Author}
+			authoredOnly = true
+		}
 		if len(reasons) == 0 {
 			if requested(pr, cfg.Team) {
 				skipped = append(skipped, Skipped{PR: pr, Reason: skipReason(pr, owners[pr.BaseRef], cfg)})
@@ -134,8 +150,9 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 		waitingOn, why := waitingOn(pr, cfg.Team, len(teamReasonsOnly(reasons)) > 0, engagedOnly, needed, namedTeams(owners[pr.BaseRef]), cfg)
 		items = append(items, Item{
 			PR: pr, Reasons: reasons, WaitingOn: waitingOn, Why: why,
-			Section: section(pr, waitingOn, why, cfg.Team, members),
-			Jira:    JiraKeys(pr, cfg.JiraPrefixes),
+			Section:  section(pr, waitingOn, why, cfg.Team, members),
+			Jira:     JiraKeys(pr, cfg.JiraPrefixes),
+			ByMember: byMember, AuthoredOnly: authoredOnly,
 		})
 		it := &items[len(items)-1]
 		it.StackedOn = stackOf(pr, byHead)
@@ -662,6 +679,10 @@ type Options struct {
 	DataTables bool
 	// PageSize is a data table's rows per page. Zero is Slack's default.
 	PageSize int
+	// Sections names the sections to show, in order; see SectionNames. Each
+	// pull request goes in the first that matches, and one that matches none
+	// is left out. Empty means DefaultSections.
+	Sections []string
 	// SLOWarn and SLOBreach mark a pull request idle longer than each with a yellow or red
 	// circle beside its idle time. Zero leaves that mark off.
 	SLOWarn, SLOBreach time.Duration
@@ -700,14 +721,14 @@ func titleWithAuthor(pr github.OpenPR) string {
 // idle first, with stale pull requests folded into one line at the end so the
 // old tail doesn't bury what needs doing today.
 func Format(repo string, team codeowners.Owner, items []Item, opts Options) string {
+	groups, stale, held := group(team, items, opts)
 	var b strings.Builder
-	fmt.Fprintf(&b, "*Pull requests for %s in %s* (%d)\n", team.String(), repo, len(items))
-	if len(items) == 0 {
+	fmt.Fprintf(&b, "*Pull requests for %s in %s* (%d)\n", team.String(), repo, shown(groups, stale, held))
+	if len(groups)+len(stale)+len(held) == 0 {
 		b.WriteString("Nothing waiting.\n")
 		return b.String()
 	}
 
-	groups, stale, held := group(team, items, opts)
 	for _, g := range groups {
 		fmt.Fprintf(&b, "\n*%s* (%d)\n", g.title, len(g.items))
 		for _, it := range g.items {
@@ -770,35 +791,158 @@ type itemGroup struct {
 	items []Item
 }
 
+// Section names, for Options.Sections.
+const (
+	SectionTeamUnreviewed = "team_unreviewed"
+	SectionMemberWaiting  = "member_waiting"
+	SectionMemberAuthor   = "member_author"
+	SectionOthers         = "others"
+	SectionMemberAuthored = "member_authored"
+	SectionStacked        = "stacked"
+	SectionStale          = "stale"
+)
+
+// DefaultSections is what a queue shows when Options.Sections is empty.
+var DefaultSections = []string{
+	SectionTeamUnreviewed, SectionMemberWaiting, SectionMemberAuthor, SectionOthers,
+	SectionStacked, SectionStale,
+}
+
+// sectionDef is one section: what it holds and what it is called.
+type sectionDef struct {
+	name, description string
+	// title is the heading; folded sections are one line at the end instead.
+	title  func(team codeowners.Owner) string
+	folded bool
+	match  func(it Item, opts Options) bool
+}
+
+// teamSection matches a pull request the team claims in one of the waiting-on
+// sections. One selected only because a member wrote it is not the team's to
+// review, so it stays out of all of them.
+func teamSection(s Section) func(Item, Options) bool {
+	return func(it Item, _ Options) bool { return !it.AuthoredOnly && it.Section == s }
+}
+
+var sectionDefs = []sectionDef{
+	{name: SectionTeamUnreviewed, description: "the team's, with no review or comment from any member yet",
+		title: func(t codeowners.Owner) string { return "Not yet reviewed by " + t.String() },
+		match: teamSection(NotYetReviewed)},
+	{name: SectionMemberWaiting, description: "the team's, waiting on a specific member",
+		title: func(t codeowners.Owner) string { return "Waiting on a member of " + t.String() },
+		match: teamSection(OnMember)},
+	{name: SectionMemberAuthor, description: "the team's, waiting on its author after a review or change request",
+		title: func(codeowners.Owner) string { return "Waiting on the author" },
+		match: teamSection(OnAuthor)},
+	{name: SectionOthers, description: "the team's, waiting on someone outside the team",
+		title: func(codeowners.Owner) string { return "Waiting on someone else" },
+		match: teamSection(OnOthers)},
+	{name: SectionMemberAuthored, description: "written by a member, whoever it is waiting on",
+		title: func(t codeowners.Owner) string { return "Written by members of " + t.String() },
+		match: func(it Item, _ Options) bool { return it.ByMember }},
+	{name: SectionStacked, description: "held until the pull requests it is stacked on are approved; one line at the end",
+		folded: true, match: func(it Item, _ Options) bool { return it.Held }},
+	{name: SectionStale, description: "idle longer than the stale-after time; one line at the end",
+		folded: true, match: func(it Item, opts Options) bool {
+			return opts.StaleAfter > 0 && opts.Now.Sub(lastActivity(it.PR)) > opts.StaleAfter
+		}},
+}
+
+// SectionInfo describes a section, for listing the choices.
+type SectionInfo struct {
+	Name, Description string
+}
+
+// SectionNames lists every section, in the default order.
+func SectionNames() []SectionInfo {
+	out := make([]SectionInfo, len(sectionDefs))
+	for i, d := range sectionDefs {
+		out[i] = SectionInfo{Name: d.name, Description: d.description}
+	}
+	return out
+}
+
+// ValidateSections checks a list of section names.
+func ValidateSections(names []string) error {
+	seen := map[string]bool{}
+	for _, n := range names {
+		if _, ok := sectionByName(n); !ok {
+			return fmt.Errorf("unknown section %q", n)
+		}
+		if seen[n] {
+			return fmt.Errorf("section %q listed twice", n)
+		}
+		seen[n] = true
+	}
+	return nil
+}
+
+func sectionByName(name string) (sectionDef, bool) {
+	for _, d := range sectionDefs {
+		if d.name == name {
+			return d, true
+		}
+	}
+	return sectionDef{}, false
+}
+
+// shown counts the pull requests a grouping displays.
+func shown(groups []itemGroup, stale, held []Item) int {
+	n := len(stale) + len(held)
+	for _, g := range groups {
+		n += len(g.items)
+	}
+	return n
+}
+
 // group splits items into the non-empty sections, in display order; the
 // stale tail; and the stacked pull requests held until their bases are
 // approved.
+//
+// Each item goes in the first section that matches, except that the folded
+// sections, stacked and stale, are tried first wherever they are listed: they
+// say a pull request isn't actionable today, which outranks whose turn it is.
+// Stacked is tried before stale.
 func group(team codeowners.Owner, items []Item, opts Options) ([]itemGroup, []Item, []Item) {
+	names := opts.Sections
+	if len(names) == 0 {
+		names = DefaultSections
+	}
+	var defs []sectionDef
+	for _, folded := range []string{SectionStacked, SectionStale} {
+		if slices.Contains(names, folded) {
+			d, _ := sectionByName(folded)
+			defs = append(defs, d)
+		}
+	}
+	for _, n := range names {
+		if d, ok := sectionByName(n); ok && !d.folded {
+			defs = append(defs, d)
+		}
+	}
+
 	var stale, held []Item
-	bySection := map[Section][]Item{}
+	byName := map[string][]Item{}
 	for _, it := range items {
-		if it.Held {
-			held = append(held, it)
-			continue
+		for _, d := range defs {
+			if !d.match(it, opts) {
+				continue
+			}
+			switch d.name {
+			case SectionStacked:
+				held = append(held, it)
+			case SectionStale:
+				stale = append(stale, it)
+			default:
+				byName[d.name] = append(byName[d.name], it)
+			}
+			break
 		}
-		if opts.StaleAfter > 0 && opts.Now.Sub(lastActivity(it.PR)) > opts.StaleAfter {
-			stale = append(stale, it)
-			continue
-		}
-		bySection[it.Section] = append(bySection[it.Section], it)
 	}
 	var groups []itemGroup
-	for _, s := range []struct {
-		section Section
-		title   string
-	}{
-		{NotYetReviewed, "Not yet reviewed by " + team.String()},
-		{OnMember, "Waiting on a member of " + team.String()},
-		{OnAuthor, "Waiting on the author"},
-		{OnOthers, "Waiting on someone else"},
-	} {
-		if list := bySection[s.section]; len(list) > 0 {
-			groups = append(groups, itemGroup{title: s.title, items: list})
+	for _, d := range defs {
+		if list := byName[d.name]; len(list) > 0 {
+			groups = append(groups, itemGroup{title: d.title(team), items: list})
 		}
 	}
 	return groups, stale, held
@@ -807,12 +951,12 @@ func group(team codeowners.Owner, items []Item, opts Options) ([]itemGroup, []It
 // Blocks renders the queue as a Slack message payload: a header per section
 // and a table of its pull requests. text is the fallback notifications show.
 func Blocks(repo string, team codeowners.Owner, items []Item, opts Options) map[string]any {
-	title := fmt.Sprintf("Pull requests for %s in %s (%d)", team.String(), repo, len(items))
+	groups, stale, held := group(team, items, opts)
+	title := fmt.Sprintf("Pull requests for %s in %s (%d)", team.String(), repo, shown(groups, stale, held))
 	blocks := []any{
 		map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": title}},
 	}
-	groups, stale, held := group(team, items, opts)
-	if len(items) == 0 {
+	if len(groups)+len(stale)+len(held) == 0 {
 		blocks = append(blocks, mrkdwnSection("Nothing waiting."))
 	}
 	for _, g := range groups {

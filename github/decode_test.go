@@ -137,3 +137,41 @@ func TestHumanCommentedAt(t *testing.T) {
 		})
 	}
 }
+
+// TestLastHumanActivity: the newest act by somebody else, who, and whether
+// it was a review, so an approval isn't also counted as a comment.
+func TestLastHumanActivity(t *testing.T) {
+	var p wirePullRequest
+	p.Author = &wireActor{Login: "author"}
+	add := func(at, login string) {
+		p.Comments.Nodes = append(p.Comments.Nodes, struct {
+			CreatedAt string     `json:"createdAt"`
+			Author    *wireActor `json:"author"`
+		}{CreatedAt: at, Author: &wireActor{Login: login, TypeName: "User"}})
+	}
+	review := func(at, login, state string) {
+		p.Reviews.Nodes = append(p.Reviews.Nodes, struct {
+			CreatedAt string     `json:"createdAt"`
+			State     string     `json:"state"`
+			Author    *wireActor `json:"author"`
+		}{CreatedAt: at, State: state, Author: &wireActor{Login: login, TypeName: "User"}})
+	}
+
+	add("2026-10-05T09:00:00Z", "carol")
+	review("2026-10-05T10:00:00Z", "bob", "APPROVED")
+	add("2026-10-05T11:00:00Z", "author")
+	if at, who, state := lastHumanActivity(&p); at != "2026-10-05T10:00:00Z" || who != "bob" || state != "APPROVED" {
+		t.Errorf("after an approval: %q %q %q", at, who, state)
+	}
+	add("2026-10-05T12:00:00Z", "dave")
+	if at, who, state := lastHumanActivity(&p); at != "2026-10-05T12:00:00Z" || who != "dave" || state != "" {
+		t.Errorf("after a comment: %q %q %q", at, who, state)
+	}
+	p.Comments.Nodes = append(p.Comments.Nodes, struct {
+		CreatedAt string     `json:"createdAt"`
+		Author    *wireActor `json:"author"`
+	}{CreatedAt: "2026-10-05T13:00:00Z"})
+	if at, who, _ := lastHumanActivity(&p); at != "2026-10-05T13:00:00Z" || who != "" {
+		t.Errorf("a null actor counts with no login: %q %q", at, who)
+	}
+}

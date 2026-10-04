@@ -54,6 +54,14 @@ type PullRequest struct {
 
 	FirstReviewRequestedAt string
 	HumanCommentedAt       string
+	// HumanCommenter is who left that newest comment or review, empty when
+	// GitHub reported no actor. HumanCommentReview is the review's state
+	// when it was a review (APPROVED, CHANGES_REQUESTED, COMMENTED), and
+	// empty for a conversation comment.
+	HumanCommenter     string
+	HumanCommentReview string
+	// Assignees are the logins assigned, capped at ten.
+	Assignees []string
 
 	// MergedAt is GitHub's own timestamp, empty for anything not merged. It
 	// is what a week in review is ordered by — the poll that noticed is a
@@ -166,6 +174,10 @@ type wirePullRequest struct {
 		} `json:"nodes"`
 	} `json:"comments"`
 
+	Assignees struct {
+		Nodes []wireActor `json:"nodes"`
+	} `json:"assignees"`
+
 	Reviews struct {
 		Nodes []struct {
 			CreatedAt string     `json:"createdAt"`
@@ -245,7 +257,10 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 		pr.FirstReviewRequestedAt = p.TimelineItems.Nodes[0].CreatedAt
 	}
 	pr.ClosingIssues = closingIssues(p)
-	pr.HumanCommentedAt = humanCommentedAt(p)
+	pr.HumanCommentedAt, pr.HumanCommenter, pr.HumanCommentReview = lastHumanActivity(p)
+	for _, a := range p.Assignees.Nodes {
+		pr.Assignees = append(pr.Assignees, a.Login)
+	}
 	pr.ChecksState, pr.Checks = checks(p)
 	pr.UnresolvedThreads = unresolvedThreads(p)
 
@@ -378,29 +393,39 @@ const pendingReview = "PENDING"
 // Timestamps compare as text, which is sound here: GitHub returns RFC-3339 in
 // UTC with no fractional part, so the lexical and chronological orders agree.
 func humanCommentedAt(p *wirePullRequest) string {
+	at, _, _ := lastHumanActivity(p)
+	return at
+}
+
+// lastHumanActivity is humanCommentedAt with who it was and, for a review,
+// its state, so a caller can tell an approval from a comment rather than
+// counting the same act twice.
+func lastHumanActivity(p *wirePullRequest) (at, login, reviewState string) {
 	var author string
 	if p.Author != nil {
 		author = p.Author.Login
 	}
 
-	newest := ""
-	consider := func(at string, actor *wireActor) {
-		if at <= newest || !isSomebodyElse(actor, author) {
+	consider := func(when string, actor *wireActor, state string) {
+		if when <= at || !isSomebodyElse(actor, author) {
 			return
 		}
-		newest = at
+		at, login, reviewState = when, "", state
+		if actor != nil {
+			login = actor.Login
+		}
 	}
 
 	for _, c := range p.Comments.Nodes {
-		consider(c.CreatedAt, c.Author)
+		consider(c.CreatedAt, c.Author, "")
 	}
 	for _, r := range p.Reviews.Nodes {
 		if r.State == pendingReview {
 			continue
 		}
-		consider(r.CreatedAt, r.Author)
+		consider(r.CreatedAt, r.Author, r.State)
 	}
-	return newest
+	return at, login, reviewState
 }
 
 // isSomebodyElse reports whether an actor is a person other than the pull

@@ -543,6 +543,20 @@ directory.
 - `roz <command> --help` for flags, which are documented at the command rather
   than in a table that would drift from them.
 
+## Using roz as a library
+
+Three packages are importable from other modules; everything under
+`internal/` is not.
+
+- `github.com/scottlaird/roz/codeowners` parses CODEOWNERS and works out
+  ownership, approval and routing.
+- `github.com/scottlaird/roz/github` reads pull requests, CODEOWNERS and team
+  membership through `gh api graphql`, or through any `Runner` you supply.
+- `github.com/scottlaird/roz/reviewqueue` builds and renders a team's review
+  queue: `Build`, then `Format` or `Blocks`.
+
+Their APIs may still change between minor versions.
+
 ## Status
 
 roz is still a work in progress.  It's in daily use by its author, but

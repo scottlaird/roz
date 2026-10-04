@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scottlaird/roz/internal/github"
+	"github.com/scottlaird/roz/github"
 	"github.com/scottlaird/roz/internal/store"
 )
 

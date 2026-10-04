@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/scottlaird/roz/github"
 	"github.com/scottlaird/roz/internal/ghsync"
-	"github.com/scottlaird/roz/internal/github"
 	"github.com/scottlaird/roz/internal/store"
 )
 

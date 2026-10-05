@@ -123,11 +123,7 @@ func TestHumanCommentedAt(t *testing.T) {
 				p.Comments.Nodes = append(p.Comments.Nodes, node)
 			}
 			for _, r := range tt.reviews {
-				p.Reviews.Nodes = append(p.Reviews.Nodes, struct {
-					CreatedAt string     `json:"createdAt"`
-					State     string     `json:"state"`
-					Author    *wireActor `json:"author"`
-				}{CreatedAt: r.at, State: r.state,
+				p.Reviews.Nodes = append(p.Reviews.Nodes, wireReview{CreatedAt: r.at, State: r.state,
 					Author: &wireActor{Login: r.login, TypeName: r.kind}})
 			}
 
@@ -150,11 +146,7 @@ func TestLastHumanActivity(t *testing.T) {
 		}{CreatedAt: at, Author: &wireActor{Login: login, TypeName: "User"}})
 	}
 	review := func(at, login, state string) {
-		p.Reviews.Nodes = append(p.Reviews.Nodes, struct {
-			CreatedAt string     `json:"createdAt"`
-			State     string     `json:"state"`
-			Author    *wireActor `json:"author"`
-		}{CreatedAt: at, State: state, Author: &wireActor{Login: login, TypeName: "User"}})
+		p.Reviews.Nodes = append(p.Reviews.Nodes, wireReview{CreatedAt: at, State: state, Author: &wireActor{Login: login, TypeName: "User"}})
 	}
 
 	add("2026-10-05T09:00:00Z", "carol")
@@ -178,18 +170,17 @@ func TestLastHumanActivity(t *testing.T) {
 
 func TestLatestBotReview(t *testing.T) {
 	var p wirePullRequest
-	review := func(at, login, kind, state string) {
-		p.Reviews.Nodes = append(p.Reviews.Nodes, struct {
-			CreatedAt string     `json:"createdAt"`
-			State     string     `json:"state"`
-			Author    *wireActor `json:"author"`
-		}{CreatedAt: at, State: state, Author: &wireActor{Login: login, TypeName: kind}})
+	review := func(at, login, kind, state string, comments int) {
+		var n wireReview
+		n.CreatedAt, n.State, n.Author = at, state, &wireActor{Login: login, TypeName: kind}
+		n.Comments.TotalCount = comments
+		p.Reviews.Nodes = append(p.Reviews.Nodes, n)
 	}
-	review("2026-10-05T09:00:00Z", "copilot-pull-request-reviewer", botType, "COMMENTED")
-	review("2026-10-05T10:00:00Z", "bob", "User", "APPROVED")
-	review("2026-10-05T11:00:00Z", "copilot-pull-request-reviewer", botType, pendingReview)
-	if at, who, state := latestBotReview(&p); at != "2026-10-05T09:00:00Z" || who != "copilot-pull-request-reviewer" || state != "COMMENTED" {
-		t.Errorf("latest bot review = %q %q %q; a person's review and a pending one don't count", at, who, state)
+	review("2026-10-05T09:00:00Z", "copilot-pull-request-reviewer", botType, "COMMENTED", 3)
+	review("2026-10-05T10:00:00Z", "bob", "User", "APPROVED", 1)
+	review("2026-10-05T11:00:00Z", "copilot-pull-request-reviewer", botType, pendingReview, 5)
+	if at, who, state, n := latestBotReview(&p); at != "2026-10-05T09:00:00Z" || who != "copilot-pull-request-reviewer" || state != "COMMENTED" || n != 3 {
+		t.Errorf("latest bot review = %q %q %q, %d comments; a person's review and a pending one don't count", at, who, state, n)
 	}
 	if at, _, _ := lastHumanActivity(&p); at != "2026-10-05T10:00:00Z" {
 		t.Errorf("the bot's review moved the human activity to %q", at)

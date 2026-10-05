@@ -42,7 +42,7 @@ const prFields = `
       nodes { ... on ReviewRequestedEvent { createdAt } }
     }
     comments(last: 20) { nodes { createdAt author { login __typename } } }
-    reviews(last: 20) { nodes { createdAt state author { login __typename } } }
+    reviews(last: 20) { nodes { createdAt state author { login __typename } comments { totalCount } } }
     reviewThreads(first: 50) { nodes { isResolved isOutdated } }
     closingIssuesReferences(first: 20) {
       nodes { number repository { nameWithOwner } }

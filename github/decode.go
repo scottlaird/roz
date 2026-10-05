@@ -66,6 +66,8 @@ type PullRequest struct {
 	// submitted review by a bot, such as an AI code reviewer, which the
 	// human fields above deliberately leave out. Empty when there is none.
 	BotReviewedAt, BotReviewer, BotReviewState string
+	// BotReviewComments is how many inline comments that review left.
+	BotReviewComments int
 
 	// MergedAt is GitHub's own timestamp, empty for anything not merged. It
 	// is what a week in review is ordered by — the poll that noticed is a
@@ -183,11 +185,7 @@ type wirePullRequest struct {
 	} `json:"assignees"`
 
 	Reviews struct {
-		Nodes []struct {
-			CreatedAt string     `json:"createdAt"`
-			State     string     `json:"state"`
-			Author    *wireActor `json:"author"`
-		} `json:"nodes"`
+		Nodes []wireReview `json:"nodes"`
 	} `json:"reviews"`
 
 	Commits struct {
@@ -265,7 +263,7 @@ func decodePullRequest(raw json.RawMessage, key string) (PullRequest, error) {
 	for _, a := range p.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, a.Login)
 	}
-	pr.BotReviewedAt, pr.BotReviewer, pr.BotReviewState = latestBotReview(p)
+	pr.BotReviewedAt, pr.BotReviewer, pr.BotReviewState, pr.BotReviewComments = latestBotReview(p)
 	pr.ChecksState, pr.Checks = checks(p)
 	pr.UnresolvedThreads = unresolvedThreads(p)
 
@@ -436,14 +434,24 @@ func lastHumanActivity(p *wirePullRequest) (at, login, reviewState string) {
 // latestBotReview is the newest submitted review by a bot. Kept apart from
 // lastHumanActivity, whose exclusion of bots is what makes it mean "a person
 // has read this".
-func latestBotReview(p *wirePullRequest) (at, login, state string) {
+func latestBotReview(p *wirePullRequest) (at, login, state string, comments int) {
 	for _, r := range p.Reviews.Nodes {
 		if r.State == pendingReview || r.Author == nil || r.Author.TypeName != botType || r.CreatedAt <= at {
 			continue
 		}
-		at, login, state = r.CreatedAt, r.Author.Login, r.State
+		at, login, state, comments = r.CreatedAt, r.Author.Login, r.State, r.Comments.TotalCount
 	}
-	return at, login, state
+	return at, login, state, comments
+}
+
+// wireReview is one submitted review, and how many inline comments it left.
+type wireReview struct {
+	CreatedAt string     `json:"createdAt"`
+	State     string     `json:"state"`
+	Author    *wireActor `json:"author"`
+	Comments  struct {
+		TotalCount int `json:"totalCount"`
+	} `json:"comments"`
 }
 
 // isSomebodyElse reports whether an actor is a person other than the pull

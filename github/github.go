@@ -1,8 +1,9 @@
 // Package github reads pull request state from GitHub.
 //
-// It shells out to `gh api graphql` rather than speaking HTTP itself, which
-// borrows the user's existing authentication and adds no dependency. Nothing
-// here writes to GitHub, and nothing here knows about the database.
+// By default it shells out to `gh api graphql`, which borrows the user's
+// existing authentication and adds no dependency; NewHTTP speaks to the API
+// directly with a token, for a service that has no gh. Nothing here writes to
+// GitHub, and nothing here knows about the database.
 //
 // Queries are batched with GraphQL aliases: one request carries many pull
 // requests. Points are not the constraint — a batch of 100 costs 4 of the

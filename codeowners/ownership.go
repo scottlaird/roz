@@ -165,6 +165,11 @@ type Reach struct {
 // counts names; Reach counts what an approval from that team would actually
 // do. With no membership the two agree.
 func (o *Ownership) Reach(approved OwnerSet, members Membership) []Reach {
+	return o.reach(approved, members, nil)
+}
+
+// reach is Reach, with ties going to the preferred owners before the rest.
+func (o *Ownership) reach(approved OwnerSet, members Membership, prefer OwnerSet) []Reach {
 	if members == nil {
 		members = NoMembership{}
 	}
@@ -194,6 +199,9 @@ func (o *Ownership) Reach(approved OwnerSet, members Membership) []Reach {
 		if out[i].Files != out[j].Files {
 			return out[i].Files > out[j].Files
 		}
+		if pi, pj := prefer.Contains(out[i].Owner), prefer.Contains(out[j].Owner); pi != pj {
+			return pi
+		}
 		return out[i].Owner < out[j].Owner
 	})
 	return out
@@ -207,11 +215,17 @@ func (o *Ownership) Reach(approved OwnerSet, members Membership) []Reach {
 // optimal costs a review request. Exactness would cost more to explain than it
 // would ever save.
 func (o *Ownership) Plan(approved OwnerSet, members Membership) []Owner {
+	return o.PlanPreferring(approved, members, nil)
+}
+
+// PlanPreferring is Plan, choosing a preferred owner over an equally useful
+// one: whoever has already been asked, say, rather than whoever sorts first.
+func (o *Ownership) PlanPreferring(approved OwnerSet, members Membership, prefer OwnerSet) []Owner {
 	have := approved.Clone()
 	var plan []Owner
 
 	for {
-		reach := o.Reach(have, members)
+		reach := o.reach(have, members, prefer)
 		if len(reach) == 0 {
 			return plan
 		}

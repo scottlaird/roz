@@ -144,6 +144,16 @@ type wireOpenPR struct {
 			Author      *wireActor `json:"author"`
 		} `json:"nodes"`
 	} `json:"latestReviews"`
+	// Reviews is read as well as latestReviews, which leaves out a reviewer
+	// who has been asked to review again: that reviewer has still picked the
+	// pull request up.
+	Reviews struct {
+		Nodes []struct {
+			State       string     `json:"state"`
+			SubmittedAt time.Time  `json:"submittedAt"`
+			Author      *wireActor `json:"author"`
+		} `json:"nodes"`
+	} `json:"reviews"`
 	LatestOpinionatedReviews struct {
 		Nodes []struct {
 			State  string     `json:"state"`
@@ -195,6 +205,7 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
         } } }
         assignees(first: 20) { nodes { login } }
         latestReviews(first: 50) { nodes { state submittedAt author { login __typename } } }
+        reviews(last: 50) { nodes { state submittedAt author { login __typename } } }
         latestOpinionatedReviews(first: 50) { nodes { state author { login __typename } } }
         commits(last: 1) { nodes { commit { committedDate author { user { login } } } } }
         comments(last: 50) { nodes { createdAt author { login __typename } } }
@@ -291,20 +302,35 @@ func (w wireOpenPR) decode(owner, name string) OpenPR {
 	}
 	// Every reviewer's latest review, comments included: a reviewer who only
 	// left comments has still picked the pull request up.
-	for _, r := range w.LatestReviews.Nodes {
+	latest := map[string]int{}
+	addReview := func(state string, at time.Time, author *wireActor) {
 		// A bot's review is a check result, not a reviewer's opinion: a
 		// "changes requested" from CI does not put a pull request back with
 		// its author the way a person's does. A pending review hasn't been
 		// sent, and a dismissed one has been taken back.
-		if (r.Author != nil && r.Author.TypeName == "Bot") || r.State == "PENDING" || r.State == "DISMISSED" {
-			continue
+		if (author != nil && author.TypeName == "Bot") || state == "PENDING" || state == "DISMISSED" {
+			return
 		}
-		review := Review{State: r.State, At: r.SubmittedAt}
-		if r.Author != nil {
-			review.Author = r.Author.Login
+		review := Review{State: state, At: at}
+		if author != nil {
+			review.Author = author.Login
 		}
-		pr.Reviews = append(pr.Reviews, review)
+		key := strings.ToLower(review.Author)
+		if i, ok := latest[key]; ok {
+			if at.After(pr.Reviews[i].At) {
+				pr.Reviews[i] = review
+			}
+		} else {
+			latest[key] = len(pr.Reviews)
+			pr.Reviews = append(pr.Reviews, review)
+		}
 		pr.noteActivity(review.Author, review.At)
+	}
+	for _, r := range w.LatestReviews.Nodes {
+		addReview(r.State, r.SubmittedAt, r.Author)
+	}
+	for _, r := range w.Reviews.Nodes {
+		addReview(r.State, r.SubmittedAt, r.Author)
 	}
 	for _, n := range w.Commits.Nodes {
 		login := ""

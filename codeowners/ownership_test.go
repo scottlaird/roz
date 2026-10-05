@@ -243,3 +243,18 @@ func TestNestedTeams(t *testing.T) {
 		t.Errorf("after a storage member approves, plan = %v, want nothing", got)
 	}
 }
+
+func TestPlanPreferringBreaksTies(t *testing.T) {
+	f, err := ParseString("/proto/ @org/api @org/storage\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := f.Of([]string{"proto/a.proto"})
+
+	if plan := o.Plan(OwnerSet{}, nil); len(plan) != 1 || plan[0] != "org/api" {
+		t.Errorf("Plan() = %v, want the first by name", plan)
+	}
+	if plan := o.PlanPreferring(OwnerSet{}, nil, NewOwnerSet("@org/storage")); len(plan) != 1 || plan[0] != "org/storage" {
+		t.Errorf("PlanPreferring(storage) = %v, want storage", plan)
+	}
+}

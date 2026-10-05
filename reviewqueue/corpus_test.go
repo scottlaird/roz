@@ -15,16 +15,19 @@ import (
 // decided it, with the answer the queue should give. A new misfiling joins
 // as a new case.
 //
-// The world is shaped like the repository they came from, with the names
+// The world is shaped like the repositories they came from, with the names
 // changed: a catch-all rule naming five teams, narrower rules for storage/,
 // platform/ and the shared common/sync/, and storage nested inside
-// platform, so every storage member is a platform member too.
+// platform, so every storage member is a platform member too. proto/ is
+// shared by storage and web, which have no members in common.
 
 const corpusCodeowners = `
 * @acme/server @acme/platform @acme/storage @acme/web @acme/saas
 /platform/ @acme/platform
 /storage/ @acme/storage
 /common/sync/ @acme/platform @acme/storage
+/web/ @acme/web
+/proto/ @acme/storage @acme/web
 `
 
 var (
@@ -158,6 +161,41 @@ func TestCorpus(t *testing.T) {
 				p.LastActor = "bob"
 			}),
 			want: verdict{claimed: true, waitingOn: []string{"@dave"}, section: OnAuthor},
+		},
+		{
+			// the reviewer left review comments, the author pushed, then
+			// asked for another look. GitHub's latest reviews leave out a
+			// re-requested reviewer, but the review still counts: it's the
+			// member's turn, not a pull request nobody has picked up.
+			name: "reviewer re-requested after reviewing, author moved last",
+			pr: corpusPR(9030, func(p *github.OpenPR) {
+				p.RequestedUsers = []string{"bob"}
+				p.Reviews = []github.Review{{Author: "bob", State: "COMMENTED", At: corpusT0.Add(30 * time.Minute)}}
+			}),
+			want: verdict{claimed: true, waitingOn: []string{"@bob"}, section: OnMember},
+		},
+		{
+			// storage owns one shared file, but web owns all of it and
+			// is the one asked. Nobody on storage has looked, and nobody
+			// needs to: it's web's to pick up.
+			name: "co-owned file, another team covers everything",
+			pr: corpusPR(3915, func(p *github.OpenPR) {
+				p.Files = []string{"web/page.go", "proto/README.md"}
+				p.RequestedTeams = []string{"acme/storage", "acme/web"}
+			}),
+			want: verdict{claimed: true, waitingOn: []string{"@acme/web"}, section: OnOthers},
+		},
+		{
+			// a storage member's change to files storage and web
+			// co-own, sent to web for review.
+			name: "member's change, out for the co-owner's review",
+			pr: corpusPR(4469, func(p *github.OpenPR) {
+				p.Author = "alice"
+				p.Files = []string{"proto/replica.proto"}
+				p.RequestedTeams = []string{"acme/web"}
+				p.LastActor = "alice"
+			}),
+			want: verdict{claimed: true, waitingOn: []string{"@acme/web"}, section: OnOthers},
 		},
 		{
 			// a storage author and a storage reviewer on sync, which

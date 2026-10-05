@@ -61,8 +61,10 @@ type Section int
 
 const (
 	// NotYetReviewed has had no review or comment from any member of the team
-	// other than its author. Nobody on the team has picked it up, which is why
-	// it comes first, whoever it is nominally waiting on.
+	// other than its author, and is waiting on the team, one of its members,
+	// or nobody. Nobody on the team has picked it up, which is why it comes
+	// first. One waiting only on another team is that team's to pick up, and
+	// is OnOthers.
 	NotYetReviewed Section = iota
 	// OnMember is waiting on a specific member of the team.
 	OnMember
@@ -209,7 +211,12 @@ func neededOwners(pr github.OpenPR, file *codeowners.File, cfg Config) []codeown
 	}
 	o := file.Of(pr.Files)
 	approved := codeowners.Approval(pr.Approvers, codeowners.NewStaticTeams(cfg.TeamMembers))
-	return o.Plan(approved, codeowners.NewStaticMembership(cfg.TeamMembers))
+	// Where owners are equally useful, name the one already asked.
+	requested := codeowners.OwnerSet{}
+	for _, t := range pr.RequestedTeams {
+		requested.Add(codeowners.NormalizeOwner(t))
+	}
+	return o.PlanPreferring(approved, codeowners.NewStaticMembership(cfg.TeamMembers), requested)
 }
 
 // namedTeams is every team a CODEOWNERS file names anywhere.
@@ -546,7 +553,7 @@ const (
 // that member's; the team as a whole or nobody makes it the team's to pick up
 // again; anyone else is someone else.
 func section(pr github.OpenPR, waitingOn []string, why string, team codeowners.Owner, members map[string]bool) Section {
-	if !engaged(pr, members) {
+	if !engaged(pr, members) && (why == NoReviewer || waitsOnTeam(waitingOn, team, members)) {
 		return NotYetReviewed
 	}
 	if len(pr.ChangesRequestedBy) > 0 {
@@ -572,6 +579,18 @@ func section(pr github.OpenPR, waitingOn []string, why string, team codeowners.O
 		return NotYetReviewed
 	}
 	return OnOthers
+}
+
+// waitsOnTeam reports whether the team, or one of its members, is among
+// those a pull request waits on.
+func waitsOnTeam(waitingOn []string, team codeowners.Owner, members map[string]bool) bool {
+	for _, w := range waitingOn {
+		name := strings.TrimPrefix(w, "@")
+		if members[strings.ToLower(name)] || codeowners.NormalizeOwner(name) == team {
+			return true
+		}
+	}
+	return false
 }
 
 // memberSet keys logins by their lower case.
@@ -825,7 +844,7 @@ func teamSection(s Section) func(Item, Options) bool {
 }
 
 var sectionDefs = []sectionDef{
-	{name: SectionTeamUnreviewed, description: "the team's, with no review or comment from any member yet",
+	{name: SectionTeamUnreviewed, description: "the team's, waiting on the team or nobody, with no review or comment from any member yet",
 		title: func(t codeowners.Owner) string { return "Not yet reviewed by " + t.String() },
 		match: teamSection(NotYetReviewed)},
 	{name: SectionMemberWaiting, description: "the team's, waiting on a specific member",

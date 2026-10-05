@@ -3,6 +3,7 @@ package github
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestOpenPRDecode(t *testing.T) {
@@ -20,6 +21,10 @@ func TestOpenPRDecode(t *testing.T) {
 			{"state": "CHANGES_REQUESTED", "submittedAt": "2026-09-01T00:00:00Z", "author": {"login": "github-actions", "__typename": "Bot"}},
 			{"state": "COMMENTED", "submittedAt": "2026-09-02T00:00:00Z", "author": {"login": "dave", "__typename": "User"}},
 			{"state": "PENDING", "submittedAt": "2026-09-02T00:00:00Z", "author": {"login": "frank", "__typename": "User"}}
+		]},
+		"reviews": {"nodes": [
+			{"state": "COMMENTED", "submittedAt": "2026-09-01T06:00:00Z", "author": {"login": "dave", "__typename": "User"}},
+			{"state": "COMMENTED", "submittedAt": "2026-09-01T08:00:00Z", "author": {"login": "heidi", "__typename": "User"}}
 		]},
 		"latestOpinionatedReviews": {"nodes": [
 			{"state": "CHANGES_REQUESTED", "author": {"login": "dave", "__typename": "User"}},
@@ -48,8 +53,10 @@ func TestOpenPRDecode(t *testing.T) {
 	if len(pr.RequestedTeams) != 1 || pr.RequestedTeams[0] != "org/storage" {
 		t.Errorf("requested teams = %v", pr.RequestedTeams)
 	}
-	if len(pr.Reviews) != 1 || pr.Reviews[0].Author != "dave" {
-		t.Errorf("bot and pending reviews should be dropped, comments kept; reviews = %+v", pr.Reviews)
+	// heidi was asked to review again after commenting, which takes her out
+	// of latestReviews; dave's older review is not a second one.
+	if len(pr.Reviews) != 2 || pr.Reviews[0].Author != "dave" || !pr.Reviews[0].At.Equal(time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)) || pr.Reviews[1].Author != "heidi" {
+		t.Errorf("bot and pending reviews should be dropped, comments and re-requested reviewers kept, one per reviewer; reviews = %+v", pr.Reviews)
 	}
 	if pr.LastActor != "carol" {
 		t.Errorf("last actor = %q, want the latest of commit, review and comment", pr.LastActor)

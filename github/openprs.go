@@ -385,6 +385,9 @@ type PRBranch struct {
 	BaseRef        string
 	Draft          bool
 	ReviewDecision string
+	// UpdatedAt moves with every review, comment, push, request and
+	// assignment, so a poller can skip the pull requests it hasn't.
+	UpdatedAt time.Time
 }
 
 // branchPage is larger than openPRPage because each pull request carries only
@@ -411,7 +414,7 @@ func (c *Client) OpenPRBranches(ctx context.Context, repo string) ([]PRBranch, e
   repository(owner: %q, name: %q) {
     pullRequests(states: OPEN, first: %d, after: %s) {
       pageInfo { hasNextPage endCursor }
-      nodes { number url headRefName baseRefName isDraft reviewDecision headRepository { nameWithOwner } }
+      nodes { number url headRefName baseRefName isDraft reviewDecision updatedAt headRepository { nameWithOwner } }
     }
   }
 }
@@ -430,12 +433,13 @@ func (c *Client) OpenPRBranches(ctx context.Context, repo string) ([]PRBranch, e
 							EndCursor   string `json:"endCursor"`
 						} `json:"pageInfo"`
 						Nodes []struct {
-							Number         int64  `json:"number"`
-							URL            string `json:"url"`
-							HeadRefName    string `json:"headRefName"`
-							BaseRefName    string `json:"baseRefName"`
-							IsDraft        bool   `json:"isDraft"`
-							ReviewDecision string `json:"reviewDecision"`
+							Number         int64     `json:"number"`
+							URL            string    `json:"url"`
+							HeadRefName    string    `json:"headRefName"`
+							BaseRefName    string    `json:"baseRefName"`
+							IsDraft        bool      `json:"isDraft"`
+							ReviewDecision string    `json:"reviewDecision"`
+							UpdatedAt      time.Time `json:"updatedAt"`
 							HeadRepository *struct {
 								NameWithOwner string `json:"nameWithOwner"`
 							} `json:"headRepository"`
@@ -464,7 +468,7 @@ func (c *Client) OpenPRBranches(ctx context.Context, repo string) ([]PRBranch, e
 			out = append(out, PRBranch{
 				Key: fmt.Sprintf("%s#%d", repo, n.Number), URL: n.URL, Number: n.Number,
 				HeadRef: n.HeadRefName, BaseRef: n.BaseRefName,
-				Draft: n.IsDraft, ReviewDecision: n.ReviewDecision,
+				Draft: n.IsDraft, ReviewDecision: n.ReviewDecision, UpdatedAt: n.UpdatedAt,
 			})
 		}
 		if !list.PageInfo.HasNextPage {

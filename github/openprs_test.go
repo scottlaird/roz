@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -72,5 +73,25 @@ func TestOpenPRDecode(t *testing.T) {
 	}
 	if len(pr.Files) != 2 {
 		t.Errorf("files = %v", pr.Files)
+	}
+}
+
+func TestOpenPRBranchesDecode(t *testing.T) {
+	client := NewWithRunner(fixedRunner(`{"data":{"repository":{"pullRequests":{
+		"pageInfo":{"hasNextPage":false},
+		"nodes":[
+			{"number":7,"url":"u7","headRefName":"top","baseRefName":"bottom","isDraft":true,"reviewDecision":"","updatedAt":"2026-10-05T16:00:00Z","headRepository":{"nameWithOwner":"org/repo"}},
+			{"number":8,"url":"u8","headRefName":"fork","baseRefName":"main","updatedAt":"2026-10-05T16:00:00Z","headRepository":{"nameWithOwner":"someone/repo"}}
+		]}}}}`))
+	branches, err := client.OpenPRBranches(context.Background(), "org/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) != 1 {
+		t.Fatalf("branches = %+v, want the fork's left out", branches)
+	}
+	b := branches[0]
+	if b.Key != "org/repo#7" || b.BaseRef != "bottom" || !b.Draft || !b.UpdatedAt.Equal(time.Date(2026, 10, 5, 16, 0, 0, 0, time.UTC)) {
+		t.Errorf("branch = %+v", b)
 	}
 }

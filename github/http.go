@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // DefaultGraphQLEndpoint is github.com's GraphQL API.
@@ -43,11 +47,20 @@ func NewHTTP(token string) *Client {
 // names some aliases is returned whole, because the rest of it is good. Any
 // other status is a failure, and a rate limit is reported as ErrRateLimited
 // whether GitHub said so in the status, the headers or the body.
+//
+// After a rate limit, requests through the same runner fail at once with
+// ErrRateLimited until GitHub's wait is over, rather than adding to the count
+// GitHub is holding against the token. The wait is Retry-After, the budget's
+// reset time, or a minute when GitHub gives neither.
 func HTTPRunner(hc *http.Client, endpoint string, tokens TokenSource) Runner {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
+	var hold backoff
 	return func(ctx context.Context, query string) ([]byte, error) {
+		if until, held := hold.until(time.Now()); held {
+			return nil, fmt.Errorf("%w: waiting until %s", ErrRateLimited, until.Format(time.RFC3339))
+		}
 		token, err := tokens(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("getting a GitHub token: %w", err)
@@ -74,8 +87,47 @@ func HTTPRunner(hc *http.Client, endpoint string, tokens TokenSource) Runner {
 		if err != nil {
 			return nil, fmt.Errorf("reading the GraphQL response: %w", err)
 		}
-		return httpResult(resp, body)
+		out, err := httpResult(resp, body)
+		if errors.Is(err, ErrRateLimited) {
+			hold.set(limitEnds(resp, time.Now()))
+		}
+		return out, err
 	}
+}
+
+// backoff is when a rate-limited runner may send again.
+type backoff struct {
+	mu  sync.Mutex
+	end time.Time
+}
+
+func (b *backoff) until(now time.Time) (time.Time, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.end, now.Before(b.end)
+}
+
+func (b *backoff) set(end time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if end.After(b.end) {
+		b.end = end
+	}
+}
+
+// limitEnds is when GitHub says a rate limit is over.
+func limitEnds(resp *http.Response, now time.Time) time.Time {
+	if s, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && s > 0 {
+		return now.Add(time.Duration(s) * time.Second)
+	}
+	if strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining")) == "0" {
+		if s, err := strconv.ParseInt(strings.TrimSpace(resp.Header.Get("X-RateLimit-Reset")), 10, 64); err == nil {
+			if reset := time.Unix(s, 0); reset.After(now) {
+				return reset
+			}
+		}
+	}
+	return now.Add(time.Minute)
 }
 
 // httpResult decides what a response means: a body to parse, or why there

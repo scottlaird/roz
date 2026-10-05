@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func serve(t *testing.T, handler http.HandlerFunc) Runner {
@@ -104,5 +105,47 @@ func TestHTTPRunnerAsksForATokenEachTime(t *testing.T) {
 	}
 	if _, err := run(context.Background(), "q"); err == nil || !strings.Contains(err.Error(), "renewal failed") {
 		t.Errorf("second run: %v, want the token source's error", err)
+	}
+}
+
+func TestHTTPRunnerHoldsAfterALimit(t *testing.T) {
+	calls := 0
+	run := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"You have exceeded a secondary rate limit"}`)
+	})
+	for range 3 {
+		if _, err := run(context.Background(), "q"); !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("error = %v, want ErrRateLimited", err)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("GitHub was asked %d times during a minute's hold, want once", calls)
+	}
+}
+
+func TestLimitEnds(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	resp := func(h map[string]string) *http.Response {
+		r := &http.Response{Header: http.Header{}}
+		for k, v := range h {
+			r.Header.Set(k, v)
+		}
+		return r
+	}
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		want    time.Time
+	}{
+		{"retry after", map[string]string{"Retry-After": "30"}, now.Add(30 * time.Second)},
+		{"budget reset", map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1000600"}, time.Unix(1_000_600, 0)},
+		{"nothing said", nil, now.Add(time.Minute)},
+	} {
+		if got := limitEnds(resp(tc.headers), now); !got.Equal(tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

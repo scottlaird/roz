@@ -510,8 +510,15 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns, engagedOnly bo
 			}
 		}
 		if (len(others) < len(reviewers) || engagedOnly) && engaged(pr, memberSet(cfg.Members)) {
+			// A member who responded can still be a requested reviewer too,
+			// and is listed once.
 			names, why := turn(pr, responders(pr))
-			return append(names, others...), why
+			for _, o := range others {
+				if !slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, o) }) {
+					names = append(names, o)
+				}
+			}
+			return names, why
 		}
 		if len(reviewers) > 0 {
 			return reviewers, "review requested"

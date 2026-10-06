@@ -321,6 +321,17 @@ func TestWaitingOn(t *testing.T) {
 			want:     "@bob", why: UpdatedSinceReview,
 		},
 		{
+			name: "a member commented and is still requested, author since updated",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedTeams = []string{"org/storage"}
+				p.RequestedUsers = []string{"Bob"}
+				p.Reviews = []github.Review{{Author: "bob", State: "COMMENTED", At: t0}}
+				p.LastActor, p.LastActivity = "carol", t0.Add(time.Hour)
+			}),
+			teamOwns: true,
+			want:     "@bob", why: UpdatedSinceReview,
+		},
+		{
 			name: "only the team's request left, and only an outsider commented",
 			pr: pr(1, func(p *github.OpenPR) {
 				p.RequestedTeams = []string{"org/storage"}

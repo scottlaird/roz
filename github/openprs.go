@@ -62,6 +62,11 @@ type OpenPR struct {
 	// comment, for when nothing else says who has the next move.
 	LastActor    string
 	LastActivity time.Time
+	// IdleSince is the last thing a person did that a reviewer would count:
+	// a review or comment, the pull request leaving draft, or its creation.
+	// Pushes and bots are left out, so a rebase or an automated review does
+	// not make a long wait look new.
+	IdleSince time.Time
 }
 
 // Review is one reviewer's latest review.
@@ -176,6 +181,12 @@ type wireOpenPR struct {
 			Author    *wireActor `json:"author"`
 		} `json:"nodes"`
 	} `json:"comments"`
+	// ReadyForReview is the latest ReadyForReviewEvent.
+	ReadyForReview struct {
+		Nodes []struct {
+			CreatedAt time.Time `json:"createdAt"`
+		} `json:"nodes"`
+	} `json:"timelineItems"`
 	Files struct {
 		PageInfo struct {
 			HasNextPage bool   `json:"hasNextPage"`
@@ -209,6 +220,7 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
         latestOpinionatedReviews(first: 50) { nodes { state author { login __typename } } }
         commits(last: 1) { nodes { commit { committedDate author { user { login } } } } }
         comments(last: 50) { nodes { createdAt author { login __typename } } }
+        timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { createdAt } } }
         files(first: %d) {
           pageInfo { hasNextPage endCursor }
           nodes { path }
@@ -284,6 +296,7 @@ func (w wireOpenPR) decode(owner, name string) OpenPR {
 		HeadRef:        w.HeadRefName,
 		ReviewDecision: w.ReviewDecision,
 		CreatedAt:      w.CreatedAt,
+		IdleSince:      w.CreatedAt,
 	}
 	if w.Author != nil {
 		pr.Author = w.Author.Login
@@ -325,6 +338,7 @@ func (w wireOpenPR) decode(owner, name string) OpenPR {
 			pr.Reviews = append(pr.Reviews, review)
 		}
 		pr.noteActivity(review.Author, review.At)
+		pr.noteIdle(review.At)
 	}
 	for _, r := range w.LatestReviews.Nodes {
 		addReview(r.State, r.SubmittedAt, r.Author)
@@ -361,6 +375,10 @@ func (w wireOpenPR) decode(owner, name string) OpenPR {
 			pr.Commenters = append(pr.Commenters, login)
 		}
 		pr.noteActivity(login, n.CreatedAt)
+		pr.noteIdle(n.CreatedAt)
+	}
+	for _, n := range w.ReadyForReview.Nodes {
+		pr.noteIdle(n.CreatedAt)
 	}
 	for _, n := range w.Files.Nodes {
 		pr.Files = append(pr.Files, n.Path)
@@ -373,6 +391,12 @@ func (pr *OpenPR) noteActivity(login string, at time.Time) {
 		return
 	}
 	pr.LastActor, pr.LastActivity = login, at
+}
+
+func (pr *OpenPR) noteIdle(at time.Time) {
+	if at.After(pr.IdleSince) {
+		pr.IdleSince = at
+	}
 }
 
 // PRBranch is where an open pull request sits: enough to find the stack it

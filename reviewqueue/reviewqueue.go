@@ -169,7 +169,7 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 
 	// Longest-idle first: those are the ones a daily message exists to surface.
 	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].PR.LastActivity.Before(items[j].PR.LastActivity)
+		return idleSince(items[i].PR).Before(idleSince(items[j].PR))
 	})
 	return items, skipped
 }
@@ -759,7 +759,7 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 					fmt.Fprintf(&b, " %s", k)
 				}
 			}
-			since := lastActivity(it.PR)
+			since := idleSince(it.PR)
 			fmt.Fprintf(&b, " — waiting on %s (%s) · %sidle %s",
 				strings.Join(it.WaitingOn, ", "), it.Why, opts.sloMark(opts.Now.Sub(since)), age(since, opts.Now))
 			if len(it.Blocks) > 0 {
@@ -863,7 +863,7 @@ var sectionDefs = []sectionDef{
 		folded: true, match: func(it Item, _ Options) bool { return it.Held }},
 	{name: SectionStale, description: "idle longer than the stale-after time; one line at the end",
 		folded: true, match: func(it Item, opts Options) bool {
-			return opts.StaleAfter > 0 && opts.Now.Sub(lastActivity(it.PR)) > opts.StaleAfter
+			return opts.StaleAfter > 0 && opts.Now.Sub(idleSince(it.PR)) > opts.StaleAfter
 		}},
 }
 
@@ -1033,7 +1033,7 @@ func tableRows(items []Item, opts Options) [][]any {
 			prCell(it, number),
 			jiraCell(it.Jira, opts),
 			rawCell(fmt.Sprintf("%s (%s)", strings.Join(it.WaitingOn, ", "), it.Why)),
-			idleCell(lastActivity(it.PR), opts),
+			idleCell(idleSince(it.PR), opts),
 		}
 		if opts.ShowReasons {
 			row = append(row, rawCell(strings.Join(it.Reasons, "; ")))
@@ -1137,11 +1137,11 @@ func link(pr github.OpenPR) string {
 	return fmt.Sprintf("<%s|%s>", pr.URL, pr.Key[strings.LastIndex(pr.Key, "#"):])
 }
 
-func lastActivity(pr github.OpenPR) time.Time {
-	if pr.LastActivity.IsZero() {
+func idleSince(pr github.OpenPR) time.Time {
+	if pr.IdleSince.IsZero() {
 		return pr.CreatedAt
 	}
-	return pr.LastActivity
+	return pr.IdleSince
 }
 
 func days(d time.Duration) string {

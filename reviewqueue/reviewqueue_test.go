@@ -45,6 +45,7 @@ func pr(n int, mutate func(*github.OpenPR)) github.OpenPR {
 		CreatedAt:    t0,
 		LastActor:    "carol",
 		LastActivity: t0.Add(time.Duration(n) * time.Hour),
+		IdleSince:    t0.Add(time.Duration(n) * time.Hour),
 	}
 	mutate(&p)
 	return p
@@ -468,7 +469,7 @@ func TestFormat(t *testing.T) {
 				p.Title = title
 				p.Key = fmt.Sprintf("org/repo#%d", 100+n)
 				p.URL = fmt.Sprintf("https://example.com/%d", 100+n)
-				p.LastActivity = now.Add(-idle)
+				p.IdleSince = now.Add(-idle)
 			}),
 			Reasons:   []string{"owns storage/engine.go"},
 			WaitingOn: []string{"@bob"},
@@ -519,14 +520,14 @@ func TestBlocks(t *testing.T) {
 	items := []Item{{
 		PR: pr(1, func(p *github.OpenPR) {
 			p.Key, p.URL, p.Title = "org/repo#101", "https://example.com/101", "a change"
-			p.LastActivity = now.Add(-3 * time.Hour)
+			p.IdleSince = now.Add(-3 * time.Hour)
 		}),
 		Reasons: []string{"owns storage/engine.go"}, WaitingOn: []string{"@bob"},
 		Why: "review requested", Section: OnMember, Jira: []string{"ABC-1", "ABC-2"},
 	}, {
 		PR: pr(2, func(p *github.OpenPR) {
 			p.Key, p.URL, p.Title = "org/repo#102", "https://example.com/102", "no ticket"
-			p.LastActivity = now.Add(-3 * time.Hour)
+			p.IdleSince = now.Add(-3 * time.Hour)
 		}),
 		WaitingOn: []string{"@carol"}, Why: NoReviewer, Section: NotYetReviewed,
 	}}
@@ -570,7 +571,7 @@ func TestDataTables(t *testing.T) {
 	items := []Item{{
 		PR: pr(1, func(p *github.OpenPR) {
 			p.Key, p.URL, p.Title = "org/repo#101", "https://example.com/101", "a change"
-			p.LastActivity = now.Add(-50 * time.Hour)
+			p.IdleSince = now.Add(-50 * time.Hour)
 		}),
 		WaitingOn: []string{"@bob"}, Why: "review requested", Section: OnMember,
 	}}

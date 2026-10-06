@@ -33,7 +33,7 @@ func TestSectionsChooseAndOrder(t *testing.T) {
 		return Item{
 			PR: pr(n, func(p *github.OpenPR) {
 				p.Title = "pr" + string(rune('0'+n))
-				p.LastActivity = now.Add(-idle)
+				p.IdleSince = now.Add(-idle)
 			}),
 			WaitingOn: []string{"@x"}, Why: "review requested",
 			Section: sec, ByMember: byMember, AuthoredOnly: authoredOnly,
@@ -86,7 +86,7 @@ func TestAuthoredOnlyStaysOutOfTeamSections(t *testing.T) {
 
 func TestWithoutStaleItFallsIntoItsSection(t *testing.T) {
 	now := t0.Add(30 * 24 * time.Hour)
-	it := Item{PR: pr(1, func(p *github.OpenPR) { p.LastActivity = t0 }), Section: OnMember}
+	it := Item{PR: pr(1, func(p *github.OpenPR) { p.IdleSince = t0 }), Section: OnMember}
 	groups, stale, _ := group(team, []Item{it}, Options{Now: now, StaleAfter: 24 * time.Hour,
 		Sections: []string{SectionMemberWaiting}})
 	if len(stale) != 0 || len(groups) != 1 {

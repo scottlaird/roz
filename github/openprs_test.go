@@ -95,3 +95,44 @@ func TestOpenPRBranchesDecode(t *testing.T) {
 		t.Errorf("branch = %+v", b)
 	}
 }
+
+func TestOpenPRIdleSince(t *testing.T) {
+	at := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, tc := range []struct {
+		name string
+		json string
+		want string
+	}{
+		{"creation when nothing else happened", `{}`, "2026-09-01T00:00:00Z"},
+		{"pushes and bots don't count", `{
+			"commits": {"nodes": [{"commit": {"committedDate": "2026-09-05T00:00:00Z", "author": {"user": {"login": "carol"}}}}]},
+			"reviews": {"nodes": [{"state": "COMMENTED", "submittedAt": "2026-09-05T00:00:00Z", "author": {"login": "copilot-pull-request-reviewer", "__typename": "Bot"}}]},
+			"comments": {"nodes": [{"createdAt": "2026-09-05T00:00:00Z", "author": {"login": "ci", "__typename": "Bot"}}]}
+		}`, "2026-09-01T00:00:00Z"},
+		{"leaving draft restarts the wait", `{
+			"timelineItems": {"nodes": [{"createdAt": "2026-09-03T00:00:00Z"}]}
+		}`, "2026-09-03T00:00:00Z"},
+		{"a person's review or comment, whichever is latest", `{
+			"timelineItems": {"nodes": [{"createdAt": "2026-09-02T00:00:00Z"}]},
+			"reviews": {"nodes": [{"state": "COMMENTED", "submittedAt": "2026-09-03T00:00:00Z", "author": {"login": "dave", "__typename": "User"}}]},
+			"comments": {"nodes": [{"createdAt": "2026-09-04T00:00:00Z", "author": {"login": "carol", "__typename": "User"}}]}
+		}`, "2026-09-04T00:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var w wireOpenPR
+			if err := json.Unmarshal([]byte(tc.json), &w); err != nil {
+				t.Fatal(err)
+			}
+			w.CreatedAt = at("2026-09-01T00:00:00Z")
+			if got := w.decode("org", "repo").IdleSince; !got.Equal(at(tc.want)) {
+				t.Errorf("idle since = %s, want %s", got.Format(time.RFC3339), tc.want)
+			}
+		})
+	}
+}

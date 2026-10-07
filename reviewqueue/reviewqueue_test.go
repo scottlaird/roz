@@ -244,6 +244,16 @@ func TestWaitingOn(t *testing.T) {
 			want: "@carol", why: "changes requested by @alice",
 		},
 		{
+			name: "unanswered review comments, whoever else is requested",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.RequestedUsers = []string{"bob", "erin"}
+				p.Reviews = []github.Review{{Author: "bob", State: "COMMENTED"}}
+				p.LastActor = "carol"
+				p.UnansweredThreads = 1
+			}),
+			want: "@carol", why: UnansweredComments,
+		},
+		{
 			name: "reviewers, dropping the team's stale request",
 			pr: pr(1, func(p *github.OpenPR) {
 				p.RequestedUsers = []string{"bob"}

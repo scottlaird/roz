@@ -163,6 +163,20 @@ func TestCorpus(t *testing.T) {
 			want: verdict{claimed: true, waitingOn: []string{"@dave"}, section: OnAuthor},
 		},
 		{
+			// later, with a second member asked as well: one reviewer left
+			// review threads, the author answered some and pushed, and the
+			// rest are still open. The author owes those answers, whoever
+			// else hasn't looked yet.
+			name: "unanswered review threads with another reviewer still requested",
+			pr: corpusPR(8969, func(p *github.OpenPR) {
+				p.RequestedUsers = []string{"bob", "alice"}
+				p.Reviews = []github.Review{{Author: "bob", State: "COMMENTED"}}
+				p.LastActor = "dave"
+				p.UnansweredThreads = 2
+			}),
+			want: verdict{claimed: true, waitingOn: []string{"@dave"}, section: OnAuthor},
+		},
+		{
 			// the reviewer left review comments, the author pushed, then
 			// asked for another look. GitHub's latest reviews leave out a
 			// re-requested reviewer, but the review still counts: it's the

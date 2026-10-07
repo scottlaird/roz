@@ -136,3 +136,26 @@ func TestOpenPRIdleSince(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenPRUnansweredThreads(t *testing.T) {
+	var w wireOpenPR
+	if err := json.Unmarshal([]byte(`{
+		"author": {"login": "carol"},
+		"reviewThreads": {"nodes": [
+			{"isResolved": false, "comments": {"nodes": [{"author": {"login": "dave", "__typename": "User"}}]}},
+			{"isResolved": false, "comments": {"nodes": [{"author": {"login": "erin", "__typename": "User"}}]}},
+			{"isResolved": false, "comments": {"nodes": [{"author": {"login": "Carol", "__typename": "User"}}]}},
+			{"isResolved": true, "comments": {"nodes": [{"author": {"login": "dave", "__typename": "User"}}]}},
+			{"isResolved": false, "comments": {"nodes": [{"author": {"login": "copilot-pull-request-reviewer", "__typename": "Bot"}}]}},
+			{"isResolved": false, "comments": {"nodes": [{"author": null}]}},
+			{"isResolved": false, "comments": {"nodes": []}}
+		]}
+	}`), &w); err != nil {
+		t.Fatal(err)
+	}
+	// dave's and erin's: the author answered one, one is resolved, and a bot's
+	// or a deleted account's last word is not one the author owes.
+	if got := w.decode("org", "repo").UnansweredThreads; got != 2 {
+		t.Errorf("unanswered threads = %d, want 2", got)
+	}
+}

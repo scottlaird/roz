@@ -477,7 +477,8 @@ func stillAwaited(pr github.OpenPR) []string {
 const NoReviewer = "no reviewer requested"
 
 // waitingOn says who has the next move. In order: a change request puts it
-// back with the author; outstanding review requests are the reviewers'; a
+// back with the author, and so do review threads the author hasn't answered;
+// outstanding review requests are the reviewers'; a
 // pull request nobody has reviewed or been asked to is waiting on a reviewer;
 // one that has been reviewed or commented on is back with those people if the
 // author moved last, and the author's if not.
@@ -499,6 +500,9 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns, engagedOnly bo
 			changesBy[i] = "@" + login
 		}
 		return []string{"@" + pr.Author}, "changes requested by " + strings.Join(changesBy, ", ")
+	}
+	if pr.UnansweredThreads > 0 {
+		return []string{"@" + pr.Author}, UnansweredComments
 	}
 
 	if len(pr.RequestedUsers) > 0 || len(pr.RequestedTeams) > 0 {
@@ -554,6 +558,10 @@ const (
 	AuthorsTurn        = "reviewed, author's turn"
 )
 
+// UnansweredComments is the Why of a pull request with review threads the
+// author hasn't answered, whoever else is still requested.
+const UnansweredComments = "unanswered review comments"
+
 // section decides which part of the message an item belongs in. Nothing yet
 // from the team puts it first. After that: a change request is the author's
 // to answer, even when the author is on the team; a named member makes it
@@ -569,7 +577,7 @@ func section(pr github.OpenPR, waitingOn []string, why string, team codeowners.O
 	switch why {
 	case NoReviewer:
 		return NotYetReviewed
-	case AuthorsTurn:
+	case AuthorsTurn, UnansweredComments:
 		return OnAuthor
 	}
 	onTeam := false

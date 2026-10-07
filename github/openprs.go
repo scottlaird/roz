@@ -62,6 +62,10 @@ type OpenPR struct {
 	// comment, for when nothing else says who has the next move.
 	LastActor    string
 	LastActivity time.Time
+	// UnansweredThreads counts the unresolved review threads whose latest
+	// comment is a person's other than the author's: questions the author
+	// still owes an answer. A thread a bot spoke last in is not counted.
+	UnansweredThreads int
 	// IdleSince is the last thing a person did that a reviewer would count:
 	// a review or comment, the pull request leaving draft, or its creation.
 	// Pushes and bots are left out, so a rebase or an automated review does
@@ -181,6 +185,16 @@ type wireOpenPR struct {
 			Author    *wireActor `json:"author"`
 		} `json:"nodes"`
 	} `json:"comments"`
+	ReviewThreads struct {
+		Nodes []struct {
+			IsResolved bool `json:"isResolved"`
+			Comments   struct {
+				Nodes []struct {
+					Author *wireActor `json:"author"`
+				} `json:"nodes"`
+			} `json:"comments"`
+		} `json:"nodes"`
+	} `json:"reviewThreads"`
 	// ReadyForReview is the latest ReadyForReviewEvent.
 	ReadyForReview struct {
 		Nodes []struct {
@@ -221,6 +235,7 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
         commits(last: 1) { nodes { commit { committedDate author { user { login } } } } }
         comments(last: 50) { nodes { createdAt author { login __typename } } }
         timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { createdAt } } }
+        reviewThreads(last: 100) { nodes { isResolved comments(last: 1) { nodes { author { login __typename } } } } }
         files(first: %d) {
           pageInfo { hasNextPage endCursor }
           nodes { path }
@@ -379,6 +394,16 @@ func (w wireOpenPR) decode(owner, name string) OpenPR {
 	}
 	for _, n := range w.ReadyForReview.Nodes {
 		pr.noteIdle(n.CreatedAt)
+	}
+	for _, t := range w.ReviewThreads.Nodes {
+		if t.IsResolved || len(t.Comments.Nodes) == 0 {
+			continue
+		}
+		last := t.Comments.Nodes[len(t.Comments.Nodes)-1].Author
+		if last == nil || last.TypeName == "Bot" || strings.EqualFold(last.Login, pr.Author) {
+			continue
+		}
+		pr.UnansweredThreads++
 	}
 	for _, n := range w.Files.Nodes {
 		pr.Files = append(pr.Files, n.Path)

@@ -303,6 +303,27 @@ func TestWaitingOn(t *testing.T) {
 			want: "@erin", why: UpdatedSinceReview,
 		},
 		{
+			name: "author since updated: an approver isn't waited on",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.Reviews = []github.Review{
+					{Author: "erin", State: "COMMENTED", At: t0},
+					{Author: "bob", State: "APPROVED", At: t0},
+				}
+				p.Approvers = []string{"bob"}
+				p.LastActor, p.LastActivity = "carol", t0.Add(time.Hour)
+			}),
+			want: "@erin", why: UpdatedSinceReview,
+		},
+		{
+			name: "only approvers, nobody asked: it needs a reviewer",
+			pr: pr(1, func(p *github.OpenPR) {
+				p.Reviews = []github.Review{{Author: "bob", State: "APPROVED", At: t0}}
+				p.Approvers = []string{"bob"}
+				p.LastActor, p.LastActivity = "carol", t0.Add(time.Hour)
+			}),
+			want: "@carol", why: NoReviewer,
+		},
+		{
 			name: "commented on, author hasn't answered",
 			pr: pr(1, func(p *github.OpenPR) {
 				p.Reviews = []github.Review{{Author: "erin", State: "COMMENTED", At: t0}}

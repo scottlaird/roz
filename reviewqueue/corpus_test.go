@@ -200,6 +200,20 @@ func TestCorpus(t *testing.T) {
 			want: verdict{claimed: true, waitingOn: []string{"@acme/web"}, section: OnOthers},
 		},
 		{
+			// a storage member approved another team's change, the
+			// author answered afterwards, and web still owes its review. The
+			// approval stands, so the member has nothing left to do.
+			name: "member approved, author moved last, another team still requested",
+			pr: corpusPR(16019, func(p *github.OpenPR) {
+				p.Files = []string{"web/page.go"}
+				p.RequestedTeams = []string{"acme/web"}
+				p.Reviews = []github.Review{{Author: "bob", State: "APPROVED"}}
+				p.Approvers = []string{"bob"}
+				p.LastActor = "dave"
+			}),
+			want: verdict{claimed: true, waitingOn: []string{"@acme/web"}, section: OnOthers},
+		},
+		{
 			// a storage member's change to files storage and web
 			// co-own, sent to web for review.
 			name: "member's change, out for the co-owner's review",

@@ -513,10 +513,11 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns, engagedOnly bo
 				others = append(others, r)
 			}
 		}
-		if (len(others) < len(reviewers) || engagedOnly) && engaged(pr, memberSet(cfg.Members)) {
+		pending := unapproved(pr, responders(pr))
+		if (len(others) < len(reviewers) || engagedOnly) && engaged(pr, memberSet(cfg.Members)) && len(pending) > 0 {
 			// A member who responded can still be a requested reviewer too,
 			// and is listed once.
-			names, why := turn(pr, responders(pr))
+			names, why := turn(pr, pending)
 			for _, o := range others {
 				if !slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, o) }) {
 					names = append(names, o)
@@ -529,14 +530,26 @@ func waitingOn(pr github.OpenPR, team codeowners.Owner, teamOwns, engagedOnly bo
 		}
 	}
 
-	// Nobody asked and nobody has reviewed: it needs a reviewer, and naming
-	// whoever pushed last would suggest it has one.
-	responded := responders(pr)
+	// Nobody asked and nobody has reviewed, or everyone who has approved: it
+	// needs a reviewer, and naming whoever pushed last would suggest it has one.
+	responded := unapproved(pr, responders(pr))
 	if len(responded) == 0 {
 		return []string{"@" + pr.Author}, NoReviewer
 	}
 
 	return turn(pr, responded)
+}
+
+// unapproved is logins less those whose approval still stands: an approver
+// has nothing left to do, however the pull request has changed since.
+func unapproved(pr github.OpenPR, logins []string) []string {
+	var out []string
+	for _, l := range logins {
+		if !slices.ContainsFunc(pr.Approvers, func(a string) bool { return strings.EqualFold(a, l) }) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // turn says whose move a reviewed or commented-on pull request is: back with

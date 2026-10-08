@@ -770,7 +770,7 @@ func titleWithAuthor(pr github.OpenPR) string {
 func Format(repo string, team codeowners.Owner, items []Item, opts Options) string {
 	groups, stale, held := group(team, items, opts)
 	var b strings.Builder
-	fmt.Fprintf(&b, "*Pull requests for %s in %s* (%d)\n", team.String(), repo, shown(groups, stale, held))
+	fmt.Fprintf(&b, "*Pull requests for %s in %s* (%d)\n", escape(team.String()), escape(repo), shown(groups, stale, held))
 	if len(groups)+len(stale)+len(held) == 0 {
 		b.WriteString("Nothing waiting.\n")
 		return b.String()
@@ -782,14 +782,14 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 			fmt.Fprintf(&b, "• %s %s", link(it.PR), escape(titleWithAuthor(it.PR)))
 			for _, k := range it.Jira {
 				if url := opts.jiraLink(k); url != "" {
-					fmt.Fprintf(&b, " <%s|%s>", url, k)
+					fmt.Fprintf(&b, " <%s|%s>", escape(url), k)
 				} else {
 					fmt.Fprintf(&b, " %s", k)
 				}
 			}
 			since := idleSince(it.PR)
 			fmt.Fprintf(&b, " — waiting on %s (%s) · %sidle %s",
-				strings.Join(it.WaitingOn, ", "), it.Why, opts.sloMark(opts.Now.Sub(since)), age(since, opts.Now))
+				escape(strings.Join(it.WaitingOn, ", ")), escape(it.Why), opts.sloMark(opts.Now.Sub(since)), age(since, opts.Now))
 			if len(it.Blocks) > 0 {
 				blocked := make([]string, len(it.Blocks))
 				for i, pr := range it.Blocks {
@@ -798,7 +798,8 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 				fmt.Fprintf(&b, " · *blocks %s*", strings.Join(blocked, ", "))
 			}
 			if opts.ShowReasons {
-				fmt.Fprintf(&b, " · _%s_", strings.Join(it.Reasons, "; "))
+				// Reasons carry file paths, which the pull request's author chose.
+				fmt.Fprintf(&b, " · _%s_", escape(strings.Join(it.Reasons, "; ")))
 			}
 			b.WriteString("\n")
 		}

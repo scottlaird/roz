@@ -555,6 +555,21 @@ func TestFormat(t *testing.T) {
 	if !strings.Contains(Format("org/repo", team, nil, Options{Now: now}), "Nothing waiting.") {
 		t.Error("an empty queue should say so")
 	}
+
+	// A file path is the pull request author's to choose, and git allows Slack's
+	// control characters in it.
+	hostile := items[0]
+	hostile.Reasons = []string{"owns storage/<!channel> <https://evil.example|log in>"}
+	opts.JiraURL = "https://example.atlassian.net/browse/x><!here><https://evil.example"
+	got = Format("org/repo", team, []Item{hostile}, opts)
+	for _, bad := range []string{"<!channel>", "<!here>", "<https://evil.example"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("unescaped %q reached the message:\n%s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "&lt;!channel&gt;") {
+		t.Errorf("the reason should still be shown, escaped:\n%s", got)
+	}
 }
 
 func TestBlocks(t *testing.T) {

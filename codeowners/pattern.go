@@ -112,35 +112,48 @@ func consumedPrefix(pattern, path []string) bool {
 // walk matches pattern segments against path segments, left to right.
 //
 // `**` is the only segment that can consume more than one, so it is the only
-// place this recurses: try every split and take the first that works.
+// place this branches: try every split and take the first that works. Whether
+// pattern[i:] matches path[j:] never changes, so the splits that failed are
+// remembered; without that, a rule of repeated `**` against a deep path tries
+// every combination of splits, which a CODEOWNERS file anyone can write turns
+// into an unbounded stall.
 func walk(pattern, path []string) bool {
-	for len(pattern) > 0 {
-		if pattern[0] == "**" {
-			rest := pattern[1:]
-			// A trailing `**` means everything *inside*, so there has to be
-			// something inside: `apps/**` covers `apps/a.js` and not the entry
-			// `apps` itself. In the middle it may still consume nothing, which
-			// is why `a/**/b` matches `a/b`.
-			if len(rest) == 0 {
-				return len(path) > 0
-			}
-			for skip := 0; skip <= len(path); skip++ {
-				if walk(rest, path[skip:]) {
-					return true
+	var failed map[[2]int]bool
+	var match func(i, j int) bool
+	match = func(i, j int) bool {
+		for i < len(pattern) {
+			if pattern[i] == "**" {
+				// A trailing `**` means everything *inside*, so there has to be
+				// something inside: `apps/**` covers `apps/a.js` and not the entry
+				// `apps` itself. In the middle it may still consume nothing, which
+				// is why `a/**/b` matches `a/b`.
+				if i+1 == len(pattern) {
+					return j < len(path)
 				}
+				key := [2]int{i, j}
+				if failed[key] {
+					return false
+				}
+				for skip := j; skip <= len(path); skip++ {
+					if match(i+1, skip) {
+						return true
+					}
+				}
+				if failed == nil {
+					failed = map[[2]int]bool{}
+				}
+				failed[key] = true
+				return false
 			}
-			return false
+			if j == len(path) || !matchSegment(pattern[i], path[j]) {
+				return false
+			}
+			i, j = i+1, j+1
 		}
-		if len(path) == 0 {
-			return false
-		}
-		if !matchSegment(pattern[0], path[0]) {
-			return false
-		}
-		pattern, path = pattern[1:], path[1:]
+		// Every pattern segment matched. Leftover path is the directory's contents.
+		return true
 	}
-	// Every pattern segment matched. Leftover path is the directory's contents.
-	return true
+	return match(0, 0)
 }
 
 // matchSegment matches one path segment against one pattern segment, where

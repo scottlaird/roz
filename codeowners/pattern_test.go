@@ -1,6 +1,10 @@
 package codeowners
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 // TestPatternMatch works through the syntax GitHub documents, case by case.
 // The rule doing the most work is unwritten in that syntax: owning a directory
@@ -105,5 +109,29 @@ func TestGlobSegmentBacktracks(t *testing.T) {
 					tc.pattern, tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRepeatedDoubleStarIsBounded: a rule of many `**` that can never match
+// used to try every combination of splits against a deep path, which for this
+// one is effectively forever. Anyone can write such a rule in a repository of
+// their own and point a lookup at it.
+func TestRepeatedDoubleStarIsBounded(t *testing.T) {
+	p := ParsePattern(strings.Repeat("**/", 16) + "zz")
+	path := strings.TrimSuffix(strings.Repeat("a/", 400), "/")
+
+	done := make(chan bool, 1)
+	go func() { done <- p.Match(path) }()
+	select {
+	case got := <-done:
+		if got {
+			t.Error("matched a path with no zz segment")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("matching did not finish in 5s")
+	}
+
+	if !p.Match(path + "/zz") {
+		t.Error("did not match a path ending in zz")
 	}
 }

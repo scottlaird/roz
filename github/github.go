@@ -129,9 +129,10 @@ type Client struct {
 	run Runner
 }
 
-// New returns a Client that shells out to gh.
+// New returns a Client that shells out to gh, retrying requests that get no
+// answer.
 func New() *Client {
-	return &Client{run: runGH}
+	return &Client{run: Retrying(runGH)}
 }
 
 // NewWithRunner returns a Client backed by a custom Runner: a test double, or

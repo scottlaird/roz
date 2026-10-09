@@ -36,7 +36,7 @@ func StaticToken(token string) TokenSource {
 // NewHTTP returns a Client that speaks to github.com's GraphQL API directly,
 // authenticating with token, rather than through gh.
 func NewHTTP(token string) *Client {
-	return NewWithRunner(HTTPRunner(nil, DefaultGraphQLEndpoint, StaticToken(token)))
+	return NewWithRunner(Retrying(HTTPRunner(nil, DefaultGraphQLEndpoint, StaticToken(token))))
 }
 
 // HTTPRunner returns a Runner that posts each query to endpoint with a token

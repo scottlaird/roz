@@ -158,3 +158,11 @@ func Handler() http.Handler {
 
 // Registry is the collector set, for a test that wants to read it back.
 func Registry() *prometheus.Registry { return registry }
+
+// GitHubCollectors are the GitHub client's own metrics, for a program that
+// embeds the client and serves its own registry. A collector can be
+// registered with more than one registry, so this does not take them from
+// roz's.
+func GitHubCollectors() []prometheus.Collector {
+	return []prometheus.Collector{githubRequests, rateLimitRemaining, rateLimitTotal}
+}

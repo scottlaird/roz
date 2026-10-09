@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/scottlaird/roz/internal/metrics"
 )
 
@@ -22,6 +24,14 @@ const (
 	ReadCodeowners   = "codeowners"
 	ReadSearch       = "search"
 )
+
+// Collectors are the metrics every Client records: requests by read and
+// outcome, and the GraphQL budget as GitHub last reported it. A program that
+// embeds this package and serves its own Prometheus registry registers these
+// to export them; roz's own /metrics already carries them.
+func Collectors() []prometheus.Collector {
+	return metrics.GitHubCollectors()
+}
 
 // request runs a query and records how it went.
 //

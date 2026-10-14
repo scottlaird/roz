@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/scottlaird/roz/codeowners"
 	"github.com/scottlaird/roz/github"
 )
 
@@ -102,5 +103,19 @@ func TestBuildNamesTheCodeownersThatFailed(t *testing.T) {
 	_, _, err := Build(context.Background(), src, "org/repo", Config{Team: team}, nil)
 	if err == nil || !strings.Contains(err.Error(), "org/repo CODEOWNERS on gone") {
 		t.Errorf("error %v does not say which CODEOWNERS failed", err)
+	}
+}
+
+// TestBuildFetchesPreferredTeams: a preferred team CODEOWNERS never names still
+// needs its membership, to tell whether it settles a team that is named.
+func TestBuildFetchesPreferredTeams(t *testing.T) {
+	src := &fakeSource{codeowners: map[string]string{"main": testCodeowners}}
+	cfg := config()
+	cfg.PreferredReviewers = []codeowners.Owner{"org/storage-oncall"}
+	if _, _, err := Build(context.Background(), src, "org/repo", cfg, func(string, ...any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(src.teamsAsked, "org/storage-oncall") {
+		t.Errorf("teams asked = %v, want org/storage-oncall among them", src.teamsAsked)
 	}
 }

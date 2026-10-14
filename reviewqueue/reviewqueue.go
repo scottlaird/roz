@@ -54,6 +54,11 @@ type Config struct {
 	// for the member_authored section. They are marked AuthoredOnly, and no
 	// other section shows them.
 	IncludeMemberAuthored bool
+	// PreferredReviewers, when set, names a single owner a pull request waits
+	// on: the first of these that owns an outstanding file and can settle all
+	// of them, else the owner listed first on the most outstanding files. See
+	// codeowners.Ownership.Preferred. Empty keeps the fewest-approvals plan.
+	PreferredReviewers []codeowners.Owner
 }
 
 // Section groups items by who has the next move.
@@ -211,6 +216,13 @@ func neededOwners(pr github.OpenPR, file *codeowners.File, cfg Config) []codeown
 	}
 	o := file.Of(pr.Files)
 	approved := codeowners.Approval(pr.Approvers, codeowners.NewStaticTeams(cfg.TeamMembers))
+	if len(cfg.PreferredReviewers) > 0 {
+		owner, ok := o.Preferred(approved, cfg.PreferredReviewers, codeowners.NewStaticMembership(cfg.TeamMembers))
+		if !ok {
+			return nil
+		}
+		return []codeowners.Owner{owner}
+	}
 	// Where owners are equally useful, name the one already asked.
 	requested := codeowners.OwnerSet{}
 	for _, t := range pr.RequestedTeams {

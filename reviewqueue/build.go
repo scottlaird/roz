@@ -72,6 +72,13 @@ func Build(ctx context.Context, src Source, repo string, cfg Config, logf func(f
 			teamSet[string(t)] = true
 		}
 	}
+	// And of the preferred teams, which CODEOWNERS may not name: one nested
+	// inside an owning team settles that team's files.
+	for _, t := range cfg.PreferredReviewers {
+		if t.IsTeam() {
+			teamSet[string(t)] = true
+		}
+	}
 	refs := make([]string, 0, len(teamSet))
 	for t := range teamSet {
 		refs = append(refs, t)

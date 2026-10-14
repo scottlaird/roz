@@ -36,6 +36,7 @@ const (
 	flagQueueSLOWarn       = "slo-warn"
 	flagQueueSLOBreach     = "slo-breach"
 	flagQueueSection       = "section"
+	flagQueuePreferred     = "preferred-reviewers"
 
 	// envSlackWebhook is where --post finds its Slack incoming webhook. An
 	// environment variable rather than a flag, so the URL stays out of shell
@@ -84,6 +85,8 @@ func newReviewQueueCmd() *cobra.Command {
 	f.String(flagQueueTable, "simple", `with --format blocks: "simple" tables, or "data" for Slack's paginated, sortable data tables`)
 	f.Int(flagQueuePageSize, 10, "rows per page in a data table")
 	f.StringSlice(flagQueueIgnoreTeam, nil, "team never to show as waited on, org/slug (repeatable)")
+	f.StringSlice(flagQueuePreferred, nil, "teams to name as waited on, in order of preference, comma-separated or repeated: "+
+		"the first that owns an outstanding file and can settle all of them, else the owner listed first on the most (default: the fewest approvals still needed)")
 	f.Duration(flagQueueSLOWarn, 48*time.Hour, "mark pull requests idle longer than this with a yellow circle; 0 marks none")
 	f.StringSlice(flagQueueSection, nil, "sections to show, in order, comma-separated or repeated: "+sectionList()+" (default: "+strings.Join(reviewqueue.DefaultSections, ",")+")")
 	f.Duration(flagQueueSLOBreach, 7*24*time.Hour, "mark pull requests idle longer than this with a red circle; 0 marks none")
@@ -108,6 +111,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	table, _ := f.GetString(flagQueueTable)
 	pageSize, _ := f.GetInt(flagQueuePageSize)
 	ignoreRefs, _ := f.GetStringSlice(flagQueueIgnoreTeam)
+	preferredRefs, _ := f.GetStringSlice(flagQueuePreferred)
 	sloWarn, _ := f.GetDuration(flagQueueSLOWarn)
 	sloBreach, _ := f.GetDuration(flagQueueSLOBreach)
 	sections, _ := f.GetStringSlice(flagQueueSection)
@@ -138,6 +142,14 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 		}
 		ignore = append(ignore, o)
 	}
+	var preferred []codeowners.Owner
+	for _, ref := range preferredRefs {
+		o := codeowners.NormalizeOwner(ref)
+		if !o.IsTeam() {
+			return fmt.Errorf("--%s %q is not org/slug", flagQueuePreferred, ref)
+		}
+		preferred = append(preferred, o)
+	}
 	webhook := os.Getenv(envSlackWebhook)
 	if post && webhook == "" {
 		return fmt.Errorf("--post needs a Slack incoming webhook URL in %s", envSlackWebhook)
@@ -154,6 +166,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	cfg := reviewqueue.Config{
 		Team: team, MaxRuleOwners: maxRuleOwners, JiraPrefixes: jira.prefixes, IgnoreTeams: ignore,
 		IncludeMemberAuthored: slices.Contains(sections, reviewqueue.SectionMemberAuthored),
+		PreferredReviewers:    preferred,
 	}
 
 	var message, diagnostics strings.Builder

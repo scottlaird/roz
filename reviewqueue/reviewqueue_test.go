@@ -827,3 +827,47 @@ func TestWaitingOnFewestApprovals(t *testing.T) {
 		})
 	}
 }
+
+func TestWaitingOnPreferredReviewers(t *testing.T) {
+	cfg := config()
+	cfg.TeamMembers = map[string][]string{
+		"org/storage": {"alice", "bob"},
+		"org/core":    {"alice", "bob", "carol"},
+		"org/api":     {"dave"},
+	}
+	files := []string{"storage/a.go", "storage/b.go", "cmd/x.go", "cmd/y.go"}
+	base := pr(1, func(p *github.OpenPR) {
+		p.Files = files
+		p.RequestedTeams = []string{"org/core"}
+	})
+	f, err := codeowners.ParseString("* @org/core @org/api @org/platform\n/storage/ @org/storage\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		preferred []string
+		want      string
+	}{
+		{name: "a preferred team that owns some files and settles the rest", preferred: []string{"org/storage"}, want: "@org/storage"},
+		{
+			// api owns cmd/ but can't approve storage/; no preference
+			// qualifies, so the first-listed owners tie two files each and
+			// the name decides.
+			name: "no preferred team can settle everything", preferred: []string{"org/api"}, want: "@org/core",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := cfg
+			cfg.PreferredReviewers = nil
+			for _, ref := range tc.preferred {
+				cfg.PreferredReviewers = append(cfg.PreferredReviewers, codeowners.NormalizeOwner(ref))
+			}
+			needed := neededOwners(base, f, cfg)
+			got, _ := waitingOn(base, team, true, false, needed, namedTeams(f), cfg)
+			if strings.Join(got, ", ") != tc.want {
+				t.Errorf("got %v, want %s", got, tc.want)
+			}
+		})
+	}
+}

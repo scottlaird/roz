@@ -3,6 +3,7 @@ package reviewqueue
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -851,10 +852,9 @@ func TestWaitingOnPreferredReviewers(t *testing.T) {
 	}{
 		{name: "a preferred team that owns some files and settles the rest", preferred: []string{"org/storage"}, want: "@org/storage"},
 		{
-			// api owns cmd/ but can't approve storage/; no preference
-			// qualifies, so the first-listed owners tie two files each and
-			// the name decides.
-			name: "no preferred team can settle everything", preferred: []string{"org/api"}, want: "@org/core",
+			// api owns cmd/ but can't approve storage/, so it goes first for
+			// its part and storage follows for the rest.
+			name: "a preferred team that owns part of the change goes first", preferred: []string{"org/api"}, want: "@org/api, @org/storage",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -869,5 +869,108 @@ func TestWaitingOnPreferredReviewers(t *testing.T) {
 				t.Errorf("got %v, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestPreferredReviewersPartialOwnership: the queue's team owns part of a change
+// and a broad team owns the rest, as well as the team's part. One approval from
+// the broad team would do, but the team is preferred, so it is waited on first
+// and the pull request is the team's.
+func TestPreferredReviewersPartialOwnership(t *testing.T) {
+	cfg := config()
+	cfg.TeamMembers = map[string][]string{
+		"org/storage":  {"alice", "bob"},
+		"org/platform": {"carol"},
+	}
+	cfg.PreferredReviewers = []codeowners.Owner{team, "org/platform"}
+	f, err := codeowners.ParseString("* @org/platform\n/storage/ @org/storage @org/platform\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := pr(1, func(p *github.OpenPR) {
+		p.Files = []string{"storage/a.go", "storage/b.go", "lib/c.go"}
+		p.RequestedTeams = []string{"org/storage", "org/platform"}
+	})
+
+	needed := neededOwners(p, f, cfg)
+	got, why := waitingOn(p, team, true, false, needed, namedTeams(f), cfg)
+	if want := "@org/storage, @org/platform"; strings.Join(got, ", ") != want {
+		t.Fatalf("got %v, want %s", got, want)
+	}
+	if s := section(p, got, why, team, memberSet(cfg.Members)); s != NotYetReviewed {
+		t.Errorf("section = %v, want NotYetReviewed", s)
+	}
+
+	// Once the team approves, what is left is the broad team's.
+	approved := p
+	approved.Approvers = []string{"alice"}
+	needed = neededOwners(approved, f, cfg)
+	if want := []codeowners.Owner{"org/platform"}; !slices.Equal(needed, want) {
+		t.Errorf("after the team's approval, needed = %v, want %v", needed, want)
+	}
+}
+
+// TestPreferredReviewersNestedTeamOwningNothing: the queue's team is nested in a
+// broad team. A change touching only the broad team's files isn't the queue
+// team's, even though a member's approval would satisfy it.
+func TestPreferredReviewersNestedTeamOwningNothing(t *testing.T) {
+	cfg := config()
+	cfg.TeamMembers = map[string][]string{
+		"org/storage": {"alice", "bob"},
+		"org/core":    {"alice", "bob", "carol"},
+	}
+	cfg.PreferredReviewers = []codeowners.Owner{team, "org/core"}
+	f, err := codeowners.ParseString("* @org/core\n/storage/ @org/storage\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := pr(1, func(p *github.OpenPR) {
+		p.Files = []string{"cmd/x.go"}
+		p.RequestedTeams = []string{"org/core"}
+	})
+
+	if needed, want := neededOwners(p, f, cfg), []codeowners.Owner{"org/core"}; !slices.Equal(needed, want) {
+		t.Errorf("needed = %v, want %v", needed, want)
+	}
+}
+
+// TestGeneratedFilesDontMakeItTheTeams: a change that touches only a generated
+// file the team co-owns isn't the team's; one with a hand-written file is, and
+// its reason names that file.
+func TestGeneratedFilesDontMakeItTheTeams(t *testing.T) {
+	f, err := codeowners.ParseString("* @org/core\n/proto/README.md @org/storage @org/core\n/storage/ @org/storage @org/core\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]*codeowners.File{"main": f}
+	cfg := config()
+	cfg.PreferredReviewers = []codeowners.Owner{team, "org/core"}
+	cfg.Generated = map[string]codeowners.Generated{"main": codeowners.ParseGenerated("proto/README.md linguist-generated\n")}
+
+	readmeOnly := pr(1, func(p *github.OpenPR) {
+		p.Files = []string{"proto/README.md", "cmd/x.go"}
+		p.RequestedTeams = []string{"org/storage", "org/core"}
+	})
+	handWritten := pr(2, func(p *github.OpenPR) {
+		p.Files = []string{"proto/README.md", "storage/a.go"}
+		p.RequestedTeams = []string{"org/storage", "org/core"}
+	})
+
+	items, _ := Select([]github.OpenPR{readmeOnly, handWritten}, owners, cfg)
+	if len(items) != 1 || items[0].PR.Key != handWritten.Key {
+		var keys []string
+		for _, it := range items {
+			keys = append(keys, it.PR.Key)
+		}
+		t.Fatalf("selected %v, want only %s", keys, handWritten.Key)
+	}
+	if got := strings.Join(items[0].Reasons, "; "); !strings.Contains(got, "storage/a.go") {
+		t.Errorf("reasons %q should name the hand-written file", got)
+	}
+
+	// Without the marking, the README alone would make it the team's.
+	cfg.Generated = nil
+	if items, _ := Select([]github.OpenPR{readmeOnly}, owners, cfg); len(items) != 1 {
+		t.Errorf("without .gitattributes, selected %d, want the README change", len(items))
 	}
 }

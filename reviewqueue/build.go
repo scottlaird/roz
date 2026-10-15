@@ -15,6 +15,7 @@ import (
 type Source interface {
 	OpenPullRequests(ctx context.Context, repo string, progress func(read int)) ([]github.OpenPR, error)
 	Codeowners(ctx context.Context, repo, ref string) (text, path string, err error)
+	Gitattributes(ctx context.Context, repo, ref string) (string, error)
 	OpenPRBranches(ctx context.Context, repo string) ([]github.PRBranch, error)
 	TeamMembers(ctx context.Context, teams []string) (map[string][]string, error)
 }
@@ -42,6 +43,7 @@ func Build(ctx context.Context, src Source, repo string, cfg Config, logf func(f
 	// judged by the file on the branch they would merge into. Drafts are left
 	// out of the queue, so their bases need not be read.
 	owners := map[string]*codeowners.File{}
+	generated := map[string]codeowners.Generated{}
 	for _, pr := range prs {
 		if _, seen := owners[pr.BaseRef]; seen || pr.Draft {
 			continue
@@ -56,6 +58,12 @@ func Build(ctx context.Context, src Source, repo string, cfg Config, logf func(f
 			return nil, nil, fmt.Errorf("parsing %s CODEOWNERS on %s: %w", repo, pr.BaseRef, err)
 		}
 		owners[pr.BaseRef] = file
+
+		attrs, err := src.Gitattributes(ctx, repo, pr.BaseRef)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading %s .gitattributes on %s: %w", repo, pr.BaseRef, err)
+		}
+		generated[pr.BaseRef] = codeowners.ParseGenerated(attrs)
 	}
 
 	logf("%s: listing open pull request branches, for stacks", repo)
@@ -91,6 +99,7 @@ func Build(ctx context.Context, src Source, repo string, cfg Config, logf func(f
 	}
 
 	cfg.Branches = branches
+	cfg.Generated = generated
 	cfg.TeamMembers = teamMembers
 	if cfg.Members == nil {
 		cfg.Members = teamMembers[string(cfg.Team)]

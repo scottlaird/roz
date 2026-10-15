@@ -54,11 +54,18 @@ type Config struct {
 	// for the member_authored section. They are marked AuthoredOnly, and no
 	// other section shows them.
 	IncludeMemberAuthored bool
-	// PreferredReviewers, when set, names a single owner a pull request waits
-	// on: the first of these that owns an outstanding file and can settle all
-	// of them, else the owner listed first on the most outstanding files. See
-	// codeowners.Ownership.Preferred. Empty keeps the fewest-approvals plan.
+	// PreferredReviewers, when set, orders who a pull request waits on, tier by
+	// tier: the first of these that helps with an outstanding file, then the
+	// first that helps with what is left, and so on, falling back to whoever
+	// covers the most. See codeowners.Ownership.Route. Team itself is named
+	// only for files it owns, not by standing for a broader team it is nested
+	// in. Empty keeps the fewest-approvals plan.
 	PreferredReviewers []codeowners.Owner
+	// Generated is each base branch's linguist-generated marking. Generated
+	// files are left out of a pull request before anything else looks at it:
+	// whoever owns a regenerated file isn't who the change is for. A branch
+	// with no entry marks nothing.
+	Generated map[string]codeowners.Generated
 }
 
 // Section groups items by who has the next move.
@@ -133,6 +140,7 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 		if pr.Draft || pr.ReviewDecision == "APPROVED" {
 			continue
 		}
+		pr = withoutGenerated(pr, cfg.Generated[pr.BaseRef])
 		otherOwners := askedForAnotherOwner(pr, owners[pr.BaseRef], cfg)
 		reasons := teamReasons(pr, owners[pr.BaseRef], cfg)
 		reasons = append(reasons, memberReasons(pr, members, otherOwners)...)
@@ -179,6 +187,18 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 	return items, skipped
 }
 
+// withoutGenerated is pr less the files gen marks as generated.
+func withoutGenerated(pr github.OpenPR, gen codeowners.Generated) github.OpenPR {
+	files := make([]string, 0, len(pr.Files))
+	for _, path := range pr.Files {
+		if !gen.Is(path) {
+			files = append(files, path)
+		}
+	}
+	pr.Files = files
+	return pr
+}
+
 // markBlockers records, on each unapproved pull request in the queue, the
 // held pull requests stacked above it. A base outside the queue -- another
 // team's, or a draft -- has no row to mark, and shows only in the held line.
@@ -217,11 +237,13 @@ func neededOwners(pr github.OpenPR, file *codeowners.File, cfg Config) []codeown
 	o := file.Of(pr.Files)
 	approved := codeowners.Approval(pr.Approvers, codeowners.NewStaticTeams(cfg.TeamMembers))
 	if len(cfg.PreferredReviewers) > 0 {
-		owner, ok := o.Preferred(approved, cfg.PreferredReviewers, codeowners.NewStaticMembership(cfg.TeamMembers))
-		if !ok {
-			return nil
+		tiers := o.RouteWith(approved, cfg.PreferredReviewers, codeowners.NewStaticMembership(cfg.TeamMembers),
+			codeowners.RouteOptions{OwnOnly: codeowners.OwnerSet{cfg.Team: true}})
+		owners := make([]codeowners.Owner, len(tiers))
+		for i, tier := range tiers {
+			owners[i] = tier.Owner
 		}
-		return []codeowners.Owner{owner}
+		return owners
 	}
 	// Where owners are equally useful, name the one already asked.
 	requested := codeowners.OwnerSet{}

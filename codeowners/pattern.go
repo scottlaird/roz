@@ -79,6 +79,31 @@ func (p Pattern) Match(path string) bool {
 	return false
 }
 
+// MatchWhole reports whether the pattern names path itself, as .gitattributes
+// patterns do: a pattern that matches only a directory above path doesn't
+// count, and a directory pattern (trailing slash) never names a file.
+func (p Pattern) MatchWhole(path string) bool {
+	path = strings.TrimPrefix(path, "/")
+	if path == "" || p.dirOnly {
+		return false
+	}
+	segments := strings.Split(path, "/")
+	if p.anchored {
+		return walkWhole(p.segments, segments)
+	}
+	for start := range segments {
+		if walkWhole(p.segments, segments[start:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// walkWhole is walk, insisting the pattern consume the whole path.
+func walkWhole(pattern, path []string) bool {
+	return walkTo(pattern, path, true)
+}
+
 // matchFrom walks pattern segments against path segments from start.
 //
 // A match that consumes every pattern segment succeeds whether or not it
@@ -118,6 +143,12 @@ func consumedPrefix(pattern, path []string) bool {
 // every combination of splits, which a CODEOWNERS file anyone can write turns
 // into an unbounded stall.
 func walk(pattern, path []string) bool {
+	return walkTo(pattern, path, false)
+}
+
+// walkTo is walk, and when whole is set the match must also consume the whole
+// path rather than stopping at a directory above it.
+func walkTo(pattern, path []string, whole bool) bool {
 	var failed map[[2]int]bool
 	var match func(i, j int) bool
 	match = func(i, j int) bool {
@@ -150,8 +181,9 @@ func walk(pattern, path []string) bool {
 			}
 			i, j = i+1, j+1
 		}
-		// Every pattern segment matched. Leftover path is the directory's contents.
-		return true
+		// Every pattern segment matched. Leftover path is the directory's
+		// contents, which only CODEOWNERS counts.
+		return !whole || j == len(path)
 	}
 	return match(0, 0)
 }

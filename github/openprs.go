@@ -124,6 +124,40 @@ func (c *Client) Codeowners(ctx context.Context, repo, ref string) (text, path s
 	return c.codeowners(ctx, owner, name, ref)
 }
 
+// Gitattributes reads a repository's top-level .gitattributes from ref,
+// returning "" when it has none.
+func (c *Client) Gitattributes(ctx context.Context, repo, ref string) (string, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return "", fmt.Errorf("repository %q is not owner/name", repo)
+	}
+	if ref == "" {
+		return "", fmt.Errorf("no base ref to read .gitattributes from")
+	}
+	query := fmt.Sprintf("query {\n  repository(owner: %q, name: %q) {\n    at: object(expression: %q) { ... on Blob { text } }\n  }\n}\n",
+		owner, name, ref+":.gitattributes")
+	body, err := c.request(ctx, ReadAttributes, query)
+	if err != nil {
+		return "", err
+	}
+	var decoded struct {
+		Data struct {
+			Repository struct {
+				At *struct {
+					Text string `json:"text"`
+				} `json:"at"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return "", fmt.Errorf("decoding .gitattributes: %w", err)
+	}
+	if decoded.Data.Repository.At == nil {
+		return "", nil
+	}
+	return decoded.Data.Repository.At.Text, nil
+}
+
 type wireOpenPR struct {
 	Number         int64      `json:"number"`
 	URL            string     `json:"url"`

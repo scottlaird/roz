@@ -86,7 +86,7 @@ func newReviewQueueCmd() *cobra.Command {
 	f.Int(flagQueuePageSize, 10, "rows per page in a data table")
 	f.StringSlice(flagQueueIgnoreTeam, nil, "team never to show as waited on, org/slug (repeatable)")
 	f.StringSlice(flagQueuePreferred, nil, "teams to name as waited on, in order of preference, comma-separated or repeated: "+
-		"the first that owns an outstanding file and can settle all of them, else the owner listed first on the most (default: the fewest approvals still needed)")
+		"each tier is the first of these that helps with the files still outstanding, until all are covered; the queue's own team only for files it owns (default: the fewest approvals still needed)")
 	f.Duration(flagQueueSLOWarn, 48*time.Hour, "mark pull requests idle longer than this with a yellow circle; 0 marks none")
 	f.StringSlice(flagQueueSection, nil, "sections to show, in order, comma-separated or repeated: "+sectionList()+" (default: "+strings.Join(reviewqueue.DefaultSections, ",")+")")
 	f.Duration(flagQueueSLOBreach, 7*24*time.Hour, "mark pull requests idle longer than this with a red circle; 0 marks none")

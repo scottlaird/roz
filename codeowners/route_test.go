@@ -217,3 +217,72 @@ func TestRouteStopsWhenNothingCanCoverTheRest(t *testing.T) {
 		t.Error("a file nothing owns is being counted as outstanding")
 	}
 }
+
+// TestRouteOwnOnly: a nested hint listed as OwnOnly is asked only for files it
+// owns. Standing for its parent would put it first on changes that touch only
+// the parent's files.
+func TestRouteOwnOnly(t *testing.T) {
+	const rules = "* @org/platform\n/engine/ @org/core\n/engine/storage/ @org/storage @org/core\n"
+	members := NewStaticMembership(map[string][]string{
+		"org/storage": {"dave"},
+		"org/core":    {"dave", "erin"},
+	})
+	hints := []Owner{"org/storage", "org/core"}
+	ownOnly := RouteOptions{OwnOnly: NewOwnerSet("org/storage")}
+
+	for _, tc := range []struct {
+		name  string
+		paths []string
+		opts  RouteOptions
+		want  []Owner
+	}{
+		{
+			name:  "without the option a nested hint stands for its parent",
+			paths: []string{"engine/a.go"},
+			want:  []Owner{"org/storage"},
+		},
+		{
+			name:  "OwnOnly: the parent's files go to the parent",
+			paths: []string{"engine/a.go"},
+			opts:  ownOnly,
+			want:  []Owner{"org/core"},
+		},
+		{
+			name: "OwnOnly: once it owns a file, its approval settles the parent's too",
+			// storage owns x.go, and its members are all in core.
+			paths: []string{"engine/storage/x.go", "engine/a.go"},
+			opts:  ownOnly,
+			want:  []Owner{"org/storage"},
+		},
+		{
+			name:  "OwnOnly: a file only a third owner has still gets its own tier",
+			paths: []string{"engine/storage/x.go", "main.go"},
+			opts:  ownOnly,
+			want:  []Owner{"org/storage", "org/platform"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := ownershipOf(t, rules, tc.paths...)
+			got := tierOwners(o.RouteWith(NewOwnerSet(), hints, members, tc.opts))
+			if !sameOwners(got, tc.want) {
+				t.Errorf("RouteWith() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRoutePreferredTeamOwningPartGoesFirst: a preferred team that owns only
+// part of a change is still asked first, for its part, ahead of a broad team
+// that could settle the whole change alone.
+func TestRoutePreferredTeamOwningPartGoesFirst(t *testing.T) {
+	o := ownershipOf(t, "* @org/platform\n/svc/ @org/svc @org/platform\n",
+		"svc/a.go", "svc/b.go", "lib/c.go")
+
+	tiers := o.Route(NewOwnerSet(), []Owner{"org/svc", "org/platform"}, nil)
+	if want := []Owner{"org/svc", "org/platform"}; !sameOwners(tierOwners(tiers), want) {
+		t.Fatalf("Route() = %v, want %v", tierOwners(tiers), want)
+	}
+	if tiers[0].Files != 2 || tiers[1].Files != 1 {
+		t.Errorf("files = %d, %d, want 2, 1", tiers[0].Files, tiers[1].Files)
+	}
+}

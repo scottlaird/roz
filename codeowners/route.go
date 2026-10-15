@@ -49,6 +49,10 @@ const (
 	// itself — but every one of its members belongs to an owner that is
 	// outstanding, so asking it produces an approval that counts.
 	ReasonStandsFor = "preferred, and its members all belong to an owner"
+	// ReasonHintedAndStandsFor: the repository prefers this owner, which covers
+	// outstanding files, and its members all belong to another outstanding
+	// owner, so its approval settles that owner's files too.
+	ReasonHintedAndStandsFor = "preferred, covers outstanding files, and its members all belong to an owner"
 	// ReasonCoversAndStandsFor: this owner covers outstanding files, and its
 	// members all belong to another outstanding owner, so its approval
 	// settles that owner's files too.
@@ -93,6 +97,21 @@ type Tier struct {
 // First-listed breaks a tie, which is safe because a rule with several owners
 // needs only one of them.
 func (o *Ownership) Route(approved OwnerSet, hints []Owner, members Membership) []Tier {
+	return o.RouteWith(approved, hints, members, RouteOptions{})
+}
+
+// RouteOptions adjusts RouteWith.
+type RouteOptions struct {
+	// OwnOnly are hints used only where they own an outstanding file
+	// themselves, never by standing for an owner their members all belong
+	// to. A team nested in a broad one would otherwise be asked first for
+	// changes that touch only the broad team's files, which for a team
+	// deciding what is its own to review is the wrong answer.
+	OwnOnly OwnerSet
+}
+
+// RouteWith is Route with options.
+func (o *Ownership) RouteWith(approved OwnerSet, hints []Owner, members Membership, opts RouteOptions) []Tier {
 	if members == nil {
 		members = NoMembership{}
 	}
@@ -105,7 +124,7 @@ func (o *Ownership) Route(approved OwnerSet, hints []Owner, members Membership) 
 			return tiers
 		}
 
-		tier, ok := nextTier(o, have, useful, hints, members)
+		tier, ok := nextTier(o, have, useful, hints, members, opts)
 		if !ok {
 			return tiers
 		}
@@ -120,7 +139,7 @@ func (o *Ownership) Route(approved OwnerSet, hints []Owner, members Membership) 
 
 // nextTier picks the next ask: the first hint that would help, else the owner
 // covering the most.
-func nextTier(o *Ownership, have OwnerSet, useful []Coverage, hints []Owner, members Membership) (Tier, bool) {
+func nextTier(o *Ownership, have OwnerSet, useful []Coverage, hints []Owner, members Membership, opts RouteOptions) (Tier, bool) {
 	outstanding := make([]Owner, 0, len(useful))
 	covers := map[Owner]int{}
 	for _, c := range useful {
@@ -135,7 +154,18 @@ func nextTier(o *Ownership, have OwnerSet, useful []Coverage, hints []Owner, mem
 		// The straightforward case: the hint is itself an owner with something
 		// outstanding.
 		if n, ok := covers[hint]; ok {
-			return Tier{Owner: hint, Files: n, Reason: ReasonHinted}, true
+			tier := Tier{Owner: hint, Files: n, Reason: ReasonHinted}
+			// Its approval also satisfies any outstanding owner its members all
+			// belong to, and those files need no tier of their own.
+			for _, r := range o.Reach(have, members) {
+				if r.Owner == hint && len(r.StandsFor) > 0 {
+					tier.Files, tier.StandsFor, tier.Reason = r.Files, r.StandsFor, ReasonHintedAndStandsFor
+				}
+			}
+			return tier, true
+		}
+		if opts.OwnOnly.Contains(hint) {
+			continue
 		}
 		// The case worth having: it owns nothing, but an approval from it
 		// would satisfy something that is outstanding.

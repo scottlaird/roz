@@ -933,3 +933,44 @@ func TestPreferredReviewersNestedTeamOwningNothing(t *testing.T) {
 		t.Errorf("needed = %v, want %v", needed, want)
 	}
 }
+
+// TestGeneratedFilesDontMakeItTheTeams: a change that touches only a generated
+// file the team co-owns isn't the team's; one with a hand-written file is, and
+// its reason names that file.
+func TestGeneratedFilesDontMakeItTheTeams(t *testing.T) {
+	f, err := codeowners.ParseString("* @org/core\n/proto/README.md @org/storage @org/core\n/storage/ @org/storage @org/core\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]*codeowners.File{"main": f}
+	cfg := config()
+	cfg.PreferredReviewers = []codeowners.Owner{team, "org/core"}
+	cfg.Generated = map[string]codeowners.Generated{"main": codeowners.ParseGenerated("proto/README.md linguist-generated\n")}
+
+	readmeOnly := pr(1, func(p *github.OpenPR) {
+		p.Files = []string{"proto/README.md", "cmd/x.go"}
+		p.RequestedTeams = []string{"org/storage", "org/core"}
+	})
+	handWritten := pr(2, func(p *github.OpenPR) {
+		p.Files = []string{"proto/README.md", "storage/a.go"}
+		p.RequestedTeams = []string{"org/storage", "org/core"}
+	})
+
+	items, _ := Select([]github.OpenPR{readmeOnly, handWritten}, owners, cfg)
+	if len(items) != 1 || items[0].PR.Key != handWritten.Key {
+		var keys []string
+		for _, it := range items {
+			keys = append(keys, it.PR.Key)
+		}
+		t.Fatalf("selected %v, want only %s", keys, handWritten.Key)
+	}
+	if got := strings.Join(items[0].Reasons, "; "); !strings.Contains(got, "storage/a.go") {
+		t.Errorf("reasons %q should name the hand-written file", got)
+	}
+
+	// Without the marking, the README alone would make it the team's.
+	cfg.Generated = nil
+	if items, _ := Select([]github.OpenPR{readmeOnly}, owners, cfg); len(items) != 1 {
+		t.Errorf("without .gitattributes, selected %d, want the README change", len(items))
+	}
+}

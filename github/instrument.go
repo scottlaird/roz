@@ -22,6 +22,7 @@ const (
 	ReadTeams        = "teams"
 	ReadChange       = "change"
 	ReadCodeowners   = "codeowners"
+	ReadAttributes   = "gitattributes"
 	ReadSearch       = "search"
 )
 

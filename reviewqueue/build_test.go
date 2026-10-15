@@ -15,9 +15,10 @@ var _ Source = (*github.Client)(nil)
 
 // fakeSource serves one repository from memory and records what was asked.
 type fakeSource struct {
-	prs        []github.OpenPR
-	codeowners map[string]string // base ref -> text
-	members    map[string][]string
+	prs           []github.OpenPR
+	codeowners    map[string]string // base ref -> text
+	gitattributes map[string]string // base ref -> text
+	members       map[string][]string
 
 	codeownersReads []string
 	teamsAsked      []string
@@ -34,6 +35,10 @@ func (f *fakeSource) Codeowners(_ context.Context, _, ref string) (string, strin
 		return "", "", errors.New("no such ref")
 	}
 	return text, ".github/CODEOWNERS", nil
+}
+
+func (f *fakeSource) Gitattributes(_ context.Context, _, ref string) (string, error) {
+	return f.gitattributes[ref], nil
 }
 
 func (f *fakeSource) OpenPRBranches(context.Context, string) ([]github.PRBranch, error) {
@@ -117,5 +122,36 @@ func TestBuildFetchesPreferredTeams(t *testing.T) {
 	}
 	if !slices.Contains(src.teamsAsked, "org/storage-oncall") {
 		t.Errorf("teams asked = %v, want org/storage-oncall among them", src.teamsAsked)
+	}
+}
+
+// TestBuildReadsGeneratedMarking: Build reads .gitattributes from each base
+// branch, so a change to a file it marks generated isn't the team's.
+func TestBuildReadsGeneratedMarking(t *testing.T) {
+	src := &fakeSource{
+		prs: []github.OpenPR{
+			pr(1, func(p *github.OpenPR) {
+				p.Files = []string{"storage/gen/types.go"}
+				p.RequestedTeams = []string{"org/storage"}
+			}),
+		},
+		codeowners:    map[string]string{"main": testCodeowners},
+		gitattributes: map[string]string{"main": "storage/gen/** linguist-generated\n"},
+	}
+	items, _, err := Build(context.Background(), src, "org/repo", config(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Errorf("selected %d, want none: the only file is generated", len(items))
+	}
+
+	src.gitattributes = nil
+	items, _, err = Build(context.Background(), src, "org/repo", config(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Errorf("without the marking, selected %d, want 1", len(items))
 	}
 }

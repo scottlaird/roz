@@ -135,3 +135,24 @@ func TestRepeatedDoubleStarIsBounded(t *testing.T) {
 		t.Error("did not match a path ending in zz")
 	}
 }
+
+// TestPatternMatchWhole: .gitattributes patterns name a path, unlike
+// CODEOWNERS, where naming a directory owns everything beneath it.
+func TestPatternMatchWhole(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, path string
+		want          bool
+	}{
+		{"docs", "docs/a.md", false},
+		{"docs", "docs", true},
+		{"docs/**", "docs/a/b.md", true},
+		{"*.md", "a/b/c.md", true},
+		{"/a/*.md", "a/b.md", true},
+		{"/a/*.md", "a/b/c.md", false},
+		{"a/", "a/b.md", false},
+	} {
+		if got := ParsePattern(tc.pattern).MatchWhole(tc.path); got != tc.want {
+			t.Errorf("%q MatchWhole(%q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}

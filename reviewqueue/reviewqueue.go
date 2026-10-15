@@ -61,6 +61,11 @@ type Config struct {
 	// only for files it owns, not by standing for a broader team it is nested
 	// in. Empty keeps the fewest-approvals plan.
 	PreferredReviewers []codeowners.Owner
+	// Generated is each base branch's linguist-generated marking. Generated
+	// files are left out of a pull request before anything else looks at it:
+	// whoever owns a regenerated file isn't who the change is for. A branch
+	// with no entry marks nothing.
+	Generated map[string]codeowners.Generated
 }
 
 // Section groups items by who has the next move.
@@ -135,6 +140,7 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 		if pr.Draft || pr.ReviewDecision == "APPROVED" {
 			continue
 		}
+		pr = withoutGenerated(pr, cfg.Generated[pr.BaseRef])
 		otherOwners := askedForAnotherOwner(pr, owners[pr.BaseRef], cfg)
 		reasons := teamReasons(pr, owners[pr.BaseRef], cfg)
 		reasons = append(reasons, memberReasons(pr, members, otherOwners)...)
@@ -179,6 +185,18 @@ func Select(prs []github.OpenPR, owners map[string]*codeowners.File, cfg Config)
 		return idleSince(items[i].PR).Before(idleSince(items[j].PR))
 	})
 	return items, skipped
+}
+
+// withoutGenerated is pr less the files gen marks as generated.
+func withoutGenerated(pr github.OpenPR, gen codeowners.Generated) github.OpenPR {
+	files := make([]string, 0, len(pr.Files))
+	for _, path := range pr.Files {
+		if !gen.Is(path) {
+			files = append(files, path)
+		}
+	}
+	pr.Files = files
+	return pr
 }
 
 // markBlockers records, on each unapproved pull request in the queue, the

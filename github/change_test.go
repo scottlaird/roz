@@ -155,3 +155,22 @@ func TestChangeReportsAnUnreadablePullRequest(t *testing.T) {
 		t.Errorf("error = %v, want GitHub's reason", err)
 	}
 }
+
+func TestGitattributes(t *testing.T) {
+	runner := &scriptedRunner{replies: []string{
+		`{"data":{"repository":{"at":{"text":"api/gen/** linguist-generated\n"}}}}`,
+		`{"data":{"repository":{"at":null}}}`,
+	}}
+	client := NewWithRunner(runner.run)
+
+	text, err := client.Gitattributes(context.Background(), "owner/repo", "main")
+	if err != nil || text != "api/gen/** linguist-generated\n" {
+		t.Errorf("Gitattributes() = %q, %v", text, err)
+	}
+	if !strings.Contains(runner.queries[0], `"main:.gitattributes"`) {
+		t.Errorf("did not read from the base ref:\n%s", runner.queries[0])
+	}
+	if text, err := client.Gitattributes(context.Background(), "owner/repo", "main"); err != nil || text != "" {
+		t.Errorf("Gitattributes() with none = %q, %v, want empty", text, err)
+	}
+}

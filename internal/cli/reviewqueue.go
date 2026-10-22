@@ -36,6 +36,7 @@ const (
 	flagQueueSLOWarn       = "slo-warn"
 	flagQueueSLOBreach     = "slo-breach"
 	flagQueueSection       = "section"
+	flagQueueMergeUnder    = "merge-under"
 	flagQueuePreferred     = "preferred-reviewers"
 
 	// envSlackWebhook is where --post finds its Slack incoming webhook. An
@@ -90,6 +91,7 @@ func newReviewQueueCmd() *cobra.Command {
 	f.Duration(flagQueueSLOWarn, 48*time.Hour, "mark pull requests idle longer than this with a yellow circle; 0 marks none")
 	f.StringSlice(flagQueueSection, nil, "sections to show, in order, comma-separated or repeated: "+sectionList()+" (default: "+strings.Join(reviewqueue.DefaultSections, ",")+")")
 	f.Duration(flagQueueSLOBreach, 7*24*time.Hour, "mark pull requests idle longer than this with a red circle; 0 marks none")
+	f.Int(flagQueueMergeUnder, 0, "show each repository with at least this many pull requests on its own and the rest together in one block, numbered repo#123; 0 shows every repository on its own")
 	f.String(flagQueueFormat, "mrkdwn", `"mrkdwn" for a text message, or "blocks" for a Block Kit payload with tables (paste into Block Kit Builder to preview)`)
 	_ = cmd.MarkFlagRequired(flagQueueRepo)
 	_ = cmd.MarkFlagRequired(flagQueueTeam)
@@ -115,6 +117,7 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 	sloWarn, _ := f.GetDuration(flagQueueSLOWarn)
 	sloBreach, _ := f.GetDuration(flagQueueSLOBreach)
 	sections, _ := f.GetStringSlice(flagQueueSection)
+	mergeUnder, _ := f.GetInt(flagQueueMergeUnder)
 	if err := reviewqueue.ValidateSections(sections); err != nil {
 		return fmt.Errorf("--%s: %w", flagQueueSection, err)
 	}
@@ -171,23 +174,26 @@ func runReviewQueue(cmd *cobra.Command, _ []string) error {
 
 	var message, diagnostics strings.Builder
 	var blocks []any
+	opts := reviewqueue.Options{
+		Now: time.Now(), StaleAfter: staleAfter, ShowReasons: showReasons, JiraURL: jira.base,
+		DataTables: table == "data", PageSize: pageSize,
+		SLOWarn: sloWarn, SLOBreach: sloBreach, Sections: sections,
+	}
+	var queues []reviewqueue.Queue
 	for _, repo := range repos {
 		items, skipped, err := reviewqueue.Build(ctx, gh, repo, cfg, logf)
 		if err != nil {
 			return err
 		}
-		opts := reviewqueue.Options{
-			Now: time.Now(), StaleAfter: staleAfter, ShowReasons: showReasons, JiraURL: jira.base,
-			DataTables: table == "data", PageSize: pageSize,
-			SLOWarn: sloWarn, SLOBreach: sloBreach, Sections: sections,
-		}
-		message.WriteString(reviewqueue.Format(repo, team, items, opts))
-		payload := reviewqueue.Blocks(repo, team, items, opts)
-		blocks = append(blocks, payload["blocks"].([]any)...)
+		queues = append(queues, reviewqueue.Queue{Repo: repo, Items: items})
 		if showSkipped && len(skipped) > 0 {
 			fmt.Fprintf(&diagnostics, "%s: %d requested but not the team's\n", repo, len(skipped))
 			diagnostics.WriteString(reviewqueue.FormatSkipped(skipped))
 		}
+	}
+	for _, q := range reviewqueue.Merge(team, queues, opts, mergeUnder) {
+		message.WriteString(reviewqueue.FormatQueue(q, team, opts))
+		blocks = append(blocks, reviewqueue.BlocksQueue(q, team, opts)["blocks"].([]any)...)
 	}
 
 	// A payload with blocks still needs text: it is what notifications and

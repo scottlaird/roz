@@ -768,6 +768,12 @@ type Options struct {
 	// SLOWarn and SLOBreach mark a pull request idle longer than each with a yellow or red
 	// circle beside its idle time. Zero leaves that mark off.
 	SLOWarn, SLOBreach time.Duration
+	// QualifyNumbers names each pull request with its repository, repo#123
+	// rather than #123, for a queue Merge built from several repositories.
+	QualifyNumbers bool
+	// nothingIn names the repositories a merged queue covers that had
+	// nothing to show, for a note under it.
+	nothingIn []string
 }
 
 // sloMark is the circle, with a trailing space, for a pull request idle for d; empty within both
@@ -814,7 +820,7 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 	for _, g := range groups {
 		fmt.Fprintf(&b, "\n*%s* (%d)\n", g.title, len(g.items))
 		for _, it := range g.items {
-			fmt.Fprintf(&b, "• %s %s", link(it.PR), escape(titleWithAuthor(it.PR)))
+			fmt.Fprintf(&b, "• %s %s", link(it.PR, opts), escape(titleWithAuthor(it.PR)))
 			for _, k := range it.Jira {
 				if url := opts.jiraLink(k); url != "" {
 					fmt.Fprintf(&b, " <%s|%s>", escape(url), k)
@@ -828,7 +834,7 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 			if len(it.Blocks) > 0 {
 				blocked := make([]string, len(it.Blocks))
 				for i, pr := range it.Blocks {
-					blocked[i] = link(pr)
+					blocked[i] = link(pr, opts)
 				}
 				fmt.Fprintf(&b, " · *blocks %s*", strings.Join(blocked, ", "))
 			}
@@ -843,25 +849,29 @@ func Format(repo string, team codeowners.Owner, items []Item, opts Options) stri
 	if len(stale) > 0 {
 		links := make([]string, len(stale))
 		for i, it := range stale {
-			links[i] = link(it.PR)
+			links[i] = link(it.PR, opts)
 		}
 		fmt.Fprintf(&b, "\n_%d idle over %s:_ %s\n", len(stale), days(opts.StaleAfter), strings.Join(links, " "))
 	}
 	if len(held) > 0 {
-		fmt.Fprintf(&b, "\n_%d waiting on their base pull requests:_ %s\n", len(held), heldList(held))
+		fmt.Fprintf(&b, "\n_%d waiting on their base pull requests:_ %s\n", len(held), heldList(held, opts))
+	}
+	if len(opts.nothingIn) > 0 {
+		fmt.Fprintf(&b, "\n_Nothing waiting in %s_\n", escape(strings.Join(opts.nothingIn, ", ")))
 	}
 	return b.String()
 }
 
 // heldList names each held pull request and the unapproved base it waits on,
 // the nearest one: that is the one to review first.
-func heldList(held []Item) string {
+func heldList(held []Item, opts Options) string {
 	parts := make([]string, len(held))
 	for i, it := range held {
-		parts[i] = link(it.PR)
+		parts[i] = link(it.PR, opts)
+		repo := it.PR.Key[:strings.LastIndex(it.PR.Key, "#")]
 		for _, base := range it.StackedOn {
 			if base.ReviewDecision != "APPROVED" {
-				parts[i] += fmt.Sprintf(" (on <%s|#%d>)", base.URL, base.Number)
+				parts[i] += fmt.Sprintf(" (on <%s|%s>)", base.URL, prNumber(fmt.Sprintf("%s#%d", repo, base.Number), opts))
 				break
 			}
 		}
@@ -1075,7 +1085,7 @@ func Blocks(repo string, team codeowners.Owner, items []Item, opts Options) map[
 	if len(stale) > 0 {
 		links := make([]string, len(stale))
 		for i, it := range stale {
-			links[i] = link(it.PR)
+			links[i] = link(it.PR, opts)
 		}
 		blocks = append(blocks, map[string]any{
 			"type": "context",
@@ -1087,7 +1097,14 @@ func Blocks(repo string, team codeowners.Owner, items []Item, opts Options) map[
 		blocks = append(blocks, map[string]any{
 			"type": "context",
 			"elements": []any{map[string]any{"type": "mrkdwn",
-				"text": fmt.Sprintf("%d waiting on their base pull requests: %s", len(held), heldList(held))}},
+				"text": fmt.Sprintf("%d waiting on their base pull requests: %s", len(held), heldList(held, opts))}},
+		})
+	}
+	if len(opts.nothingIn) > 0 {
+		blocks = append(blocks, map[string]any{
+			"type": "context",
+			"elements": []any{map[string]any{"type": "mrkdwn",
+				"text": "Nothing waiting in " + strings.Join(opts.nothingIn, ", ")}},
 		})
 	}
 	return map[string]any{"text": title, "blocks": blocks}
@@ -1105,9 +1122,9 @@ func tableRows(items []Item, opts Options) [][]any {
 	}
 	rows := [][]any{header}
 	for _, it := range items {
-		number := it.PR.Key[strings.LastIndex(it.PR.Key, "#"):]
+		number := prNumber(it.PR.Key, opts)
 		row := []any{
-			prCell(it, number),
+			prCell(it, number, opts),
 			jiraCell(it.Jira, opts),
 			rawCell(fmt.Sprintf("%s (%s)", strings.Join(it.WaitingOn, ", "), it.Why)),
 			idleCell(idleSince(it.PR), opts),
@@ -1123,7 +1140,7 @@ func tableRows(items []Item, opts Options) [][]any {
 // prCell links the pull request's number, then its title and author as text,
 // then the held pull requests it blocks, so whoever reads the row sees that
 // reviewing it frees others.
-func prCell(it Item, number string) map[string]any {
+func prCell(it Item, number string, opts Options) map[string]any {
 	elements := []any{
 		map[string]any{"type": "link", "url": it.PR.URL, "text": number},
 		map[string]any{"type": "text", "text": " " + titleWithAuthor(it.PR)},
@@ -1135,7 +1152,7 @@ func prCell(it Item, number string) map[string]any {
 				elements = append(elements, map[string]any{"type": "text", "text": ", "})
 			}
 			elements = append(elements, map[string]any{
-				"type": "link", "url": pr.URL, "text": pr.Key[strings.LastIndex(pr.Key, "#"):],
+				"type": "link", "url": pr.URL, "text": prNumber(pr.Key, opts),
 			})
 		}
 	}
@@ -1210,8 +1227,19 @@ func linksCell(links []cellLink) map[string]any {
 	}
 }
 
-func link(pr github.OpenPR) string {
-	return fmt.Sprintf("<%s|%s>", pr.URL, pr.Key[strings.LastIndex(pr.Key, "#"):])
+func link(pr github.OpenPR, opts Options) string {
+	return fmt.Sprintf("<%s|%s>", pr.URL, prNumber(pr.Key, opts))
+}
+
+// prNumber names a pull request from its owner/name#123 key: #123, or
+// name#123 under Options.QualifyNumbers.
+func prNumber(key string, opts Options) string {
+	i := strings.LastIndex(key, "#")
+	if !opts.QualifyNumbers {
+		return key[i:]
+	}
+	repo := key[:i]
+	return repo[strings.LastIndex(repo, "/")+1:] + key[i:]
 }
 
 func idleSince(pr github.OpenPR) time.Time {
@@ -1249,4 +1277,91 @@ func age(since, now time.Time) string {
 	default:
 		return fmt.Sprintf("%dm", int(d.Minutes()))
 	}
+}
+
+// Queue is the items to render as one block: one repository's, or several
+// repositories' that Merge folded together.
+type Queue struct {
+	// Repo is owner/name, or for a merged queue the names of the
+	// repositories with something to show.
+	Repo  string
+	Items []Item
+	// Merged is set when Items come from more than one repository.
+	Merged bool
+	// NothingIn is the merged repositories with nothing to show.
+	NothingIn []string
+}
+
+// FormatQueue is Format for a queue Merge may have built.
+func FormatQueue(q Queue, team codeowners.Owner, opts Options) string {
+	return Format(q.Repo, team, q.Items, q.options(opts))
+}
+
+// BlocksQueue is Blocks for a queue Merge may have built.
+func BlocksQueue(q Queue, team codeowners.Owner, opts Options) map[string]any {
+	return Blocks(q.Repo, team, q.Items, q.options(opts))
+}
+
+func (q Queue) options(opts Options) Options {
+	opts.QualifyNumbers = opts.QualifyNumbers || q.Merged
+	opts.nothingIn = q.NothingIn
+	return opts
+}
+
+// Merge keeps each repository showing at least threshold pull requests as
+// its own queue, in the order given, and folds the rest into one queue after
+// them, longest-idle first as Select leaves a single repository's. A
+// threshold of zero or less merges nothing.
+//
+// What a queue shows depends on opts -- its sections and stale time -- so
+// opts must be what the queues will be rendered with.
+func Merge(team codeowners.Owner, queues []Queue, opts Options, threshold int) []Queue {
+	if threshold <= 0 {
+		return queues
+	}
+	var out, small []Queue
+	for _, q := range queues {
+		if shown(group(team, q.Items, opts)) >= threshold {
+			out = append(out, q)
+		} else {
+			small = append(small, q)
+		}
+	}
+	if len(small) <= 1 {
+		return append(out, small...)
+	}
+
+	owners := map[string]bool{}
+	for _, q := range small {
+		owner, _, _ := strings.Cut(q.Repo, "/")
+		owners[owner] = true
+	}
+	name := func(repo string) string {
+		if len(owners) == 1 {
+			return repo[strings.Index(repo, "/")+1:]
+		}
+		return repo
+	}
+
+	merged := Queue{Merged: true}
+	var with, without []string
+	for _, q := range small {
+		merged.Items = append(merged.Items, q.Items...)
+		if shown(group(team, q.Items, opts)) > 0 {
+			with = append(with, name(q.Repo))
+		} else {
+			without = append(without, name(q.Repo))
+		}
+	}
+	sort.SliceStable(merged.Items, func(i, j int) bool {
+		return idleSince(merged.Items[i].PR).Before(idleSince(merged.Items[j].PR))
+	})
+	if len(with) == 0 {
+		// Nothing anywhere: name them all in the heading rather than in a note.
+		merged.Repo = strings.Join(without, ", ")
+	} else {
+		merged.Repo = strings.Join(with, ", ")
+		merged.NothingIn = without
+	}
+	return append(out, merged)
 }

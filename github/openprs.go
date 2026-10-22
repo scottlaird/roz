@@ -22,6 +22,11 @@ const openPRPage = 25
 // requests says nothing is waiting that is.
 const openPRMaxPages = 40
 
+// openPRAttempts is how many times a listing that came back short is read
+// again before it is an error. GitHub's search sometimes ends a listing early,
+// with no next page and no error, and a second read usually gets all of it.
+const openPRAttempts = 3
+
 // OpenPR is an open pull request with what it takes to say who it is waiting
 // on.
 type OpenPR struct {
@@ -86,6 +91,12 @@ type Review struct {
 // Drafts and approved pull requests are left out by the search itself, so
 // their files are never read: neither is waiting on a reviewer. progress, if
 // set, is called after each page with the running count.
+//
+// A listing that ends a page or more short of the count the search reported
+// is read again from the start, and is an error if it is still short: a queue
+// missing pull requests says nothing is waiting that is. A smaller gap is the
+// search index catching up with a pull request opened or closed moments ago,
+// and is let through.
 func (c *Client) OpenPullRequests(ctx context.Context, repo string, progress func(read int)) ([]OpenPR, error) {
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok || owner == "" || name == "" {
@@ -93,25 +104,45 @@ func (c *Client) OpenPullRequests(ctx context.Context, repo string, progress fun
 	}
 
 	var prs []OpenPR
-	cursor := ""
-	for page := 0; ; page++ {
-		if page >= openPRMaxPages {
-			return nil, fmt.Errorf("%s still had open pull requests after %d pages", repo, openPRMaxPages)
-		}
-		batch, next, err := c.openPRPage(ctx, owner, name, cursor)
+	var reported int
+	for attempt := 0; attempt < openPRAttempts; attempt++ {
+		var err error
+		prs, reported, err = c.listOpenPRs(ctx, owner, name, progress)
 		if err != nil {
 			return nil, err
 		}
+		if reported-len(prs) < openPRPage {
+			return prs, nil
+		}
+	}
+	return nil, fmt.Errorf("%s: the search reported %d open pull requests but returned %d, %d times running",
+		repo, reported, len(prs), openPRAttempts)
+}
+
+// listOpenPRs reads every page once, returning the pull requests and the
+// count the search reported.
+func (c *Client) listOpenPRs(ctx context.Context, owner, name string, progress func(read int)) ([]OpenPR, int, error) {
+	var prs []OpenPR
+	reported := 0
+	cursor := ""
+	for page := 0; ; page++ {
+		if page >= openPRMaxPages {
+			return nil, 0, fmt.Errorf("%s/%s still had open pull requests after %d pages", owner, name, openPRMaxPages)
+		}
+		batch, next, count, err := c.openPRPage(ctx, owner, name, cursor)
+		if err != nil {
+			return nil, 0, err
+		}
+		reported = max(reported, count)
 		prs = append(prs, batch...)
 		if progress != nil {
 			progress(len(prs))
 		}
 		if next == "" {
-			break
+			return prs, reported, nil
 		}
 		cursor = next
 	}
-	return prs, nil
 }
 
 // Codeowners reads a repository's CODEOWNERS from ref, returning "" when it
@@ -246,7 +277,7 @@ type wireOpenPR struct {
 	} `json:"files"`
 }
 
-func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]OpenPR, string, error) {
+func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]OpenPR, string, int, error) {
 	cursor := "null"
 	if after != "" {
 		cursor = fmt.Sprintf("%q", after)
@@ -254,6 +285,7 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
 	query := fmt.Sprintf(`query {
   rateLimit { cost remaining limit resetAt }
     search(query: %q, type: ISSUE, first: %d, after: %s) {
+      issueCount
       pageInfo { hasNextPage endCursor }
       nodes { ... on PullRequest {
         number url title body isDraft baseRefName headRefName reviewDecision createdAt
@@ -282,13 +314,14 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
 
 	body, err := c.request(ctx, ReadOpenPullRequests, query)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	var decoded struct {
 		Data struct {
 			RateLimit json.RawMessage `json:"rateLimit"`
 			Search    *struct {
-				PageInfo struct {
+				IssueCount int `json:"issueCount"`
+				PageInfo   struct {
 					HasNextPage bool   `json:"hasNextPage"`
 					EndCursor   string `json:"endCursor"`
 				} `json:"pageInfo"`
@@ -300,10 +333,12 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return nil, "", fmt.Errorf("decoding open pull requests: %w", err)
+		return nil, "", 0, fmt.Errorf("decoding open pull requests: %w", err)
 	}
-	if decoded.Data.Search == nil {
-		return nil, "", fmt.Errorf("%s/%s could not be searched: %s", owner, name, firstMessage(decoded.Errors))
+	// Partial data comes with errors when part of this query times out or
+	// runs out of resources, and its page info can't be trusted then either.
+	if decoded.Data.Search == nil || len(decoded.Errors) > 0 {
+		return nil, "", 0, fmt.Errorf("%s/%s could not be searched: %s", owner, name, firstMessage(decoded.Errors))
 	}
 	observeRateLimit(decodeRateLimit(decoded.Data.RateLimit))
 
@@ -319,7 +354,7 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
 		for more, fileCursor := w.Files.PageInfo.HasNextPage, w.Files.PageInfo.EndCursor; more; {
 			page, err := c.filePage(ctx, owner, name, w.Number, fileCursor)
 			if err != nil {
-				return nil, "", fmt.Errorf("reading %s files: %w", pr.Key, err)
+				return nil, "", 0, fmt.Errorf("reading %s files: %w", pr.Key, err)
 			}
 			pr.Files = append(pr.Files, page.Files...)
 			more, fileCursor = page.HasMore, page.Cursor
@@ -331,7 +366,7 @@ func (c *Client) openPRPage(ctx context.Context, owner, name, after string) ([]O
 	if list.PageInfo.HasNextPage {
 		next = list.PageInfo.EndCursor
 	}
-	return prs, next, nil
+	return prs, next, list.IssueCount, nil
 }
 
 func (w wireOpenPR) decode(owner, name string) OpenPR {

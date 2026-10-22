@@ -14,6 +14,7 @@
 package reviewqueue
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -879,6 +880,7 @@ const (
 	SectionMemberWaiting  = "member_waiting"
 	SectionMemberAuthor   = "member_author"
 	SectionOthers         = "others"
+	SectionTeamAll        = "team_all"
 	SectionMemberAuthored = "member_authored"
 	SectionStacked        = "stacked"
 	SectionStale          = "stale"
@@ -897,6 +899,9 @@ type sectionDef struct {
 	title  func(team codeowners.Owner) string
 	folded bool
 	match  func(it Item, opts Options) bool
+	// bySection keeps the items in Section order, idle order within each, for
+	// a section that spans several.
+	bySection bool
 }
 
 // teamSection matches a pull request the team claims in one of the waiting-on
@@ -919,6 +924,12 @@ var sectionDefs = []sectionDef{
 	{name: SectionOthers, description: "the team's, waiting on someone outside the team",
 		title: func(codeowners.Owner) string { return "Waiting on someone else" },
 		match: teamSection(OnOthers)},
+	{name: SectionTeamAll, description: "team_unreviewed, member_waiting and member_author in one table, in that order",
+		title: func(t codeowners.Owner) string { return "Waiting on " + t.String() + " or the author" },
+		match: func(it Item, _ Options) bool {
+			return !it.AuthoredOnly && (it.Section == NotYetReviewed || it.Section == OnMember || it.Section == OnAuthor)
+		},
+		bySection: true},
 	{name: SectionMemberAuthored, description: "written by a member, whoever it is waiting on",
 		title: func(t codeowners.Owner) string { return "Written by members of " + t.String() },
 		match: func(it Item, _ Options) bool { return it.ByMember }},
@@ -1024,6 +1035,9 @@ func group(team codeowners.Owner, items []Item, opts Options) ([]itemGroup, []It
 	var groups []itemGroup
 	for _, d := range defs {
 		if list := byName[d.name]; len(list) > 0 {
+			if d.bySection {
+				slices.SortStableFunc(list, func(a, b Item) int { return cmp.Compare(a.Section, b.Section) })
+			}
 			groups = append(groups, itemGroup{title: d.title(team), items: list})
 		}
 	}

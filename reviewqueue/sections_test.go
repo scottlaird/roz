@@ -103,7 +103,43 @@ func TestValidateSections(t *testing.T) {
 			t.Errorf("%v accepted", bad)
 		}
 	}
-	if len(SectionNames()) != 7 {
+	if len(SectionNames()) != 8 {
 		t.Errorf("SectionNames = %v", SectionNames())
+	}
+}
+
+func TestTeamAllKeepsSectionOrder(t *testing.T) {
+	now := t0.Add(30 * 24 * time.Hour)
+	item := func(n int, sec Section, idle time.Duration) Item {
+		return Item{
+			PR: pr(n, func(p *github.OpenPR) {
+				p.Title = "pr" + string(rune('0'+n))
+				p.IdleSince = now.Add(-idle)
+			}),
+			WaitingOn: []string{"@x"}, Why: "review requested", Section: sec,
+		}
+	}
+	// Longest idle first, as Select leaves them.
+	items := []Item{
+		item(1, OnAuthor, 5*time.Hour),
+		item(2, NotYetReviewed, 4*time.Hour),
+		item(3, OnMember, 3*time.Hour),
+		item(4, OnOthers, 2*time.Hour),
+		item(5, NotYetReviewed, time.Hour),
+	}
+	groups, _, _ := group(team, items, Options{Now: now, Sections: []string{SectionTeamAll, SectionOthers}})
+	if len(groups) != 2 {
+		t.Fatalf("groups = %+v, want team_all and others", groups)
+	}
+	var got []string
+	for _, it := range groups[0].items {
+		got = append(got, it.PR.Title)
+	}
+	// Not yet reviewed, then a member, then the author; idle order within each.
+	if strings.Join(got, ",") != "pr2,pr5,pr3,pr1" {
+		t.Errorf("team_all = %v", got)
+	}
+	if len(groups[1].items) != 1 || groups[1].items[0].PR.Title != "pr4" {
+		t.Errorf("others = %+v", groups[1].items)
 	}
 }
